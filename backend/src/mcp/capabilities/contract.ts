@@ -136,10 +136,10 @@ export const capabilitiesContract = [
     method: "GET",
     path: "/api/mcp/documents/control-overview",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "status", "limit"],
-    purpose: "Returns document control overview including latest versions and approval statuses.",
-    whenToUse: "For finding outdated manuals, unapproved revisions, or checking document tags.",
-    typicalQuestions: ["Show me documents tagged as 'temporary instructions'.", "Are outdated manuals being used?"],
+    optionalQuery: ["vesselID", "status", "days", "limit"],
+    purpose: "Returns document control overview including latest versions and approval statuses. Supports expiry-aware certificate queries directly through the MCP endpoint when `status=expired` or `status=expiring` is supplied.",
+    whenToUse: "For finding outdated manuals, unapproved revisions, checking document tags, or answering expired/expiring certificate questions.",
+    typicalQuestions: ["Show me documents tagged as 'temporary instructions'.", "Are outdated manuals being used?", "Show me expired certificates/documents.", "Which certificates are expiring soon?"],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
