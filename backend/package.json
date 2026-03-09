@@ -2,11 +2,12 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/index.ts",
   "scripts": {
     "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts",
-    "test:mcp": "tsx scripts/validate-mcp.ts"
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "test:mcp": "tsx scripts/validate-mcp.ts",
+    "test:mcp:smoke": "tsx scripts/validate-mcp-smoke.ts"
   },
   "keywords": [],
   "author": "",
@@ -15,13 +16,17 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "axios": "^1.13.6",
+    "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "helmet": "^8.1.0",
     "openai": "^6.27.0",
     "undici": "^7.22.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/helmet": "^0.0.48",
     "@types/node": "^25.3.5",
     "nodemon": "^3.1.14",
     "tsx": "^4.21.0",

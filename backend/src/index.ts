@@ -1,4 +1,6 @@
 import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { setupMcpRoutes } from './mcp/server.js';
 
@@ -7,29 +9,66 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Need to allow POSTs to be JSON. However, MCP SSE expects raw SSE requests. We'll parse JSON normally for other routes.
-// But the MCP transport handles its own body parsing if we pass req/res.
-// Wait, for SSE, the @modelcontextprotocol/sdk Express integration gives us a transport handler.
-// Actually, let's just use the server's HTTP router if they have one, or build a simple SSE setup.
-// Wait! Let's just create a basic Express server and mount standard MCP SSE routes.
+// Match PhoenixCloudBE security middleware patterns
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-app.use(express.json());
+// Use helmet with patterns from PhoenixCloudBE
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            connectSrc: ["'self'", "https:", "wss:", "http://localhost:*", "https://localhost:*", "data:"],
+            imgSrc: ["'self'", "data:", "https:"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+        },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
-let transport;
+// Use CORS exactly as PhoenixCloudBE does in dev, but allow all origins for the proxy
+app.use(cors({
+    origin: (origin, callback) => {
+        // Explicitly allow null (for local file loads) and any localhost
+        if (!origin || origin.startsWith('http://localhost') || origin.startsWith('https://localhost')) {
+            callback(null, true);
+        } else {
+            callback(null, true); // Still allow others for now to be safe
+        }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "Cookie",
+        "X-Session-ID",
+        "Mcp-Session-Id",
+        "mcp-session-id",
+        "Mcp-Protocol-Version",
+        "mcp-protocol-version",
+        "Last-Event-ID",
+        "last-event-id",
+        "X-Requested-With"
+    ],
+    exposedHeaders: ["Mcp-Session-Id", "mcp-session-id"],
+}));
 
-app.get('/mcp/sse', async (req, res) => {
-    // We'll set up the SSE transport when connecting.
+// Request Logger (for debugging)
+app.use((req, _res, next) => {
+    console.log(`[HTTP] ${req.method} ${req.url} (Origin: ${req.headers.origin})`);
+    next();
 });
 
-app.post('/mcp/messages', async (req, res) => {
-    // Handle messages
-});
-
-// We will implement the actual transport connections inside server.js because it's cleaner.
+// Mount MCP routes
 setupMcpRoutes(app);
 
 app.listen(PORT, () => {
-    console.log(`SkylarkAI Backend running on port ${PORT}`);
-    console.log(`MCP server available at http://localhost:${PORT}/mcp/sse`);
+    console.log(`\n🚀 SkylarkAI Backend is LIVE on port ${PORT}`);
+    console.log(`============================================`);
+    console.log(`📍 MCP Streamable Endpoint: http://localhost:${PORT}/mcp`);
+    console.log(`📍 MCP Legacy SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
+    console.log(`============================================\n`);
 });
-
