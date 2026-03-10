@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { ListToolsRequestSchema, CallToolRequestSchema, isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
 import { randomUUID } from "crypto";
-import { capabilitiesContract } from "./capabilities/contract.js";
+import { buildCapabilityDescription, buildCapabilityInputSchema, capabilitiesContract } from "./capabilities/contract.js";
 import { proxyToolCall } from "./proxy.js";
 
 function sanitizeToolName(name: string) {
@@ -13,16 +13,11 @@ function sanitizeToolName(name: string) {
 
 // Registered tools built once on server boot from the contract
 const registeredTools = capabilitiesContract.map(cap => {
-    const properties: Record<string, any> = {};
-    const required = cap.requiredQuery || [];
-    [...(cap.requiredQuery || []), ...(cap.optionalQuery || [])].forEach(param => {
-        properties[param] = { type: "string", description: `Parameter: ${param}` };
-    });
     return {
         name: sanitizeToolName(cap.name),
         originalName: cap.name,
-        description: cap.purpose + (cap.whenToUse ? ` When to use: ${cap.whenToUse}` : ''),
-        inputSchema: { type: "object", properties, required },
+        description: buildCapabilityDescription(cap),
+        inputSchema: buildCapabilityInputSchema(cap),
         _originalPath: cap.path,
         _originalMethod: cap.method
     };

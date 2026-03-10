@@ -1,13 +1,31 @@
-const ORGANIZATION_IDENTIFIER_QUERY_FIELDS = ["organizationID", "organizationShortName", "organizationName"];
-const VESSEL_IDENTIFIER_QUERY_FIELDS = ["vesselID", "vesselName"];
+export const ORGANIZATION_IDENTIFIER_QUERY_FIELDS = ["organizationShortName", "organizationName", "organizationID"];
+export const VESSEL_IDENTIFIER_QUERY_FIELDS = ["vesselName", "vesselID"];
 
 const mergeUnique = (...lists: string[][]) => [...new Set(lists.flat())];
 
-const normalizeCapabilityQueryFields = (capability: any) => {
+const supportsOrganizationIdentifiers = (capability: any) => {
   const requiredQuery = capability.requiredQuery || [];
   const optionalQuery = capability.optionalQuery || [];
-  const supportsOrganization = requiredQuery.includes("organizationID") || optionalQuery.includes("organizationID");
-  const supportsVessel = requiredQuery.includes("vesselID") || optionalQuery.includes("vesselID");
+  return [requiredQuery, optionalQuery].some((fields) =>
+    fields.includes("organizationID") ||
+    fields.includes("organizationShortName") ||
+    fields.includes("organizationName")
+  );
+};
+
+const supportsVesselIdentifiers = (capability: any) => {
+  const requiredQuery = capability.requiredQuery || [];
+  const optionalQuery = capability.optionalQuery || [];
+  return [requiredQuery, optionalQuery].some((fields) =>
+    fields.includes("vesselID") || fields.includes("vesselName")
+  );
+};
+
+export const normalizeCapabilityQueryFields = (capability: any) => {
+  const requiredQuery = capability.requiredQuery || [];
+  const optionalQuery = capability.optionalQuery || [];
+  const supportsOrganization = supportsOrganizationIdentifiers(capability);
+  const supportsVessel = supportsVesselIdentifiers(capability);
 
   return {
     ...capability,
@@ -19,6 +37,84 @@ const normalizeCapabilityQueryFields = (capability: any) => {
     ),
   };
 };
+
+function getParameterDescription(param: string, requiredFields: string[]) {
+  const requiredLabel = requiredFields.includes(param) ? "Required" : "Optional";
+
+  switch (param) {
+    case "organizationShortName":
+      return `${requiredLabel} friendly organization identifier. Prefer this when the user gives an org short name such as \"fleetships\". Alternative to organizationName or organizationID.`;
+    case "organizationName":
+      return `${requiredLabel} full organization name. Alternative to organizationShortName or organizationID.`;
+    case "organizationID":
+      return `${requiredLabel} canonical raw organization identifier. Not needed when organizationShortName or organizationName is already provided.`;
+    case "vesselName":
+      return `${requiredLabel} friendly vessel identifier within the resolved organization. Alternative to vesselID.`;
+    case "vesselID":
+      return `${requiredLabel} canonical raw vessel identifier. Not needed when vesselName is already provided.`;
+    default:
+      return `${requiredLabel} parameter: ${param}`;
+  }
+}
+
+function getIdentifierGuidance(capability: any) {
+  const guidance = [];
+
+  if (supportsOrganizationIdentifiers(capability)) {
+    guidance.push(
+      "Organization scope may be supplied with organizationShortName, organizationName, or organizationID. Prefer friendly organization identifiers when the user names the organization directly."
+    );
+  }
+
+  if (supportsVesselIdentifiers(capability)) {
+    guidance.push(
+      "Vessel scope may be supplied with vesselName or vesselID. Prefer vesselName when the user names the vessel directly."
+    );
+  }
+
+  return guidance.join(" ");
+}
+
+export function buildCapabilityDescription(capability: any) {
+  const parts = [capability.purpose];
+
+  if (capability.whenToUse) {
+    parts.push(`When to use: ${capability.whenToUse}`);
+  }
+
+  const identifierGuidance = getIdentifierGuidance(capability);
+  if (identifierGuidance) {
+    parts.push(identifierGuidance);
+  }
+
+  return parts.join(" ");
+}
+
+export function buildCapabilityInputSchema(capability: any) {
+  const normalizedCapability = normalizeCapabilityQueryFields(capability);
+  const properties: Record<string, any> = {};
+  const required = normalizedCapability.requiredQuery || [];
+
+  mergeUnique(normalizedCapability.requiredQuery || [], normalizedCapability.optionalQuery || []).forEach((param) => {
+    properties[param] = {
+      type: "string",
+      description: getParameterDescription(param, required),
+    };
+  });
+
+  const inputSchema: Record<string, any> = {
+    type: "object",
+    properties,
+    required,
+  };
+
+  const identifierGuidance = getIdentifierGuidance(normalizedCapability);
+  if (identifierGuidance) {
+    inputSchema.description = identifierGuidance;
+  }
+
+  return inputSchema;
+}
 
 const baseCapabilitiesContract = [
   {
@@ -49,7 +145,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "criticalOnly", "statusCode", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "limit"],
     purpose: "Returns overdue, upcoming, and recently completed maintenance work.",
     whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses.",
     whenNotToUse: "Do NOT use for historical failure analysis (use reliability) or deep execution comments (use execution_history).",
@@ -66,7 +162,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/execution-history",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "tagName", "tagNames", "taggedOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "limit"],
     purpose: "Returns recent maintenance execution events, completion status, costs, and comments.",
     whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution.",
     typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated."],
@@ -235,7 +331,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/fleet/machinery-status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "criticalOnly", "limit"],
+    optionalQuery: ["vesselID", "criticalOnly", "searchTerm", "limit"],
     purpose: "Returns machinery list with running hours, pending activities, and overdue counts.",
     whenToUse: "To evaluate specific equipment condition, alarms, or drill down into one vessel's engine room.",
     typicalQuestions: ["Show me machinery pushing past thresholds.", "Which critical alarms are linked to overdue tasks?"],
@@ -508,7 +604,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/analytics/mttr",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "limit"],
+    optionalQuery: ["vesselID", "searchTerm", "limit"],
     purpose: "Returns Mean Time To Repair (MTTR) calculated from failure events to committed completion, grouped by machinery.",
     whenToUse: "When explicitly asked about MTTR, repair speed, how long it takes to recover from a breakdown, or to compare repair efficiency across machinery types.",
     whenNotToUse: "Not for MTBF (use analytics.query_mtbf). Not for general failure lists (use maintenance.query_reliability).",
@@ -525,7 +621,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/condition-monitoring",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "machineryID", "days", "limit"],
+    optionalQuery: ["vesselID", "machineryID", "days", "searchTerm", "limit"],
     purpose: "Returns daily running hours trends per machinery, aggregated to show avg, min, max, and total usage over the lookback window.",
     whenToUse: "When asked about running hours trends, condition-based maintenance indicators, or which machinery is being operated most intensively.",
     whenNotToUse: "Does not include sensor readings, vibration, or temperature data (those are outside the current MCP model). Use analytics.query_mtbf for failure frequency.",
@@ -578,7 +674,7 @@ export const capabilitiesContract = baseCapabilitiesContract.map(normalizeCapabi
 export const capabilitiesContractDocs = {
   service: "PhoenixCloud MCP",
   version: "0.1.0",
-  authExpectations: "Token-based. For organization-scoped routes, provide one of organizationID, organizationShortName, or organizationName. Wherever vesselID is accepted, vesselName is also accepted within the resolved organization.",
+  authExpectations: "Token-based. For organization-scoped routes, provide one of organizationShortName, organizationName, or organizationID; prefer friendly organization identifiers when the user gives a name. Wherever vesselID is accepted, vesselName is also accepted within the resolved organization and should be preferred when the user gives a vessel name.",
   generalGuidance: "Direct Mongoose reads. Do NOT infer fake cross-org relationships. Use composed queries for complex data points.",
   emptyResultInterpretation: "An empty 'items' array means no documents matched the applied tenant/filter query. During MCP validation, treat empties as needing direct DB confirmation before accepting them as truly empty.",
   capabilities: capabilitiesContract

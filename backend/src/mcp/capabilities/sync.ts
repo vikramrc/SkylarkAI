@@ -1,6 +1,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
 import https from 'https';
+import { buildCapabilityDescription, buildCapabilityInputSchema } from './contract.js';
 
 dotenv.config();
 
@@ -32,21 +33,10 @@ export async function syncCapabilities() {
 
         // Map to MCP standard tools
         const tools = contract.map((cap: any) => {
-            const properties: Record<string, any> = {};
-            const required = cap.requiredQuery || [];
-            
-            [...(cap.requiredQuery || []), ...(cap.optionalQuery || [])].forEach(param => {
-                properties[param] = { type: "string", description: `Parameter: ${param}` };
-            });
-
             return {
                 name: cap.name,
-                description: cap.purpose + (cap.whenToUse ? ` When to use: ${cap.whenToUse}` : ''),
-                inputSchema: {
-                    type: "object",
-                    properties,
-                    required
-                },
+                description: buildCapabilityDescription(cap),
+                inputSchema: buildCapabilityInputSchema(cap),
                 // Keep the original path for the proxy to use
                 _originalPath: cap.path,
                 _originalMethod: cap.method

@@ -9,8 +9,8 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
 
-// The user is entirely responsible for knowing their Org and Token
-const TEST_ORG = "67eedd60c1ceddb21d80ad45";
+// Prefer validating the friendly organization identifier path, not just raw IDs.
+const TEST_ORG_SHORT_NAME = process.env.TEST_ORG_SHORT_NAME || process.env.PHOENIX_CLOUD_ORGANIZATION_SHORT_NAME || "fleetships";
 const TEST_TOKEN = process.env.PHOENIX_CLOUD_PROXY_TOKEN; // Passed as a bearer to SSE!
 
 async function main() {
@@ -57,14 +57,13 @@ async function main() {
     }));
 
     // 2. Ask GPT 5.2
-    console.log(`Prompting GPT. Context Org ID passed internally from test: ${TEST_ORG}`);
+    console.log(`Prompting GPT. Context organizationShortName passed internally from test: ${TEST_ORG_SHORT_NAME}`);
     
     const model = process.env.OPENAI_QUERY_MODEL || "gpt-5.4";
     
     const messages = [{
         role: "user" as const,
-        // Notice we tell the AI the organizationID because the MCP layer is totally agnostic now.
-        content: `I am currently in the context of organizationID: ${TEST_ORG}. Can you query the stock transfers for my organization?`
+        content: `I am currently in the context of organizationShortName: ${TEST_ORG_SHORT_NAME}. Use organizationShortName instead of organizationID unless the selected tool explicitly requires organizationID. Can you query the stock transfers for my organization?`
     }];
 
     const response = await openai.chat.completions.create({
