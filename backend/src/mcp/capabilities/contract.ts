@@ -217,6 +217,42 @@ const baseCapabilitiesContract = [
     interpretationGuidance: "Look at 'readinessStatus'. 'shortage' means parts are missing, 'ready' means all exact parts linked are available."
   },
   {
+    name: "maintenance.query_schedules",
+    method: "GET",
+    path: "/api/mcp/maintenance/schedules",
+    requiredQuery: ["organizationID", "vesselID"],
+    optionalQuery: ["active", "limit"],
+    purpose: "Lists maintenance schedules configured for a vessel.",
+    whenToUse: "Use when the user first needs to identify which maintenance schedules exist for a vessel before drilling into machinery or activities.",
+    typicalQuestions: ["What schedules exist for vessel X?", "Show me the active maintenance plan for this vessel."],
+    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "vessel", "items"],
+    interpretationGuidance: "Use this as the first drill-down step. The returned scheduleID can be passed into the schedule-machinery and schedule-activities capabilities."
+  },
+  {
+    name: "maintenance.query_schedule_machinery",
+    method: "GET",
+    path: "/api/mcp/maintenance/schedule-machinery",
+    requiredQuery: ["organizationID", "scheduleID"],
+    optionalQuery: ["limit"],
+    purpose: "Lists machinery covered by a selected maintenance schedule.",
+    whenToUse: "Use after selecting a schedule to understand which machinery items are included and how much activity/component coverage each has.",
+    typicalQuestions: ["What machinery is included in this schedule?", "Show me the equipment covered by schedule ABC123."],
+    responseShape: ["capability", "organizationID", "appliedFilters", "schedule", "vessel", "summary", "items"],
+    interpretationGuidance: "Each item includes component and activity counts so the model can decide which machinery branch to drill into next."
+  },
+  {
+    name: "maintenance.query_schedule_activities",
+    method: "GET",
+    path: "/api/mcp/maintenance/schedule-activities",
+    requiredQuery: ["organizationID", "scheduleID", "machineryID"],
+    optionalQuery: ["limit"],
+    purpose: "Lists maintenance activities for a selected machinery item within a selected schedule.",
+    whenToUse: "Use after selecting both a schedule and a machinery item to inspect the concrete tasks, intervals, and execution requirements.",
+    typicalQuestions: ["What activities exist for this machinery in the selected schedule?", "Show me the jobs under purifier maintenance schedule ABC123."],
+    responseShape: ["capability", "organizationID", "appliedFilters", "schedule", "vessel", "machinery", "components", "summary", "items"],
+    interpretationGuidance: "This is the deepest deterministic drill-down in the schedule hierarchy and is the right capability for enumerating jobs rather than overall schedule status."
+  },
+  {
     name: "crew.query_readiness",
     method: "GET",
     path: "/api/mcp/crew/readiness",
