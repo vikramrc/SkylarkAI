@@ -1,4 +1,26 @@
-export const capabilitiesContract = [
+const ORGANIZATION_IDENTIFIER_QUERY_FIELDS = ["organizationID", "organizationShortName", "organizationName"];
+const VESSEL_IDENTIFIER_QUERY_FIELDS = ["vesselID", "vesselName"];
+
+const mergeUnique = (...lists: string[][]) => [...new Set(lists.flat())];
+
+const normalizeCapabilityQueryFields = (capability: any) => {
+  const requiredQuery = capability.requiredQuery || [];
+  const optionalQuery = capability.optionalQuery || [];
+  const supportsOrganization = requiredQuery.includes("organizationID") || optionalQuery.includes("organizationID");
+  const supportsVessel = requiredQuery.includes("vesselID") || optionalQuery.includes("vesselID");
+
+  return {
+    ...capability,
+    requiredQuery: requiredQuery.filter((field: string) => field !== "organizationID" && field !== "vesselID"),
+    optionalQuery: mergeUnique(
+      supportsOrganization ? ORGANIZATION_IDENTIFIER_QUERY_FIELDS : [],
+      supportsVessel ? VESSEL_IDENTIFIER_QUERY_FIELDS : [],
+      optionalQuery.filter((field: string) => field !== "organizationID" && field !== "vesselID")
+    ),
+  };
+};
+
+const baseCapabilitiesContract = [
   {
     name: "mcp.health",
     method: "GET",
@@ -551,10 +573,12 @@ export const capabilitiesContract = [
   }
 ];
 
+export const capabilitiesContract = baseCapabilitiesContract.map(normalizeCapabilityQueryFields);
+
 export const capabilitiesContractDocs = {
   service: "PhoenixCloud MCP",
   version: "0.1.0",
-  authExpectations: "Token-based. organizationID is required on every route.",
+  authExpectations: "Token-based. For organization-scoped routes, provide one of organizationID, organizationShortName, or organizationName. Wherever vesselID is accepted, vesselName is also accepted within the resolved organization.",
   generalGuidance: "Direct Mongoose reads. Do NOT infer fake cross-org relationships. Use composed queries for complex data points.",
   emptyResultInterpretation: "An empty 'items' array means no documents matched the applied tenant/filter query. During MCP validation, treat empties as needing direct DB confirmation before accepting them as truly empty.",
   capabilities: capabilitiesContract
