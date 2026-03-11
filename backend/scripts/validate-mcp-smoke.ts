@@ -95,7 +95,9 @@ async function listTools(path: string, sessionId: string) {
   assert(response.ok, `${path} tools/list failed: ${response.status} ${body}`);
   const match = body.match(/data: (.+)/);
   assert(match, `${path} tools/list missing SSE payload: ${body}`);
-  const payload = JSON.parse(match[1]);
+  const ssePayload = match[1];
+  assert(typeof ssePayload === "string", `${path} tools/list SSE payload capture missing: ${body}`);
+  const payload = JSON.parse(ssePayload);
   const tools = payload?.result?.tools;
   assert(Array.isArray(tools) && tools.length > 0, `${path} tools/list returned no tools`);
   assert(tools.every((tool: { name?: string }) => typeof tool.name === "string" && isOpenAiSafeToolName(tool.name)), `${path} tools/list returned non OpenAI-safe tool names`);

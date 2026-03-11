@@ -1,0 +1,313 @@
+[
+  {
+    "CollectionName": "Organization",
+    "Synonyms": ["Organization", "Company"],
+    "Description": "Top-level tenant entity. Fields: organizationName (string), orgShortName (string unique, lowercase a-z0-9), roles (array<string> of role IDs/names), tenhexID (object {iv, encryptedData} optional), primaryAdminEmail (string, unique), secondaryAdminEmail (string, unique). Used as parent for Vessel, User, InventoryPart, etc."
+  },
+  {
+    "CollectionName": "Vessel",
+    "Synonyms": ["Vessel", "Ship"],
+    "Description": "Fleet vessel record. Fields: vesselName (string unique), vessel_IMO_Number (string unique), organizationID (string → Organization). Related to Machinery (via vesselID), InventoryLocation (via vesselID), Form/FormTemplate mappings, and ActivityWorkHistory (via vesselID)."
+  },
+  {
+    "CollectionName": "Machinery",
+    "Synonyms": ["Machinery", "Equipment"],
+    "Description": "Equipment installed on a vessel. Fields: vesselID (ObjectId → Vessel), machineryName (string), machineryDescription (string optional), avgRunningHoursPerMonth (number optional), actualRunningHoursSinceLastMaintenance (number optional). Related to Component (machineryID), Activity (machineryID), InventoryPart.compatibleMachinery[]."
+  },
+  {
+    "CollectionName": "VesselMachinery",
+    "Synonyms": ["Machinery Register", "Equipment Register", "Vessel Machinery"],
+    "Description": "Mapping collection listing machinery present on a vessel. Fields: vesselID (ObjectId → Vessel), machineryID (array<ObjectId> → Machinery)."
+  },
+  {
+    "CollectionName": "Component",
+    "Synonyms": ["Component", "Subcomponent", "Assembly"],
+    "Description": "Hierarchical component under a machinery. Fields: machineryID (ObjectId → Machinery), vesselID (ObjectId → Vessel, optional), parentComponentID (string/ObjectId optional → Component), componentName (string), sfiCode (string optional for SFI classification). Related to MaintenanceSchedule.components[] and ComponentActivity.componentID."
+  },
+  {
+    "CollectionName": "ComponentActivity",
+    "Synonyms": ["Component-Activity Mapping", "Activity Mapping"],
+    "Description": "Associates one component to one or more activities, optionally vessel/schedule scoped. Fields: componentID (ObjectId → Component), vesselID (ObjectId → Vessel optional), maintenanceScheduleID (ObjectId → MaintenanceSchedule optional), activityIDs (array<ObjectId> → Activity)."
+  },
+  {
+    "CollectionName": "MaintenanceSchedule",
+    "Synonyms": ["Maintenance Schedule", "PMS Schedule", "Maintenance Plan"],
+    "Description": "Plan defining activities for a vessel. Fields: organizationID (string), shortName (string 8–16), vesselID (string → Vessel), components (array<ObjectId> → Component), maintenanceScheduleDescription (string), maintenanceScheduleRevisionHistory (array<ObjectId> → MaintenanceScheduleRevisionHistory), active (boolean), createdByUserID (string → User), lastUpdatedByUserID (string → User optional), userPermissions (array<{userID:string, permission:array<string>}>), sfiCode (string optional), minScheduleYear/maxScheduleYear (number optional)."
+  },
+  {
+    "CollectionName": "MaintenanceScheduleRevisionHistory",
+    "Synonyms": ["Revision History", "Schedule Revision"],
+    "Description": "Revisions applied to a MaintenanceSchedule. Fields: revisionDescription (string), createdByUserID (string/ObjectId → User)."
+  },
+  {
+    "CollectionName": "Activity",
+    "Synonyms": ["Activity", "Job", "Task", "Job Card"],
+    "Description": "Defines a planned maintenance job against machinery. Fields: machineryID (ObjectId → Machinery), maintenanceScheduleID (ObjectId → MaintenanceSchedule optional), description (string), intervalDuration (string nullable, e.g., '1000', '3'), intervalDurationType (enum: hours, months, years, days, weeks nullable), adhocInterval (string optional, e.g., 'voyage'), lastDoneOn (date optional), workHistory (array<ObjectId> → ActivityWorkHistory), expectedManHours (number optional), expectedCost (number optional), department (enum: Engine|Deck|Electrical|Catering|Operations|Supply|Other optional), requireClassSurvey (boolean default false), allowClassSurveyException (boolean default false), isStatutoryCompliance (boolean default false), isCritical (boolean default false), requiredRank (string default 'any'), requiredCompetency (number 1-5 optional), requiresContractor (boolean default false), ptwConfig (object {isPTWRequired:boolean, ptwTypeIds:array<string>, ptwFormTemplateIDs:array<ObjectId>→FormTemplate}), requiredParts (array<{partID:ObjectId→InventoryPart, estimatedQuantity:number, isCritical:boolean}> default[]), estimatedPartsCost (number optional), maintenanceSteps (object optional: {notesHtml:string, documentIDs:array<ObjectId>→DocumentMetadata, updatedBy:ObjectId→User, updatedAt:date})."
+  },
+  {
+    "CollectionName": "ActivityWorkHistory",
+    "Synonyms": ["Activity Work History", "AWH", "Work History", "Job History"],
+    "Description": "Execution record for an Activity on a vessel/schedule. Fields: organizationID (string), maintenanceScheduleID (string → MaintenanceSchedule), activityID (string → Activity), vesselID (string → Vessel), _systemSet_seqNum (number optional), active (boolean default true latest), committed (boolean default false), classInspectionCompleted (boolean default false), events (array<ObjectId> → ActivityWorkHistoryEvent), plannedDueDate (date), previousDueDate (date optional), validatedForms (array<{formTemplateID:string, formData:mixed, validated:boolean, validatedAt:date?, validatedBy:string?, rejected:boolean, rejectedAt:date?, rejectedBy:string?}> default[]), estimatedManHours (number optional job-level estimate), ptwConfig (object {isPTWRequired:boolean, ptwTypeIds:array<string>, ptwFormTemplateIDs:array<ObjectId>→FormTemplate}), failure tracking: isFailureEvent (boolean), failureCause (string optional), failureSeverity (enum minor|moderate|major|critical optional), isUnplannedMaintenance (boolean), requiresFollowUp (boolean), needsDrydock (boolean), isNonConformity (boolean), machineryRunningHours (number optional), relatedPartIDs (array<ObjectId> → InventoryPart default[]), childAWHIds (array<ObjectId> → ActivityWorkHistory), parentAWHId (ObjectId → ActivityWorkHistory), downtime: hasDowntime (boolean), downtimeStartDate (date optional), downtimeEndDate (date optional), downtimeDescription (string optional), operationalImpact (enum none|minor|major|critical optional), latestEventID (ObjectId → ActivityWorkHistoryEvent)  , latestEventStatus (enum created, completed, missed, cancelled, rescheduled, in-progress, suspended), latestEventDate (date), latestEventDescription (string), latestEventPerformedBy (string → User)."
+  },
+  {
+    "CollectionName": "ActivityWorkHistoryEvent",
+    "Synonyms": ["Work Event", "Event", "Task Event"],
+    "Description": "Granular event within a work history. Fields: activityWorkHistoryID (ObjectId → ActivityWorkHistory), performedOn (date optional), performedBy (ObjectId → User optional), description (string optional), activityCompletionStatus (enum: created, completed, missed, cancelled, rescheduled, in-progress, suspended), maintenanceType (enum: routine, breakdown, unscheduled, survey, inspection, repair, modification, overhaul, refit, drydock, preventive, other), comments (string optional), documents (array<string> file paths optional), riskAssessment (string optional), damageDeficiency (string optional), actualManHours (number optional execution-level actual), crewMembersAssigned (array<ObjectId> → CrewMember default[]), qualityErrors (array<{code, category, severity, detectedBy, linkedFormID}> default[]), specialComments (string optional), partsUsed (array<ObjectId> → MaintenancePartUsage), actualPartsCost (number optional)."
+  },
+  {
+    "CollectionName": "MaintenancePartUsage",
+    "Synonyms": ["Part Usage", "Spare Usage", "Consumption"],
+    "Description": "Parts consumed/returned during a job event. Fields: organizationID (ObjectId → Organization), activityWorkHistoryEventID (ObjectId → ActivityWorkHistoryEvent), partID (ObjectId → InventoryPart), quantityUsed (number ≥0), quantityReturned (number ≥0 default 0), fromLocationID (ObjectId → InventoryLocation), issuedBy (ObjectId → User), usedBy (ObjectId → User), unitCost (number ≥0 default 0), totalCost (number ≥0 default 0 auto-calculated), usageDate (date default now), comments (string optional)."
+  },
+  {
+    "CollectionName": "InventoryPart",
+    "Synonyms": ["Inventory Part", "Spare", "Part"],
+    "Description": "Master data for spares/consumables. Fields: organizationID (ObjectId → Organization), vesselID (ObjectId → Vessel optional), partNumber (string unique within org), partName (string), description (string optional), category (string optional), subcategory (string optional), sfiCode (string optional), unit (string default 'pcs'), reorderLevel (number≥0 default 0), maxStockLevel (number≥0 optional), leadTimeDays (number≥0 default 30), unitCost (number≥0 default 0), preferredVendorID (ObjectId → Vendor optional), alternativeVendors (array<ObjectId> → Vendor), specifications (object default {}), compatibleMachinery (array<ObjectId> → Machinery), isActive (boolean default true), isCritical (boolean default false), shelfLifeMonths (number≥0 optional), expiryDate (date optional), calibrationDueDate (date optional)."
+  },
+  {
+    "CollectionName": "InventoryLocation",
+    "Synonyms": ["Inventory Location", "Store", "Warehouse", "Locker", "Bin"],
+    "Description": "Where stock is stored or used. Fields: organizationID (ObjectId → Organization), vesselID (ObjectId → Vessel optional), locationCode (string unique within org), locationName (string), locationType (enum: vessel_storage, shore_warehouse, workshop, work_site), description (string optional), parentLocationID (ObjectId → InventoryLocation optional), isActive (boolean default true), system (boolean default false)."
+  },
+  {
+    "CollectionName": "InventoryStock",
+    "Synonyms": ["Inventory Stock", "Stock"],
+    "Description": "Per-part per-location stock snapshot. Fields: organizationID (ObjectId → Organization), partID (ObjectId → InventoryPart), locationID (ObjectId → InventoryLocation), currentQuantity (number≥0), reservedQuantity (number≥0), availableQuantity (number≥0 auto: current−reserved), lastCountDate (date optional), lastCountBy (ObjectId → User optional), averageMonthlyConsumption (number≥0 default 0). Unique by (organizationID, partID, locationID)."
+  },
+  {
+    "CollectionName": "InventoryTransaction",
+    "Synonyms": ["Inventory Transaction", "Stock Movement"],
+    "Description": "All inventory movements with linkage. Fields: organizationID (ObjectId → Organization), partID (ObjectId → InventoryPart), transactionType (enum: receipt, issue, transfer, return), quantity (number; positive receipts, negative issues), fromLocationID (ObjectId → InventoryLocation optional), toLocationID (ObjectId → InventoryLocation optional), relatedActivityWorkHistoryID (ObjectId → ActivityWorkHistory optional), relatedActivityWorkHistoryEventID (ObjectId → ActivityWorkHistoryEvent optional), relatedPurchaseOrderID (ObjectId → PurchaseOrder optional), relatedReplenishOrderID (ObjectId → ReplenishOrder optional), performedBy (ObjectId → User), authorizedBy (ObjectId → User optional), unitCost (number≥0 default 0), totalCost (number default 0 auto = |quantity|*unitCost), reason (string optional), comments (string optional), documentReferences (array<string> optional), transactionDate (date default now)."
+  },
+  {
+    "CollectionName": "Vendor",
+    "Synonyms": ["Vendor", "Supplier"],
+    "Description": "Suppliers for parts/services. Fields: organizationID (ObjectId → Organization), vendorCode (string), vendorName (string), contactInfo (object {address, phone, email, contactPerson} optional), paymentTerms (string optional), leadTimeDays (number≥0 default 30), qualityRating (1–5 default 3), deliveryRating (1–5 default 3), isActive (boolean default true), specializations (array<string> e.g., 'Engine parts')."
+  },
+  {
+    "CollectionName": "PurchaseOrder",
+    "Synonyms": ["Purchase Order", "PO"],
+    "Description": "External purchase of parts. Fields: organizationID (ObjectId → Organization), poNumber (string), vendorID (ObjectId → Vendor), vesselID (ObjectId → Vessel optional), status (enum: draft, sent, acknowledged, partial_received, completed, cancelled), orderDate (date default now), expectedDeliveryDate (date optional), actualDeliveryDate (date optional), orderedBy (ObjectId → User), approvedBy (ObjectId → User optional), totalAmount (number≥0 default 0), currency (string default 'USD'), lineItems (array<{partID:ObjectId→InventoryPart, quantity:number≥1, unitPrice:number≥0, totalPrice:number≥0, receivedQuantity:number≥0 default 0, urgency: enum normal|urgent|critical}>), deliveryLocation (string optional), specialInstructions (string optional), documents (array<string> file paths)."
+  },
+  {
+    "CollectionName": "ReplenishOrder",
+    "Synonyms": ["Replenishment Order", "RO",  "replenish order",
+          "replenishment",
+          "stock request",
+          "inventory request",
+          "restock order"],
+    "Description": "Internal replenishment to a location/vessel. Fields: organizationID (ObjectId → Organization), orderNumber (string unique), itemID (ObjectId → InventoryPart), vesselID (ObjectId → Vessel), toLocationID (ObjectId → InventoryLocation), requestedQuantity (number > 0), receivedQuantity (number≥0 default 0), status (enum: requested, partial_received, fully_received, closed), requestedBy (ObjectId → User), remarks (string optional), purchaseOrderID (ObjectId → PurchaseOrder optional), documents (array<string>), createdAt/updatedAt (date), createdBy/updatedBy (ObjectId → User optional)."
+  },
+  {
+    "CollectionName": "SfiCode",
+    "Synonyms": ["SFI Code", "SFI"],
+    "Description": "Legacy compatibility seed entry retained for user vocabulary that still refers to SFI codes/categories in the older shape. Fields: organizationID (ObjectId → Organization), category (string like '101.' or '101.001'), name (string), level (number 1–5), parentCategory (string optional), description (string optional), isActive (boolean default true). Operationally this bridges older SFI-code phrasing used in questions and seed content, while the current backend-aligned hierarchy is modeled by SfiNode."
+  },
+  {
+    "CollectionName": "DocumentType",
+    "Synonyms": ["Doc Type", "Document Category", "File Type"],
+    "Description": "Allowed document categories per organization with dynamic custom fields. Fields: organizationID (ObjectId → Organization), typeName (string unique per org), description (string optional), isActive (boolean default true), createdBy (ObjectId → User), updatedBy (ObjectId → User optional), fields (array<{fieldName, fieldLabel, fieldType enum text|date|number|dropdown|reference, isRequired:boolean default false, dropdownOptions:array<string>?, referenceModel enum Machinery|Component|Activity?, defaultValue:string?, helpText:string?, order:number default 0}> default [])."
+  },
+  {
+    "CollectionName": "DocumentMetadata",
+    "Synonyms": ["Document", "DMS Metadata", "Document Record", "File Record"],
+    "Description": "Document metadata and version lineage with custom metadata values. Fields: organizationID (ObjectId → Organization), vesselID (ObjectId → Vessel optional), documentName (string), documentType (string name; see DocumentType), description (string optional), currentVersionId (ObjectId → DocumentFile optional), fileVersions (array<ObjectId> → DocumentFile), createdBy (ObjectId → User), updatedBy (ObjectId → User optional), status (enum: active, archived, draft default active), isDeleted (boolean default false), customMetadata (object default {}; keys match DocumentType.fields[].fieldName; values string|number|Date|ObjectId)."
+  },
+  {
+    "CollectionName": "DocumentFile",
+    "Synonyms": ["Document File", "File Version", "Attachment"],
+    "Description": "Physical file/version linked to DocumentMetadata. Fields: documentMetadataId (ObjectId → DocumentMetadata), version (string), versionDescription (string optional), fileName (string), originalFileName (string), fileSize (number), mimeType (string), gridFSFileId (ObjectId GridFS), uploadedBy (ObjectId → User), uploadedAt (date default now), approvedBy (ObjectId → User optional), approvedAt (date optional), previousVersionId (ObjectId → DocumentFile optional), isLatest (boolean), gridFSMetadata (object optional), isDeleted (boolean default false)."
+  },
+  {
+    "CollectionName": "SearchableTag",
+    "Synonyms": ["Tag", "Label", "Keyword", "Search Tag"],
+    "Description": "Organization tags that can be applied to multiple item types. Fields: organizationID (ObjectId → Organization), tagName (string ≤16), tagColor (hex color string optional), taggedItems (array<{itemType enum: FormTemplate|Activity|ActivityWorkHistoryEvent|ActivityWorkHistory|Form|DocumentMetadata, itemID:ObjectId, taggedAt:date, taggedBy:ObjectId→User, inherited:boolean?, inheritedFrom:ObjectId?}> default[]), createdBy (ObjectId → User), updatedBy (ObjectId → User optional), system (boolean default false)."
+  },
+  {
+    "CollectionName": "FormTemplate",
+    "Synonyms": ["Form Template", "Checklist Template", "Report Template", "Procedure Form"],
+    "Description": "Definition of dynamic forms/checklists. Fields: organizationID (ObjectId → Organization), name (string unique), description (string optional), createdByUserID (ObjectId → User), updatedByUserID (ObjectId → User optional), sections (array<{id,title,description?,columns:number,order:number}>), fields (array<{id,type enum text|textarea|number|dropdown|checkbox|radio|date|datetime|file|email|phone|availableFiles|staticLabel|dropdownFile, label, placeholder?, value?, required:boolean, order:number, sectionId, lineBreak:boolean, pageBreak:boolean, options?, validations?, helperText?, files?, onlyPastDates:boolean, fileKVPairId?, multiSelect:boolean}>), active (boolean default true), isSystemTemplate (boolean default false), isNonConformity (boolean default false), isPTW (boolean default false), ptwType (enum optional)."
+  },
+  {
+    "CollectionName": "Form",
+    "Synonyms": ["Checklist", "Inspection Form", "Report", "Filled Form"],
+    "Description": "Backend form instance/schedule model used for vessel, crew, activity-linked, proxy, and adhoc operational forms. Fields: name (string), description (string optional), formTemplateID (ObjectId → FormTemplate), vesselID (ObjectId → Vessel optional), crewMemberID (ObjectId → CrewMember optional), organizationID (string), startDate (date), intervalValue (number optional), intervalUnit (enum: one_time, days, weeks, months, years optional), nextDueDate (date optional), status (enum: submitted, committed), formData (object), submittedBy (ObjectId → User optional), submittedAt (date optional), committedBy (ObjectId → User optional), committedAt (date optional), isProxy (boolean), activityMappingID (ObjectId → FormTemplateActivityMapping optional), activityWorkHistoryID (ObjectId → ActivityWorkHistory optional), proxyFormID (ObjectId → Form optional), vesselMappingID (ObjectId → FormTemplateVesselMapping optional), crewMappingID (ObjectId → FormTemplateCrewMapping optional), isAdhoc (boolean), templateSnapshot (object optional), createdByUserID (ObjectId → User), updatedByUserID (ObjectId → User optional)."
+  },
+  {
+    "CollectionName": "FormActionHistory",
+    "Synonyms": ["Form Audit", "Form Action Log", "Workflow Log"],
+    "Description": "Audit trail of form actions. Fields: formID (ObjectId → Form), actionType (enum: submit, commit, reject, reset), actionBy (ObjectId → User), actionAt (date default now), message (string optional), organizationID (string)."
+  },
+  {
+    "CollectionName": "FormSequence",
+    "Synonyms": ["Form Sequence", "Form Workflow", "Sequence"],
+    "Description": "Defines a reusable sequence of vessel-specific forms. Key: sequenceID (string unique). Fields: description (string optional), vesselID (ObjectId → Vessel), organizationID (ObjectId → Organization), createdByUserID (ObjectId → User), updatedByUserID (ObjectId → User optional), active (boolean default true). Query hint: Use case-insensitive regex on sequenceID for selection (e.g., '^noon')."
+  },
+  {
+    "CollectionName": "FormSequenceItem",
+    "Synonyms": ["Sequence Item", "Workflow Step", "Sequence Mapping"],
+    "Description": "Places a vessel mapping inside a sequence with an order and characteristic. Fields: sequenceID (ObjectId → FormSequence), vesselMappingID (ObjectId → FormTemplateVesselMapping), order (number≥1), characteristic (enum: minimum_once, atmost_once, optional), organizationID (ObjectId → Organization), createdByUserID (ObjectId → User), updatedByUserID (ObjectId → User optional). Query hint: For 'next to fill', derive currentOrder from items that have a Form with status ∈ ['submitted','committed'], then select next order (> currentOrder, wrap to first). Ignore characteristic for selection."
+  },
+  {
+    "CollectionName": "FormSequenceCycle",
+    "Synonyms": ["Form Sequence Cycle", "Sequence Cycle", "Cycle"],
+    "Description": "Tracks per-sequence cycles for runtime 'current step' semantics. Fields: sequenceID (ObjectId → FormSequence), cycleNumber (number≥1), organizationID (ObjectId → Organization), startedAt (date default now), completedAt (date optional), committedItems (array<ObjectId → FormTemplateVesselMapping>), allRequiredDone (boolean default false). Query hint: Prefer open cycle (completedAt==null) when present; otherwise fallback to historical forms to derive currentOrder."
+  },
+
+  {
+    "CollectionName": "FormTemplateActivityMapping",
+    "Synonyms": ["Form–Activity Mapping", "AWH Form Mapping", "Required Forms"],
+    "Description": "Maps a form template to one or more activities at optional scopes (org-wide, vessel, schedule). Fields: organizationID (ObjectId → Organization), formTemplateID (ObjectId → FormTemplate), vesselID (ObjectId → Vessel optional), maintenanceScheduleID (ObjectId → MaintenanceSchedule optional), activityIDs (array<ObjectId> → Activity optional), requiredForStatuses (array<enum created|completed|missed|cancelled|rescheduled|in-progress|suspended> optional), isOptional (boolean default false), isMandatoryIfOverdue (boolean default false), excludeGlobalRiskForms (boolean default false), createdByUserID (ObjectId → User), updatedByUserID (ObjectId → User optional), plus helpful arrays for UI (activityDescriptions[], machineryComponentActivityText[])."
+  },
+  {
+    "CollectionName": "FormTemplateVesselMapping",
+    "Synonyms": ["Form–Vessel Mapping", "Form Schedule", "Recurring Form"],
+    "Description": "Assigns a form template to a vessel with recurrence. Fields: organizationID (ObjectId → Organization), formTemplateID (ObjectId → FormTemplate), vesselID (ObjectId → Vessel), startDate (date), intervalValue (number>0), intervalUnit (enum: one_time, days, weeks, months, years), isAdhoc (boolean default false), createdByUserID (ObjectId → User), updatedByUserID (ObjectId → User optional)."
+  },
+  {
+    "CollectionName": "FileKVPair",
+    "Synonyms": ["KV File", "Lookup Table", "Dropdown File", "Key-Value File"],
+    "Description": "CSV/lookup stored in GridFS for dropdowns, etc. Fields: organizationID (ObjectId → Organization), id (string custom key), description (string optional), fileId (string GridFS ID), totalRows (number≥0), createdByUserID (ObjectId → User), updatedByUserID (ObjectId → User optional)."
+  },
+  {
+    "CollectionName": "User",
+    "Synonyms": ["Crew", "Staff", "Account", "Operator User", "Shore User"],
+    "Description": "System user account. Fields: email (string unique), firstName (string), lastName (string), organizationID (string → Organization), status (enum active|inactive|suspended), roles (array<string>), lastLogin (date), createdAt (date), updatedAt (date)."
+  },
+  {
+    "CollectionName": "CrewMember",
+    "Synonyms": ["Crew Member", "Seafarer", "Officer", "Rating", "Ship Staff"],
+    "Description": "Represents an individual crew member employed by the organization. Fields: organizationID (ObjectId -> Organization), firstName (string), lastName (string), rank (enum any|officer|engineer|rating|specialist), dateOfBirth (date optional), nationality (string optional), userID (ObjectId -> User optional), employmentStatus (enum active|off-hire|inactive), certificateDocumentIDs/documentIDs (array<ObjectId> -> DocumentMetadata), contractPeriods (array of {startDate, endDate?, position, vesselID:ObjectId->Vessel, documentIDs:array<ObjectId>->DocumentMetadata}), employmentHistory (array of {action: hired|off-hire|re-hired, date, reason?, performedBy:ObjectId->User?})."
+  },
+  {
+    "CollectionName": "CrewAssignment",
+    "Synonyms": ["Crew Assignment", "Posting", "Deployment", "Crewing Assignment"],
+    "Description": "Links a CrewMember to a vessel, maintenance schedule or activity during a time period. Fields: organizationID (ObjectId -> Organization), crewMemberID (ObjectId -> CrewMember), vesselID (ObjectId -> Vessel optional), maintenanceScheduleID (ObjectId -> MaintenanceSchedule optional), activityID (ObjectId -> Activity optional; exactly one of these scope IDs must be set), assignmentType (enum permanent|riding_crew|contractor), startDate (date), endDate (date optional), status (enum planned|active|completed|relieved), rank (enum from CrewMember.rank optional), role (string optional), shiftPatternID (ObjectId -> ShiftPattern optional)."
+  },
+  {
+    "CollectionName": "ShiftPattern",
+    "Synonyms": ["Shift Pattern", "Watch Schedule", "Duty Pattern", "Work Schedule"],
+    "Description": "Defines a reusable work/watch pattern for a vessel or organization. Fields: organizationID (ObjectId -> Organization), vesselID (ObjectId -> Vessel optional), patternName (string), patternType (enum watch|daywork|custom), shifts (array of {startTime:string HH:MM, endTime:string HH:MM, activityType:string}), applicableRanks (array<string>), isDefault (boolean default false). Used by CrewAssignment.shiftPatternID and work/rest planning."
+  },
+  {
+    "CollectionName": "WorkRestRecord",
+    "Synonyms": ["Work Rest Record", "Hours of Rest Log", "Work/Rest Compliance", "MLC Work Rest", "Crew Hours Log"],
+    "Description": "Daily work/rest log for one crew member on a vessel. Fields: organizationID (ObjectId -> Organization), vesselID (ObjectId -> Vessel), crewMemberID (ObjectId -> CrewMember), date (date), workPeriods (array of {startTime:date, endTime:date, activityType:enum watchkeeping|maintenance|cargo_operations|administrative|training|emergency_drill|standby, activityDescription:string?, relatedActivityWorkHistoryID:ObjectId->ActivityWorkHistory?}), restPeriods (array of {startTime:date, endTime:date, restType:enum sleep|meal_break|personal_time}), totalWorkHours (number 0-24), totalRestHours (number 0-24), complianceStatus ({isCompliant:boolean, violations:array of {violationType, severity, description}}), exceptions (array of emergency/force_majeure/safety_critical records with compensatoryRestRequired/Provided fields), enteredBy (ObjectId -> User), enteredAt (date), verifiedBy (ObjectId -> User optional), verifiedAt (date optional)."
+  },
+  {
+    "CollectionName": "Ptw",
+    "Synonyms": ["Permit to Work", "PTW", "Permit", "Safe Work Permit"],
+    "Description": "Permit to Work authorization record for high-risk activities. Fields: ptwNumber (string unique), vesselID (ObjectId → Vessel), activityWorkHistoryID (ObjectId → ActivityWorkHistory optional), type (enum: hot_work, enclosed_space, cold_work, working_aloft, electrical_isolation, underwater_ops, other), location (string), description (string), validFrom (date), validTo (date), status (enum: DRAFT, PENDING_APPROVAL, APPROVED, ACTIVE, CLOSED, REJECTED, CANCELLED, EXPIRED), approvals (array<{step, rankCode, crewAssignmentID, status, approvedAt, signature}>), documents (array<string> file paths), riskAssessmentIDs (array<ObjectId> → DocumentMetadata), responsibleOfficerAssignmentID (ObjectId → CrewAssignment), createdByAssignmentID (ObjectId → CrewAssignment optional), rejectionReason (string optional), issuedAt (date), closedAt (date optional)."
+  },
+  {
+    "CollectionName": "AdhocRosterBlock",
+    "Synonyms": ["Adhoc Roster", "Roster Block", "Extra Shift"],
+    "Description": "Extra work/watch blocks assigned to crew. Fields: organizationID (ObjectId → Organization), vesselID (ObjectId → Vessel), crewID (ObjectId → CrewMember), date (string YYYY-MM-DD), startTime (string HH:MM), endTime (string HH:MM), activityType (string default 'adhoc')."
+  },
+  {
+    "CollectionName": "DailyMachineryRunningHours",
+    "Synonyms": ["Running Hours", "Daily Hours", "Machinery Log"],
+    "Description": "Daily recording of equipment running hours. Fields: organizationID (ObjectId → Organization), vesselID (ObjectId → Vessel), maintenanceScheduleID (ObjectId → MaintenanceSchedule), machineryID (ObjectId → Machinery), date (date), runningHours (number), searchPortCode (string), destinationPortCode (string), additionalData (object), createdByUserID (ObjectId → User)."
+  },
+  {
+    "CollectionName": "SfiNode",
+    "Synonyms": ["SFI Code", "SFI Node", "Standard Classification"],
+    "Description": "Backend SFI hierarchy node used for exact structured classification of ship systems, equipment, components, inventory, and document contexts. Fields: sfiCode (string unique), name (string), parentSfiCode (string), depth (number), isVirtual (boolean). Use this as the backend-accurate routing target when users ask for SFI tree lookups, descendants, parents, or node-level classification."
+  },
+  {
+    "CollectionName": "RFQ",
+    "Synonyms": ["Request for Quote", "RFQ"],
+    "Description": "Quotation requests sent to vendors for parts. Fields: organizationID (ObjectId → Organization), rfqNumber (string), status (enum: draft, sent, quotes_received, quote_selected, converted_to_po, cancelled), requestDate (date), responseDeadline (date), lineItems (array), vendors (array), selectedVendorID (ObjectId → Vendor), linkedPurchaseOrderID (ObjectId → PurchaseOrder), createdBy (ObjectId → User)."
+  },
+  {
+    "CollectionName": "FormTemplateCrewMapping",
+    "Synonyms": ["Crew Form Assignment", "Crew Schedule"],
+    "Description": "Assigns form templates to individual crew members with recurrence. Fields: organizationID (ObjectId → Organization), formTemplateID (ObjectId → FormTemplate), crewMemberID (ObjectId → CrewMember), startDate (date), intervalValue (number), intervalUnit (enum), isAdhoc (boolean), createdByUserID (ObjectId → User)."
+  },
+  {
+    "CollectionName": "ActivityReminderTracking",
+    "Synonyms": ["Activity Reminder", "Maintenance Reminder Tracking", "Overdue Reminder Log"],
+    "Description": "Tracks reminder delivery state for upcoming and overdue maintenance work so users can see who was notified, when reminders were sent, and whether escalation is still active. Fields: organizationID (ObjectId → Organization), userID (ObjectId → User), activityWorkHistoryID (ObjectId → ActivityWorkHistory), activityID (ObjectId → Activity), vesselID (ObjectId → Vessel), plannedDueDate (date), beforeDueSent (boolean), beforeDueSentAt (date optional), overdueSentCount (number), lastOverdueSentAt (date optional), active (boolean)."
+  },
+  {
+    "CollectionName": "Budget",
+    "Synonyms": ["Budget", "Maintenance Budget", "Vessel Budget"],
+    "Description": "Financial planning record for vessel or department spending across a defined month/period so maintenance, procurement, and operational costs can be planned, approved, and monitored. Fields: organizationID (ObjectId → Organization), name (string), description (string optional), vesselID (ObjectId → Vessel optional), year (number), month (number optional), budgetPeriod ({startDate,endDate}), budgetType (string/enum), budgetCodeID (ObjectId → BudgetCode optional), allocatedAmount (number), revisedAllocation (number optional), costCenterID (ObjectId → CostCenter optional), department (string optional), currency (string), status (string/enum), createdBy (ObjectId → User)."
+  },
+  {
+    "CollectionName": "BudgetCode",
+    "Synonyms": ["Budget Code", "Cost Code", "Expense Code"],
+    "Description": "Chart-of-accounts style coding structure used to group budgets, allocations, invoices, and maintenance spend under consistent financial headings. Fields: organizationID (ObjectId → Organization), code (string), name (string), parentCodeID (ObjectId → BudgetCode optional), isActive (boolean)."
+  },
+  {
+    "CollectionName": "BudgetTransaction",
+    "Synonyms": ["Budget Transaction", "Commitment", "Actual Spend", "Accrual"],
+    "Description": "Financial transaction ledger for commitments, accruals, actuals, reversals, and credits tied to purchase orders, invoices, maintenance work, and returns. Fields include organizationID, budgetID, budgetAllocationID, budgetCodeID, costCenterID, vesselID, referenceType (PO_LINE|AWH_PART|AWH_LABOUR|AWH_EXTERNAL|INVOICE|INVOICE_LINE|BUDGET_REVISION|MANUAL_ALLOCATION|RTV_LINE), transactionType (COMMITMENT|ACCRUAL|ACTUAL|REVERSAL|REVISION|RETURN_ACCRUAL|CREDIT_NOTE), amount, currency, reference IDs, notes, and audit timestamps."
+  },
+  {
+    "CollectionName": "BudgetAllocation",
+    "Synonyms": ["Budget Allocation", "Cost Allocation", "Maintenance Allocation"],
+    "Description": "Operational cost-allocation record connecting maintenance work, inventory usage, or external services to a budget, budget code, and cost center. Fields: organizationID (ObjectId → Organization), vesselID (ObjectId → Vessel optional), activityWorkHistoryID (ObjectId → ActivityWorkHistory optional), inventoryTransactionID (ObjectId → InventoryTransaction optional), serviceProvider (string optional), isAdHoc (boolean), serviceItems (array optional), budgetID (ObjectId → Budget), budgetCodeID (ObjectId → BudgetCode), costCenterID (ObjectId → CostCenter optional), estimatedCost (number), actualCost (number optional), currency (string), description (string optional), allocatedBy (ObjectId → User), notes (string optional), status (string/enum), allocationType (string/enum)."
+  },
+  {
+    "CollectionName": "BudgetAuditLog",
+    "Synonyms": ["Budget Audit", "Budget Change Log", "Budget History"],
+    "Description": "Audit trail for budget changes so finance and operations teams can trace status movements, revised allocations, reasons, and who made each update. Fields: budgetID (ObjectId → Budget), organizationID (ObjectId → Organization), modifiedBy (ObjectId → User), modifiedAt (date), budgetStatus (string/enum), changeReason (string optional), changeType (string/enum), changedFields (array), metadata (object optional)."
+  },
+  {
+    "CollectionName": "BudgetAllocationAuditLog",
+    "Synonyms": ["Budget Allocation Audit", "Allocation Change Log", "Allocation History"],
+    "Description": "Audit trail for budget allocation edits so the business can explain estimated-vs-actual changes, reassignments, and approval history on individual allocations. Fields: allocationID (ObjectId → BudgetAllocation), organizationID (ObjectId → Organization), modifiedBy (ObjectId → User), modifiedAt (date), changeType (string/enum), changedFields (array), metadata (object optional)."
+  },
+  {
+    "CollectionName": "CostCenter",
+    "Synonyms": ["Cost Center", "Department Cost Center", "Expense Center"],
+    "Description": "Organizational accounting unit used to group operational spend by department, vessel function, or reporting responsibility. Fields: organizationID (ObjectId → Organization), code (string), name (string), isActive (boolean)."
+  },
+  {
+    "CollectionName": "CrewCompetencySignal",
+    "Synonyms": ["Competency Signal", "STCW Requirement Signal", "Crew Competency Rule"],
+    "Description": "Structured competency requirement signal used to map crew evidence to operational readiness, certification expectations, and familiarization or endorsement checks. Fields: organizationID (ObjectId → Organization), signalID (string), label (string), sections (array/object), mapsToRequirementIDs (array of requirement IDs such as medical, basicSafety, deckOfficerCoc, engineOfficerCoc, tankerBasic, tankerAdvanced, gasBasic, gasAdvanced, passengerBasic, passengerAdvanced, igfBasic, igfAdvanced, polarBasic, polarAdvanced, offshoreFamiliarization, dpWatchkeeping, tugFamiliarization), sortOrder (number), isActive (boolean), createdBy (ObjectId → User), updatedBy (ObjectId → User optional)."
+  },
+  {
+    "CollectionName": "Invoice",
+    "Synonyms": ["Invoice", "Supplier Invoice", "Vendor Bill"],
+    "Description": "Supplier invoice record tied to procurement, maintenance work, and budget allocation so payable amounts, approvals, settlement, and document evidence can be tracked. Fields: organizationID (ObjectId → Organization), vesselID (ObjectId → Vessel optional), purchaseOrderID (ObjectId → PurchaseOrder optional), activityWorkHistoryID (ObjectId → ActivityWorkHistory optional), budgetAllocationID (ObjectId → BudgetAllocation optional), budgetID (ObjectId → Budget optional), budgetCodeID (ObjectId → BudgetCode optional), costCenterID (ObjectId → CostCenter optional), invoiceNumber (string), invoiceDate (date), dueDate (date optional), currency (string), lineItems (array), subTotal (number), taxAmount (number), totalAmount (number), status (string/enum), paymentDate (date optional), paymentReference (string optional), approvedBy/approvedAt, settledBy/settledAt, documents (array), remarks (string optional), cancellationReason (string optional), cancelledAt (date optional), processedBy (ObjectId → User optional)."
+  },
+  {
+    "CollectionName": "LandingOrder",
+    "Synonyms": ["Landing Order", "Receiving Order", "Goods Receipt"],
+    "Description": "Inbound logistics/receipt record for items landed to a vessel or location so procurement fulfillment, receipts, and supporting documents can be tracked. Fields: organizationID (ObjectId → Organization), orderNumber (string), vesselID (ObjectId → Vessel optional), fromLocationID (ObjectId → InventoryLocation optional), portLocation (string optional), status (string/enum), lineItems (array), requestedBy (ObjectId → User optional), receivedBy (ObjectId → User optional), documents (array), remarks (string optional)."
+  },
+  {
+    "CollectionName": "LandingOrderAuditLog",
+    "Synonyms": ["Landing Order Audit", "Receipt Change Log", "Landing History"],
+    "Description": "Audit trail for landing order status and field changes so receipt confirmations, reversals, and document adjustments can be explained later. Fields: landingOrderID (ObjectId → LandingOrder), organizationID (ObjectId → Organization), modifiedBy (ObjectId → User), modifiedAt (date), status (string/enum), changeReason (string optional), changeType (string/enum), changedFields (array), metadata (object optional)."
+  },
+  {
+    "CollectionName": "ReturnOrder",
+    "Synonyms": ["Return Order", "Vendor Return", "RTV", "Return to Vendor"],
+    "Description": "Outbound return-to-vendor record for defective, excess, or rejected items so quantities, credit-note follow-up, disposition, and related logistics can be traced. Fields: organizationID (ObjectId → Organization), returnNumber (string), purchaseOrderID (ObjectId → PurchaseOrder optional), vendorID (ObjectId → Vendor optional), vesselID (ObjectId → Vessel optional), vendorRMANumber (string optional), vendorRMAReceivedDate (date optional), landingOrderID (ObjectId → LandingOrder optional), lineItems (array with returnedQuantity, unitPrice, totalValue, returnReason, itemCondition, packagingCondition, budgetID, budgetCodeID, costCenterID, fromLocationID, inventoryTransactionID, disposition, creditNoteNumber, creditAmount, status and related evidence), status (string/enum), totalReturnValue (number), currency (string), gatePassNumber (string optional), gatePassDate (date optional), submitted/approved/rejected fields, remarks, documents."
+  },
+  {
+    "CollectionName": "ReturnOrderAuditLog",
+    "Synonyms": ["Return Order Audit", "Return Change Log", "RTV History"],
+    "Description": "Audit trail for return-order approval, rejection, status, and disposition changes so vendor returns and credit recovery are fully traceable. Fields: returnOrderID (ObjectId → ReturnOrder), organizationID (ObjectId → Organization), modifiedBy (ObjectId → User), modifiedAt (date), status (string/enum), changeReason (string optional), changeType (string/enum), changedFields (array), metadata (object optional)."
+  },
+  {
+    "CollectionName": "PurchaseOrderAuditLog",
+    "Synonyms": ["Purchase Order Audit", "PO Change Log", "PO History"],
+    "Description": "Audit history for purchase order status and field changes so procurement teams can explain approvals, amendments, cancellations, and delivery-date revisions. Fields: poID (ObjectId → PurchaseOrder), organizationID (ObjectId → Organization), modifiedBy (ObjectId → User), modifiedAt (date), poStatus (string/enum), changeReason (string optional), changeType (string/enum), changedFields (array), metadata (object optional)."
+  },
+  {
+    "CollectionName": "GlobalSearch",
+    "Synonyms": ["Saved Search", "Global Search", "Search Preset"],
+    "Description": "Saved-search definition used to persist frequently used query presets for maintenance, inventory, procurement, crew, or compliance follow-up. Fields: organizationID (ObjectId → Organization), searchName (string), searchParameters (object), createdBy (ObjectId → User), updatedBy (ObjectId → User optional)."
+  },
+  {
+    "CollectionName": "PendingFileUpload",
+    "Synonyms": ["Pending Upload", "Upload Queue", "File Upload Retry"],
+    "Description": "Queued file-upload tracking record used to monitor incomplete or retryable uploads for documents, forms, and evidence attachments. Fields: fileId (string), bucketName (string), filename (string), contentType (string), sliceID (ObjectId/string optional), organizationID (ObjectId → Organization), vesselID (ObjectId → Vessel optional), sourceInstanceID (ObjectId/string optional), metadata (object optional), uploadAttempts (number), maxRetries (number), lastAttemptAt (date optional), lastError (string optional), status (string/enum), completedAt (date optional), priority (number/string optional)."
+  }
+]
+

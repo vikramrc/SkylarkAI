@@ -117,3 +117,18 @@ backend/server.log
 backend/server.pid
 backend/server-dist/
 frontend/build/
+
+# MERN / local full-stack app artifacts
+backend/dist/
+frontend/dist/
+client/dist/
+server/dist/
+frontend/.vite/
+.turbo/
+.vercel/
+uploads/
+tmp/
+temp/
+*.local
+.env.*
+!.env.example

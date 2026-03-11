@@ -1,0 +1,1305 @@
+
+[
+  {
+    "doc_type": "mapping_rules",
+    "tenant_id": "tenant_1",
+    "version": "v2_enhanced",
+    "payload": [
+      {
+        "intent": "overdue_activities",
+        "sample_questions": [
+          "Show all overdue maintenance activities by vessel and department",
+          "Which critical equipment has overdue or missed jobs",
+          "Which vessels have the highest maintenance backlog",
+          "Which statutory or class related tasks are overdue",
+          "Which jobs tagged critical or safety are overdue"
+        ],
+        "keywords": [
+          "overdue",
+          "backlog",
+          "late jobs",
+          "missed jobs",
+          "deferred jobs",
+          "activityworkhistories",
+          "activity work history",
+          "work history",
+          "activities",
+          "maintenance activity",
+          "job",
+          "task",
+          "work order",
+          "vessels",
+          "ship",
+          "fleet",
+          "machineries",
+          "equipment",
+          "engine",
+          "system",
+          "plant",
+          "searchabletags",
+          "tag",
+          "critical",
+          "safety",
+          "statutory",
+          "class",
+          "psc"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" },
+          { "collection": "MaintenanceSchedule" },
+          { "collection": "SearchableTag" },
+          { "collection": "forms" }
+        ]
+      },
+      {
+        "intent": "upcoming_maintenance",
+        "sample_questions": [
+          "What maintenance is due in the next 7 days by vessel",
+          "Show upcoming maintenance for main engine and generators",
+          "What jobs are scheduled before the next port arrival",
+          "Which jobs are planned for the next dry dock period",
+          "Show recurring jobs coming due in the next 14 days"
+        ],
+        "keywords": [
+          "upcoming",
+          "due soon",
+          "next week",
+          "next month",
+          "planned jobs",
+          "planned maintenance",
+          "activityworkhistories",
+          "plannedDueDate",
+          "maintenance schedule",
+          "maintenanceschedules",
+          "activities",
+          "maintenance activity",
+          "job",
+          "task",
+          "work order",
+          "vessels",
+          "ship",
+          "fleet",
+          "machineries",
+          "equipment",
+          "engine",
+          "system",
+          "plant"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "Activity" },
+          { "collection": "MaintenanceSchedule" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "fleet_maintenance_performance",
+        "sample_questions": [
+          "Show maintenance compliance rate by vessel",
+          "Show fleet wide PMS KPIs",
+          "Which vessels have the best maintenance compliance",
+          "What is the average time to complete work orders",
+          "Show maintenance backlog by vessel and department"
+        ],
+        "keywords": [
+          "kpi",
+          "compliance",
+          "pms compliance",
+          "completion rate",
+          "backlog",
+          "mttr",
+          "maintenance performance",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "activities",
+          "vessels",
+          "ship",
+          "fleet"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" },
+          { "collection": "forms" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "work_history_analysis",
+        "sample_questions": [
+          "Show completed maintenance for a vessel in a given period",
+          "What work was done on main engine during last dry dock",
+          "Show repair history for steering gear systems",
+          "Show all emergency repairs in the last quarter",
+          "Show maintenance trends for generators fleet wide"
+        ],
+        "keywords": [
+          "work history",
+          "job history",
+          "maintenance history",
+          "repair history",
+          "dry dock history",
+          "emergency repair",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "activities",
+          "machineries",
+          "equipment",
+          "vessels",
+          "ship",
+          "fleet",
+          "dry dock",
+          "repair",
+          "emergency"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "Machinery" },
+          { "collection": "Vessel" },
+          { "collection": "MaintenancePartUsage" },
+          { "collection": "InventoryTransaction" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "rescheduled_activities",
+        "sample_questions": [
+          "Which activities were postponed or rescheduled this month",
+          "Show maintenance completed later than planned date",
+          "Which activities are frequently deferred across vessels",
+          "Which jobs slipped from original planned due dates"
+        ],
+        "keywords": [
+          "rescheduled",
+          "postponed",
+          "deferred",
+          "schedule slippage",
+          "planned date",
+          "planned vs actual",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "activities",
+          "vessels",
+          "ship",
+          "fleet"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "Vessel" },
+          { "collection": "MaintenanceSchedule" }
+        ]
+      },
+      {
+        "intent": "maintenance_intervals_scheduling",
+        "sample_questions": [
+          "Show maintenance intervals for all activities",
+          "Which activities are on running hours intervals",
+          "What maintenance is scheduled annually",
+          "Show voyage based maintenance activities",
+          "Which activities have adhoc intervals"
+        ],
+        "keywords": [
+          "interval",
+          "frequency",
+          "running hours",
+          "calendar based",
+          "voyage based",
+          "adhoc",
+          "activities",
+          "activity interval",
+          "maintenanceschedules",
+          "maintenance schedule",
+          "machineries",
+          "vessels",
+          "ship"
+        ],
+        "maps_to": [
+          { "collection": "Activity" },
+          { "collection": "Machinery" },
+          { "collection": "Vessel" },
+          { "collection": "MaintenanceSchedule" },
+          { "collection": "ComponentActivity" }
+        ]
+      },
+      {
+        "intent": "maintenance_schedules_programs",
+        "sample_questions": [
+          "Show maintenance schedules for all vessels",
+          "Which maintenance programs are active",
+          "Which schedules need updating",
+          "Show PM schedule compliance by vessel",
+          "What components are covered under each maintenance schedule"
+        ],
+        "keywords": [
+          "maintenance schedule",
+          "maintenance program",
+          "pms schedule",
+          "pms plan",
+          "maintenanceschedules",
+          "schedule revision",
+          "components",
+          "activities",
+          "vessels",
+          "ship",
+          "fleet"
+        ],
+        "maps_to": [
+          { "collection": "MaintenanceSchedule" },
+          { "collection": "MaintenanceScheduleRevisionHistory" },
+          { "collection": "Vessel" },
+          { "collection": "Component" },
+          { "collection": "Activity" }
+        ]
+      },
+      {
+        "intent": "machinery_equipment_status",
+        "sample_questions": [
+          "Show all machinery for a vessel",
+          "Which equipment needs attention",
+          "Show running hours for all engines",
+          "Which machinery has exceeded service intervals",
+          "What is the condition status of critical equipment"
+        ],
+        "keywords": [
+          "machinery list",
+          "equipment list",
+          "running hours",
+          "condition status",
+          "critical equipment",
+          "machineries",
+          "equipment",
+          "engine",
+          "plant",
+          "components",
+          "vessels",
+          "ship"
+        ],
+        "maps_to": [
+          { "collection": "Machinery" },
+          { "collection": "Component" },
+          { "collection": "Vessel" },
+          { "collection": "Activity" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" }
+        ]
+      },
+      {
+        "intent": "component_management",
+        "sample_questions": [
+          "Show all components for main engine",
+          "What components are under each maintenance schedule",
+          "Which components have the most activities",
+          "Show component hierarchy for propulsion system",
+          "List all activities mapped to a component"
+        ],
+        "keywords": [
+          "component",
+          "subcomponent",
+          "assembly",
+          "component hierarchy",
+          "componentactivities",
+          "component activity mapping",
+          "machineries",
+          "equipment",
+          "activities",
+          "vessels",
+          "ship",
+          "sfi code"
+        ],
+        "maps_to": [
+          { "collection": "Component" },
+          { "collection": "ComponentActivity" },
+          { "collection": "Machinery" },
+          { "collection": "Activity" },
+          { "collection": "Vessel" },
+          { "collection": "SfiCode" }
+        ]
+      },
+      {
+        "intent": "vessel_fleet_overview",
+        "sample_questions": [
+          "Show all vessels in the fleet",
+          "What is the IMO number for a vessel",
+          "Which organization owns which vessels",
+          "Show vessel details and specifications",
+          "List vessels by operational status"
+        ],
+        "keywords": [
+          "vessel list",
+          "fleet",
+          "ship list",
+          "fleet overview",
+          "vessels",
+          "ship",
+          "fleet unit",
+          "organization",
+          "company"
+        ],
+        "maps_to": [
+          { "collection": "Vessel" },
+          { "collection": "Organization" }
+        ]
+      },
+      {
+        "intent": "inventory_stock_levels",
+        "sample_questions": [
+          "Show critical spare parts below minimum levels",
+          "What inventory is running low across the fleet",
+          "Which vessels need emergency stock replenishment",
+          "Show zero stock items for critical machinery",
+          "What is the current stock value by location"
+        ],
+        "keywords": [
+          "stock level",
+          "inventory level",
+          "low stock",
+          "below minimum",
+          "reorder",
+          "inventorystocks",
+          "inventory stock",
+          "inventoryparts",
+          "inventory part",
+          "spare part",
+          "inventorylocations",
+          "warehouse",
+          "store",
+          "locker",
+          "replenishorders",
+          "replenishment",
+          "restock order"
+        ],
+        "maps_to": [
+          { "collection": "InventoryStock" },
+          { "collection": "InventoryPart" },
+          { "collection": "InventoryLocation" },
+          { "collection": "Vessel" },
+          { "collection": "ReplenishOrder" },
+          { "collection": "InventoryTransaction" }
+        ]
+      },
+      {
+        "intent": "parts_consumption_analysis",
+        "sample_questions": [
+          "Which parts have the highest consumption rate",
+          "Show parts usage for main engine maintenance",
+          "What spares were consumed during last dry dock",
+          "Track bearing consumption across vessels",
+          "Which vessels use the most lubricating oil"
+        ],
+        "keywords": [
+          "consumption",
+          "parts usage",
+          "usage trend",
+          "inventorytransactions",
+          "inventory transaction",
+          "maintenancepartusage",
+          "spare part",
+          "inventoryparts",
+          "vessels",
+          "machineries",
+          "equipment"
+        ],
+        "maps_to": [
+          { "collection": "InventoryTransaction" },
+          { "collection": "MaintenancePartUsage" },
+          { "collection": "InventoryPart" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" },
+          { "collection": "InventoryLocation" }
+        ]
+      },
+      {
+        "intent": "inventory_locations_transfers",
+        "sample_questions": [
+          "Where is a specific spare located",
+          "Show inventory levels by warehouse or store",
+          "What parts need to be transferred between vessels",
+          "Which warehouses need stock redistribution",
+          "Track parts movements in the last month"
+        ],
+        "keywords": [
+          "location",
+          "storage location",
+          "warehouse",
+          "store",
+          "bin",
+          "inventorystocks",
+          "inventory stock",
+          "inventorylocations",
+          "inventorytransactions",
+          "stock movement",
+          "transfer"
+        ],
+        "maps_to": [
+          { "collection": "InventoryStock" },
+          { "collection": "InventoryLocation" },
+          { "collection": "InventoryTransaction" },
+          { "collection": "InventoryPart" },
+          { "collection": "Vessel" }
+        ]
+      },
+      {
+        "intent": "inventory_cost_analysis",
+        "sample_questions": [
+          "What is the inventory holding cost per vessel",
+          "Show the most expensive inventory items by category",
+          "Which parts have the highest carrying costs",
+          "What is the total investment in safety stock",
+          "Track inventory turnover by item category"
+        ],
+        "keywords": [
+          "inventory cost",
+          "holding cost",
+          "carrying cost",
+          "stock value",
+          "turnover",
+          "inventoryparts",
+          "inventorystocks",
+          "inventorytransactions",
+          "purchaseorders",
+          "replenishorders",
+          "vendors"
+        ],
+        "maps_to": [
+          { "collection": "InventoryPart" },
+          { "collection": "InventoryStock" },
+          { "collection": "InventoryTransaction" },
+          { "collection": "PurchaseOrder" },
+          { "collection": "ReplenishOrder" },
+          { "collection": "Vendor" },
+          { "collection": "Vessel" }
+        ]
+      },
+      {
+        "intent": "procurement_management",
+        "sample_questions": [
+          "What parts need to be ordered for upcoming maintenance",
+          "Show pending purchase orders by delivery date",
+          "Show open and closed replenishment orders",
+          "Which suppliers have the longest lead times",
+          "What is the total value of outstanding orders"
+        ],
+        "keywords": [
+          "procurement",
+          "purchasing",
+          "purchaseorders",
+          "purchase order",
+          "po",
+          "replenishorders",
+          "replenishment",
+          "stock request",
+          "vendors",
+          "supplier",
+          "inventoryparts",
+          "spares"
+        ],
+        "maps_to": [
+          { "collection": "PurchaseOrder" },
+          { "collection": "ReplenishOrder" },
+          { "collection": "Vendor" },
+          { "collection": "InventoryPart" },
+          { "collection": "Activity" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "Vessel" }
+        ]
+      },
+      {
+        "intent": "vendor_supplier_management",
+        "sample_questions": [
+          "Show all active suppliers",
+          "Which vendors have the best delivery performance",
+          "Which suppliers specialize in engine parts",
+          "Show vendor contact information for emergency orders",
+          "Compare lead times across different vendors"
+        ],
+        "keywords": [
+          "vendor",
+          "supplier",
+          "contractor",
+          "service provider",
+          "vendors",
+          "lead time",
+          "delivery performance",
+          "inventoryparts",
+          "purchaseorders",
+          "replenishorders"
+        ],
+        "maps_to": [
+          { "collection": "Vendor" },
+          { "collection": "InventoryPart" },
+          { "collection": "PurchaseOrder" },
+          { "collection": "ReplenishOrder" }
+        ]
+      },
+      {
+        "intent": "maintenance_inventory_integration",
+        "sample_questions": [
+          "What parts are needed for overdue maintenance activities",
+          "Which maintenance cannot start due to missing parts",
+          "Show inventory consumption during planned maintenance",
+          "Track spare parts allocation to work orders",
+          "What emergency inventory was used for unplanned repairs"
+        ],
+        "keywords": [
+          "maintenance and inventory",
+          "spares for jobs",
+          "parts required",
+          "missing spares",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "inventorystocks",
+          "inventorytransactions",
+          "maintenancepartusage",
+          "activities"
+        ],
+        "maps_to": [
+          { "collection": "Activity" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "InventoryStock" },
+          { "collection": "InventoryPart" },
+          { "collection": "InventoryTransaction" },
+          { "collection": "MaintenancePartUsage" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" }
+        ]
+      },
+      {
+        "intent": "compliance_maintenance_integration",
+        "sample_questions": [
+          "Which maintenance activities are required for certificate renewal",
+          "Show maintenance compliance affecting class certificates",
+          "What work must be completed before the next survey",
+          "Track maintenance requirements from Port State Control inspections"
+        ],
+        "keywords": [
+          "compliance",
+          "certificate",
+          "survey",
+          "class",
+          "flag",
+          "psc",
+          "forms",
+          "checklist",
+          "activities",
+          "activityworkhistories",
+          "vessels"
+        ],
+        "maps_to": [
+          { "collection": "forms" },
+          { "collection": "FormTemplateActivityMapping" },
+          { "collection": "Activity" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "Vessel" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "document_management",
+        "sample_questions": [
+          "Show the latest version of a safety manual",
+          "Which procedures were updated last month",
+          "What documents are pending approval",
+          "Show all archived technical manuals",
+          "Which vessels have outdated procedure manuals"
+        ],
+        "keywords": [
+          "document",
+          "manual",
+          "procedure",
+          "drawing",
+          "documentmetadatas",
+          "documentfiles",
+          "document type",
+          "document status",
+          "approval",
+          "archived"
+        ],
+        "maps_to": [
+          { "collection": "DocumentMetadata" },
+          { "collection": "DocumentFile" },
+          { "collection": "DocumentType" },
+          { "collection": "Vessel" }
+        ]
+      },
+      {
+        "intent": "document_version_control",
+        "sample_questions": [
+          "Show revision history for the ISM manual",
+          "What changes were made to the maintenance procedures",
+          "Which documents have multiple pending revisions",
+          "Show all document approvals in a period",
+          "Track document distribution to vessels"
+        ],
+        "keywords": [
+          "revision",
+          "version",
+          "change history",
+          "document version",
+          "documentfiles",
+          "documentmetadatas"
+        ],
+        "maps_to": [
+          { "collection": "DocumentFile" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "Vessel" }
+        ]
+      },
+      {
+        "intent": "document_search_discovery",
+        "sample_questions": [
+          "Find all documents related to ballast water treatment",
+          "Search for procedures containing specific text",
+          "Show documents tagged as safety critical",
+          "Find all certificates for a given vessel",
+          "Search for maintenance instructions for a specific model"
+        ],
+        "keywords": [
+          "document search",
+          "full text search",
+          "certificate",
+          "manual",
+          "documentmetadatas",
+          "documentfiles",
+          "searchabletags",
+          "tag",
+          "safety critical"
+        ],
+        "maps_to": [
+          { "collection": "DocumentMetadata" },
+          { "collection": "DocumentFile" },
+          { "collection": "SearchableTag" },
+          { "collection": "Vessel" },
+          { "collection": "Activity" },
+          { "collection": "ActivityWorkHistoryEvent" }
+        ]
+      },
+      {
+        "intent": "document_maintenance_integration",
+        "sample_questions": [
+          "Show procedures for upcoming maintenance tasks",
+          "Which maintenance activities lack documentation",
+          "What drawings are needed for planned modifications",
+          "Track document usage during maintenance execution"
+        ],
+        "keywords": [
+          "maintenance procedures",
+          "job instructions",
+          "technical drawings",
+          "activityworkhistoryevents",
+          "documents for jobs",
+          "documentmetadatas"
+        ],
+        "maps_to": [
+          { "collection": "Activity" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "DocumentFile" },
+          { "collection": "Machinery" },
+          { "collection": "Vessel" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "documentation_knowledge_management",
+        "sample_questions": [
+          "Which maintenance jobs lack supporting procedures or drawings",
+          "Show activities where outdated manuals were used",
+          "Which documents were accessed most during last dry dock",
+          "What jobs generated the highest number of evidence attachments"
+        ],
+        "keywords": [
+          "knowledge management",
+          "evidence",
+          "attachments",
+          "temporary instructions",
+          "activityworkhistoryevents",
+          "documentmetadatas",
+          "documentfiles",
+          "searchabletags"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "DocumentFile" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "form_management",
+        "sample_questions": [
+          "Show pending form submissions",
+          "Which inspection forms are overdue",
+          "Which forms need approval",
+          "Show completed safety checklists",
+          "Show form completion rates by vessel"
+        ],
+        "keywords": [
+          "forms",
+          "form instance",
+          "checklist",
+          "inspection form",
+          "submitted form",
+          "committed form",
+          "formactionhistories",
+          "form audit",
+          "searchabletags",
+          "vessels"
+        ],
+        "maps_to": [
+          { "collection": "forms" },
+          { "collection": "FormTemplate" },
+          { "collection": "FormActionHistory" },
+          { "collection": "SearchableTag" },
+          { "collection": "Vessel" },
+          { "collection": "User" }
+        ]
+      },
+      {
+        "intent": "form_template_management",
+        "sample_questions": [
+          "Show all available form templates",
+          "Which form templates are assigned to vessels",
+          "What forms are required for specific activities",
+          "Which templates need updates or revisions"
+        ],
+        "keywords": [
+          "formtemplates",
+          "form template",
+          "checklist template",
+          "inspection template",
+          "formtemplatevesselmappings",
+          "formtemplateactivitymappings",
+          "template assignment"
+        ],
+        "maps_to": [
+          { "collection": "FormTemplate" },
+          { "collection": "FormTemplateVesselMapping" },
+          { "collection": "FormTemplateActivityMapping" },
+          { "collection": "Vessel" },
+          { "collection": "Activity" },
+          { "collection": "User" }
+        ]
+      },
+      {
+        "intent": "form_scheduling_assignments",
+        "sample_questions": [
+          "List form scheduling assignments by vessel",
+          "Show templates scheduled on a vessel with frequency",
+          "Which users are responsible for scheduled forms",
+          "Show forms calendar by vessel"
+        ],
+        "keywords": [
+          "form schedule",
+          "form mapping",
+          "formtemplatevesselmappings",
+          "form scheduling",
+          "template assignment",
+          "vessels",
+          "user"
+        ],
+        "maps_to": [
+          { "collection": "FormTemplateVesselMapping" },
+          { "collection": "FormTemplate" },
+          { "collection": "Vessel" },
+          { "collection": "User" },
+          { "collection": "forms" }
+        ]
+      },
+      {
+        "intent": "activity_form_requirements",
+        "sample_questions": [
+          "Which activities require specific forms",
+          "Show required and optional forms for an activity",
+          "List templates mapped to activities in a schedule",
+          "Which activities require forms when status is completed",
+          "Show form requirements grouped by activity status"
+        ],
+        "keywords": [
+          "activity form mapping",
+          "required forms",
+          "optional forms",
+          "formtemplateactivitymappings",
+          "forms for activity",
+          "maintenance checklist"
+        ],
+        "maps_to": [
+          { "collection": "FormTemplateActivityMapping" },
+          { "collection": "Activity" },
+          { "collection": "MaintenanceSchedule" },
+          { "collection": "Vessel" },
+          { "collection": "FormTemplate" },
+          { "collection": "User" }
+        ]
+      },
+      {
+        "intent": "form_sequence_management",
+        "sample_questions": [
+          "Show all form sequences for a vessel",
+          "Which sequences are active and who created them",
+          "Show sequence details for pre sail checks",
+          "Which sequences were updated recently"
+        ],
+        "keywords": [
+          "form sequence",
+          "workflow",
+          "formsequence",
+          "formsequenceitems",
+          "formsequencecycles",
+          "safety workflow"
+        ],
+        "maps_to": [
+          { "collection": "FormSequence" },
+          { "collection": "FormSequenceItem" },
+          { "collection": "FormSequenceCycle" },
+          { "collection": "Vessel" },
+          { "collection": "Organization" },
+          { "collection": "User" },
+          { "collection": "FormTemplate" }
+        ]
+      },
+      {
+        "intent": "global_search_management",
+        "sample_questions": [
+          "Show my saved searches",
+          "What are the most common search queries",
+          "Create a saved search for overdue maintenance",
+          "Show global search history and patterns"
+        ],
+        "keywords": [
+          "global search",
+          "search history",
+          "saved search",
+          "search filter",
+          "globalsearches"
+        ],
+        "maps_to": [
+          { "collection": "Globalsearch" }
+        ]
+      },
+      {
+        "intent": "tag_management",
+        "sample_questions": [
+          "Show all items tagged as safety critical",
+          "What tags are used most frequently",
+          "Show all documents with environmental tags",
+          "Which activities are tagged as emergency",
+          "List all tagged items by category"
+        ],
+        "keywords": [
+          "tag",
+          "label",
+          "category tag",
+          "classification",
+          "searchabletags",
+          "safety critical",
+          "environmental"
+        ],
+        "maps_to": [
+          { "collection": "SearchableTag" },
+          { "collection": "forms" },
+          { "collection": "Activity" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "Vessel" }
+        ]
+      },
+      {
+        "intent": "sfi_classification",
+        "sample_questions": [
+          "Show SFI categories for hull maintenance",
+          "What SFI codes are used for engine room equipment",
+          "List all components under an SFI category",
+          "Show SFI hierarchy for safety systems",
+          "Which SFI codes are most frequently used"
+        ],
+        "keywords": [
+          "sfi code",
+          "ship function identifier",
+          "classification code",
+          "system code",
+          "sficodes",
+          "components",
+          "machineries",
+          "inventoryparts"
+        ],
+        "maps_to": [
+          { "collection": "SfiCode" },
+          { "collection": "Component" },
+          { "collection": "Machinery" },
+          { "collection": "InventoryPart" }
+        ]
+      },
+      {
+        "intent": "crew_resource_utilization",
+        "sample_questions": [
+          "How many man hours per rank are consumed on PMS tasks",
+          "What man hours are estimated for planned jobs this week",
+          "Which vessels are under resourced for upcoming critical maintenance",
+          "Which crew members log higher than average maintenance delays",
+          "How many pending jobs are assigned to riding crew or contractors"
+        ],
+        "keywords": [
+          "crew",
+          "man hours",
+          "workload",
+          "crew assignment",
+          "contractor",
+          "riding crew",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "activities",
+          "vessels"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" }
+        ]
+      },
+      {
+        "intent": "risk_management",
+        "sample_questions": [
+          "Show high risk equipment across the fleet",
+          "Which vessels have the most critical deficiencies",
+          "What maintenance deferrals pose operational risks",
+          "Show equipment with frequent failure patterns",
+          "Which systems need reliability improvement programs"
+        ],
+        "keywords": [
+          "risk",
+          "high risk",
+          "critical deficiency",
+          "frequent failure",
+          "deferral",
+          "machineries",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "activities",
+          "vessels",
+          "inventoryparts",
+          "searchabletags"
+        ],
+        "maps_to": [
+          { "collection": "Machinery" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "Vessel" },
+          { "collection": "InventoryPart" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "safety_incidents",
+        "sample_questions": [
+          "What incidents occurred in the last six months by vessel or cause",
+          "Can I visualize near miss trends to predict future risks",
+          "Which safety critical activities were missed in the last voyage",
+          "Which onboard teams show higher incident closure rates",
+          "Are all safety critical equipment inspected as per schedule"
+        ],
+        "keywords": [
+          "incident",
+          "near miss",
+          "safety incident",
+          "deficiency",
+          "damage",
+          "safety critical",
+          "activityworkhistoryevents",
+          "activityworkhistories",
+          "forms",
+          "searchabletags",
+          "vessels"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "forms" },
+          { "collection": "SearchableTag" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "Vessel" }
+        ]
+      },
+      {
+        "intent": "cost_control_budgeting",
+        "sample_questions": [
+          "Show live maintenance cost summary per vessel or component",
+          "Where are the top maintenance cost drivers this quarter",
+          "What is the total maintenance cost per vessel split between labor and spares",
+          "Which machinery types consume the highest maintenance budget",
+          "Which vessels lost the most operational days due to maintenance"
+        ],
+        "keywords": [
+          "cost control",
+          "budget",
+          "variance",
+          "maintenance cost",
+          "labor cost",
+          "spares cost",
+          "activityworkhistories",
+          "maintenancepartusage",
+          "inventorytransactions",
+          "purchaseorders",
+          "replenishorders",
+          "vendors",
+          "vessels"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "MaintenancePartUsage" },
+          { "collection": "InventoryTransaction" },
+          { "collection": "InventoryPart" },
+          { "collection": "PurchaseOrder" },
+          { "collection": "ReplenishOrder" },
+          { "collection": "Vendor" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" }
+        ]
+      },
+      {
+        "intent": "condition_monitoring",
+        "sample_questions": [
+          "How do condition monitoring trends relate to machinery performance",
+          "What is the correlation between lube oil analysis and failures",
+          "Show equipment with repeated abnormal vibration readings",
+          "Show equipment tagged with condition monitoring tasks and results"
+        ],
+        "keywords": [
+          "condition monitoring",
+          "vibration analysis",
+          "lube oil analysis",
+          "temperature trend",
+          "trend report",
+          "activityworkhistoryevents",
+          "activities",
+          "searchabletags",
+          "documents"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "SearchableTag" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "Machinery" },
+          { "collection": "Vessel" }
+        ]
+      },
+      {
+        "intent": "dry_dock_repairs",
+        "sample_questions": [
+          "What work was done during the last dry dock for each vessel",
+          "Which items were postponed in the last dry dock and need inclusion now",
+          "What were the actual versus budgeted costs of the last dry dock",
+          "Which dry dock specifications need revision due to new rules",
+          "What spare parts were consumed during last dry dock"
+        ],
+        "keywords": [
+          "dry dock",
+          "repair",
+          "docking",
+          "shipyard",
+          "change order",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "maintenancepartusage",
+          "inventorytransactions",
+          "purchaseorders",
+          "vendors",
+          "documents"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" },
+          { "collection": "MaintenancePartUsage" },
+          { "collection": "InventoryTransaction" },
+          { "collection": "InventoryPart" },
+          { "collection": "PurchaseOrder" },
+          { "collection": "Vendor" },
+          { "collection": "DocumentMetadata" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "operational_planning",
+        "sample_questions": [
+          "Which vessels can be scheduled for concurrent maintenance",
+          "Show maintenance impact on commercial operations",
+          "Plan maintenance windows around charter commitments",
+          "Coordinate maintenance with vessel trading patterns"
+        ],
+        "keywords": [
+          "operational planning",
+          "charter",
+          "off hire",
+          "maintenance impact",
+          "activityworkhistories",
+          "activities",
+          "maintenanceschedules",
+          "vessels",
+          "machineries"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "Activity" },
+          { "collection": "Vessel" },
+          { "collection": "Machinery" },
+          { "collection": "MaintenanceSchedule" }
+        ]
+      },
+      {
+        "intent": "resource_planning",
+        "sample_questions": [
+          "Show vessel maintenance schedules for dry dock planning",
+          "What specialist services are needed for next month maintenance",
+          "Which vessels will be out of service for maintenance",
+          "What upcoming jobs require shore contractors"
+        ],
+        "keywords": [
+          "resource planning",
+          "dry dock planning",
+          "specialist services",
+          "contractors",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "activities",
+          "maintenanceschedules",
+          "vessels"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "Activity" },
+          { "collection": "MaintenanceSchedule" },
+          { "collection": "Vessel" },
+          { "collection": "forms" }
+        ]
+      },
+      {
+        "intent": "executive_reporting",
+        "sample_questions": [
+          "Generate monthly fleet maintenance summary",
+          "Show quarterly compliance report",
+          "Show overall fleet availability percentage",
+          "Create annual maintenance cost analysis",
+          "Generate supplier performance report"
+        ],
+        "keywords": [
+          "executive report",
+          "management report",
+          "fleet availability",
+          "compliance report",
+          "cost analysis",
+          "vendor performance",
+          "vessels",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "forms",
+          "purchaseorders",
+          "replenishorders",
+          "vendors"
+        ],
+        "maps_to": [
+          { "collection": "Vessel" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "forms" },
+          { "collection": "PurchaseOrder" },
+          { "collection": "Vendor" },
+          { "collection": "ReplenishOrder" },
+          { "collection": "InventoryTransaction" },
+          { "collection": "InventoryPart" }
+        ]
+      },
+      {
+        "intent": "operational_readiness",
+        "sample_questions": [
+          "What is the fleet availability percentage compared to plan",
+          "What is the availability of each vessel compared to planned",
+          "Which vessels have critical maintenance or defects impacting readiness",
+          "Which vessels have overdue statutory surveys linked to maintenance"
+        ],
+        "keywords": [
+          "operational readiness",
+          "availability",
+          "off hire",
+          "critical defects",
+          "surveys",
+          "vessels",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "forms"
+        ],
+        "maps_to": [
+          { "collection": "Vessel" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "forms" },
+          { "collection": "SearchableTag" }
+        ]
+      },
+      {
+        "intent": "analytics_continuous_improvement",
+        "sample_questions": [
+          "Which maintenance tasks most frequently trigger follow up jobs",
+          "Show recurring failure patterns across sister vessels",
+          "What percentage of jobs were closed without remarks",
+          "Show correlation between spare part quality ratings and repeat failures",
+          "Which vessels consistently exceed fleet averages for PMS compliance"
+        ],
+        "keywords": [
+          "analytics",
+          "trend",
+          "continuous improvement",
+          "recurring failure",
+          "follow up jobs",
+          "pms compliance",
+          "activityworkhistories",
+          "activityworkhistoryevents",
+          "activities",
+          "machineries",
+          "inventoryparts",
+          "inventorytransactions",
+          "forms",
+          "searchabletags"
+        ],
+        "maps_to": [
+          { "collection": "ActivityWorkHistoryEvent" },
+          { "collection": "ActivityWorkHistory" },
+          { "collection": "Activity" },
+          { "collection": "Machinery" },
+          { "collection": "Vessel" },
+          { "collection": "InventoryPart" },
+          { "collection": "InventoryTransaction" },
+          { "collection": "forms" },
+          { "collection": "SearchableTag" }
+        ]
+      }
+    ]
+  }
+]
