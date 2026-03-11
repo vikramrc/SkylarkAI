@@ -81,37 +81,67 @@ test('safeParseLLMJSON handles fenced JSON responses', () => {
     assert.deepEqual(parsed, { keywords: ['overdue maintenance'] });
 });
 
+test('safeParseLLMJSON repairs near-valid generated query JSON with nested bracket noise', () => {
+    const validQuery = {
+        base_collection: 'DocumentMetadata',
+        pipeline: [{
+            $addFields: {
+                resolvedFieldName: {
+                    $let: {
+                        vars: {
+                            expiryMatches: {
+                                $filter: {
+                                    input: [],
+                                    as: 'f',
+                                    cond: { $and: [{ $eq: [1, 1] }, { $or: [{ $eq: [2, 2] }, { $eq: [3, 3] }] }] },
+                                },
+                            },
+                            validMatches: {
+                                $filter: {
+                                    input: [],
+                                    as: 'f',
+                                    cond: { $and: [{ $eq: [4, 4] }, { $or: [{ $eq: [5, 5] }, { $eq: [6, 6] }] }] },
+                                },
+                            },
+                        },
+                        in: null,
+                    },
+                },
+            },
+        }],
+    };
+    const malformed = JSON.stringify(validQuery).replace('"vars":{"expiryMatches"', '"vars":{}"expiryMatches"');
+    assert.notEqual(malformed, JSON.stringify(validQuery));
+    assert.throws(() => JSON.parse(malformed));
+
+    const parsed = safeParseLLMJSON<Record<string, unknown>>(malformed, { base_collection: '', pipeline: [] });
+
+    assert.deepEqual(parsed, validQuery);
+});
+
 test('createOpenAiResponseClient joins segmented finalized output text without injecting newlines', async () => {
     const previousApiKey = process.env.OPENAI_API_KEY;
     const previousQueryModel = process.env.OPENAI_QUERY_MODEL;
     const previousFetch = globalThis.fetch;
     const finalText = '{"base_collection":"DocumentMetadata","pipeline":[{"$match":{"documentName":{"$regex":"certificate","$options":"i"}}}]}';
     const splitIndex = finalText.indexOf('Name');
+    const responsePayload = {
+        id: 'resp_segmented',
+        output: [{
+            content: [
+                { type: 'output_text', text: finalText.slice(0, splitIndex) },
+                { type: 'output_text', text: finalText.slice(splitIndex) },
+            ],
+        }],
+        usage: { total_tokens: 21 },
+    };
 
     process.env.OPENAI_API_KEY = 'test-openai-key';
     process.env.OPENAI_QUERY_MODEL = 'gpt-5.4';
-    globalThis.fetch = (async () => new Response(
-        [
-            `data: ${JSON.stringify({
-                type: 'response.completed',
-                response: {
-                    id: 'resp_segmented',
-                    output: [{
-                        content: [
-                            { type: 'output_text', text: finalText.slice(0, splitIndex) },
-                            { type: 'output_text', text: finalText.slice(splitIndex) },
-                        ],
-                    }],
-                    usage: { total_tokens: 21 },
-                },
-            })}\n\n`,
-            'data: [DONE]\n\n',
-        ].join(''),
-        {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-        },
-    )) as typeof fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+    })) as typeof fetch;
 
     try {
         const client = createOpenAiResponseClient();
@@ -124,16 +154,7 @@ test('createOpenAiResponseClient joins segmented finalized output text without i
         });
 
         assert.equal(result.content, finalText);
-        assert.deepEqual(result.raw, {
-            id: 'resp_segmented',
-            output: [{
-                content: [
-                    { type: 'output_text', text: finalText.slice(0, splitIndex) },
-                    { type: 'output_text', text: finalText.slice(splitIndex) },
-                ],
-            }],
-            usage: { total_tokens: 21 },
-        });
+        assert.deepEqual(result.raw, responsePayload);
     } finally {
         globalThis.fetch = previousFetch;
         if (previousApiKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -205,6 +226,46 @@ test('sanitizePipeline drops invalid limits and recursively normalizes nested pi
                 pipeline: [
                     { $limit: 3 },
                 ],
+            },
+        },
+    ]);
+});
+
+test('sanitizePipeline guards nested dynamic $getField field expressions that can resolve to missing', () => {
+    const sanitized = sanitizePipeline([
+        {
+            $addFields: {
+                resolvedExpiryRaw: {
+                    $cond: [
+                        { $ne: ['$resolvedFieldName', null] },
+                        {
+                            $getField: {
+                                field: '$resolvedFieldName',
+                                input: '$customMetadata',
+                            },
+                        },
+                        null,
+                    ],
+                },
+            },
+        },
+    ]);
+
+    assert.deepEqual(sanitized, [
+        {
+            $addFields: {
+                resolvedExpiryRaw: {
+                    $cond: [
+                        { $ne: ['$resolvedFieldName', null] },
+                        {
+                            $getField: {
+                                field: { $ifNull: ['$resolvedFieldName', ''] },
+                                input: '$customMetadata',
+                            },
+                        },
+                        null,
+                    ],
+                },
             },
         },
     ]);

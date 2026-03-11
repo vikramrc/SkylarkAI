@@ -5,8 +5,8 @@
 - Give the next agent a reliable resume point with completed work, current state, and next steps.
 
 ### Current phase
-- Active tranche: `Tranche 2A`.
-- Goal: finish backend-only Phoenix parity and prove the real one-shot API path end-to-end before frontend work. The backend now uses Phoenix-style env/config, keeps Skylark persistence separate from the PhoenixCloudBE query DB, mounts `/api/phoenix-openai` publicly, and now also has startup/runtime observability plus live LLM stream proof in both the smoke-script terminal and the backend terminal. The latest streamed proof run showed one representative query still regressing with `MALFORMED_LLM_QUERY_JSON`, so frontend should remain blocked until that representative backend query is restored.
+- Active tranche: `Backend closeout complete; UI tranche unblocked`.
+- Goal: backend-only Phoenix parity is now functionally closed for the current migration scope and has been re-proved end-to-end before frontend work. The backend uses Phoenix-style env/config, keeps Skylark persistence separate from the PhoenixCloudBE query DB, mounts `/api/phoenix-openai` publicly, shows startup/runtime observability, and provides live LLM stream proof in both the smoke-script terminal and the backend terminal. The former `MALFORMED_LLM_QUERY_JSON` blocker on `show me all expired certificates` has been resolved and the representative backend proof is now green again.
 
 ### Completed so far
 #### 2026-03-11 — Planning + Tranche 1A start
@@ -379,6 +379,40 @@
     - `show me all expired certificates` → streamed `keywords`, `ambiguity`, `generation#1`, `generation#2`, then failed with `MALFORMED_LLM_QUERY_JSON`
     - `show me all maintenance tasks due next month` → streamed successfully and returned `results` (`101` rows)
 
+#### 2026-03-11 — Final backend hygiene closeout + representative-proof restoration
+- Performed a final hygiene pass over the migrated Phoenix backend implementation before any UI work.
+- Closed the remaining backend hardening gaps in `backend/src/phoenixai/runtime/executor.ts` and related tests:
+  - fixed final-response text assembly so finalized OpenAI output is joined naturally without injected newline spam
+  - kept streaming output natural/character-progressive in the smoke path and backend terminal logs
+  - hardened generated-pipeline sanitization recursively for nested values, including dynamic `$getField.field` cases that can surface in generated Mongo expressions
+  - added a bounded malformed-JSON repair path to `safeParseLLMJSON(...)` so near-valid generated query JSON can be repaired conservatively before failing
+  - kept the repair bounded by parse-error locality / search limits rather than broad unsafe normalization
+- Closed the final hygiene/test gaps around the surrounding implementation:
+  - made backend stream logging request-scoped so concurrent query streams do not cross-close each other's in-progress log lines
+  - removed a stale unused executor helper left over from earlier migration steps
+  - tightened the new regression test so it uses a deterministic malformed JSON mutation that exercises the repair path without weakening runtime behavior
+- Validation results after the final hygiene pass:
+  - focused Phoenix validation passes via `node --import tsx --test src/phoenixai/persistence/mongodb.test.ts src/phoenixai/persistence/conversations.test.ts src/phoenixai/runtime/executor.test.ts src/phoenixai/routes/phoenix-openai-response.test.ts src/phoenixai/services/phoenix-openai-response.test.ts` (`40` passing)
+  - `npm run typecheck`: passing
+  - `npm run build`: passing
+  - fresh backend restart via `npm start`: passing with `.env` → effective runtime summary visible on boot
+  - focused real smoke proof via `node scripts/phoenixai/query-smoke.mjs "show me all expired certificates"`: passing
+    - outcome: `results`
+    - result count: `101`
+  - full representative smoke proof via `npm run test:phoenix:api`: passing
+    - `show me all expired certificates` → `results` (`101` rows)
+    - `show me all maintenance tasks due next month` → `results` (`101` rows)
+  - backend terminal proof on fresh code: visible
+    - startup `.env` / runtime summary
+    - `[PhoenixStream][query][status]...`
+    - `[PhoenixStream][query][llm]...`
+    - `[PhoenixStream][query][result]...`
+    - `[PhoenixStream][query][end]...`
+- Backend readiness conclusion:
+  - the previously blocking representative query regression is resolved
+  - backend proof is now honest and green on fresh code
+  - frontend / UI work is no longer blocked on this Phoenix backend migration slice
+
 ### Files touched so far
 - `.gitignore`
 - `backend/.env`
@@ -445,6 +479,11 @@
 - Phoenix live API smoke proof: passing on the earlier non-observability smoke run
 - Phoenix startup/runtime observability proof: passing
 - Phoenix live LLM streaming proof: passing in smoke terminal and backend terminal
+- Phoenix final hygiene validation pass: passing
+- Phoenix malformed generated-query repair regression coverage: passing
+- Phoenix representative expired-certificates smoke proof: passing (`101` rows)
+- Phoenix representative maintenance-due-next-month smoke proof: passing (`101` rows)
+- Phoenix full representative API smoke script: passing on fresh backend code
 - Backend build (`npm run build`): passing
 - Repo-wide TypeScript (`npx tsc --noEmit --pretty false`): passing
 - Backend typecheck (`npm run typecheck`): passing
@@ -454,22 +493,23 @@
 - Phoenix dual-view helper unit test: passing
 - Phoenix runtime executor unit test: passing
 - Phoenix conversation persistence unit test: passing
-- Phoenix API smoke script: passing on the earlier representative-results run; latest streamed proof run is mixed (`expired certificates` currently fails with `MALFORMED_LLM_QUERY_JSON`, `maintenance due next month` passes)
+- Phoenix API smoke script: passing on fresh backend code for both representative queries
 - MCP smoke regression check: passing
 
 ### Next immediate steps
-1. Investigate and fix the streamed-path regression on `show me all expired certificates`, which currently ends in `MALFORMED_LLM_QUERY_JSON` after generation retry.
-2. Re-run `npm run test:phoenix:api` and confirm both representative backend queries succeed while preserving the new startup/stream observability proof.
-3. Only after the representative backend proof is fully green again, begin the frontend `assistant-ui` + locale-translation baseline.
-4. Preserve the current backend Phoenix seam and deterministic MCP isolation; defer Mastra until after the backend + frontend baseline remains stable.
-5. Keep updating this tracker after each meaningful edit/validation cycle.
+1. Begin the frontend `assistant-ui` / UI tranche against the now-validated Phoenix backend surface.
+2. Preserve the current backend Phoenix seam, dual-Mongo split, and deterministic MCP isolation while UI work is layered on top.
+3. Keep the smoke-proof path (`backend/scripts/phoenixai/query-smoke.mjs`) as the backend honesty check during UI integration.
+4. If UI integration changes request/stream semantics, re-run the focused Phoenix tests plus `npm run test:phoenix:api` before claiming end-to-end readiness.
+5. Keep updating this tracker after each meaningful implementation/validation cycle.
 
 ### Notes for the next agent
 - The indexers were intentionally landed under `backend/scripts/phoenixai/` and seeds under `backend/seed/` so they can continue using `dotenv.config()` and `seed/...` relative paths with minimal change.
 - Do not merge Phoenix runtime logic into `backend/src/mcp/`; keep deterministic MCP separate.
 - The full backend TypeScript check is now clean; if it regresses, treat that as a real new issue instead of an inherited one.
 - The Phoenix route surface is now mounted publicly at `/api/phoenix-openai`; keep future changes bounded to that namespace rather than blending them into MCP.
-- The latest observability proof is complete: startup `.env` summary, smoke-terminal LLM streaming, and BE-terminal `[PhoenixStream]` logs are all working on current code.
-- The main remaining backend risk is a representative streamed query regression: `show me all expired certificates` currently fails with `MALFORMED_LLM_QUERY_JSON`, while `show me all maintenance tasks due next month` still succeeds.
+- The latest observability proof is complete on fresh code: startup `.env` summary, smoke-terminal LLM streaming, and BE-terminal `[PhoenixStream]` logs are all working.
+- The previously failing representative streamed query (`show me all expired certificates`) now succeeds again and returns `101` rows; the paired maintenance query also succeeds with `101` rows.
+- For the current migration scope, the backend is ready for UI integration work; remaining work should now be driven by UI integration rather than backend-parity blockers.
 - Update this tracker after every meaningful tranche or validation run.
 

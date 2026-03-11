@@ -295,14 +295,142 @@ export function safeParseLLMJSON<T>(raw: unknown, fallback: T): T {
             }
         }
 
-        return JSON.parse(toParse) as T;
+        const parsed = tryParseJsonText<T>(toParse);
+        if (parsed.success) return parsed.value;
+
+        return repairMalformedJsonText<T>(toParse) ?? fallback;
     } catch {
         return fallback;
     }
 }
 
+type JsonTextParseResult<T> =
+    | { success: true; value: T }
+    | { success: false; error: unknown };
+
+function tryParseJsonText<T>(text: string): JsonTextParseResult<T> {
+    try {
+        return { success: true, value: JSON.parse(text) as T };
+    } catch (error) {
+        return { success: false, error };
+    }
+}
+
+function stripTrailingJsonCommas(text: string): string {
+    return text.replace(/,\s*([}\]])/g, '$1');
+}
+
+function extractJsonParseErrorPosition(error: unknown): number | null {
+    if (!(error instanceof Error)) return null;
+    const match = error.message.match(/position (\d+)/i);
+    return match ? Number.parseInt(match[1] ?? '', 10) : null;
+}
+
+function buildJsonRepairCandidates(text: string, position: number): string[] {
+    const candidates = new Set<string>();
+    const insertions = [']', '}', ','];
+
+    for (let index = Math.max(0, position - 3); index <= Math.min(text.length, position + 3); index += 1) {
+        const currentChar = text[index] ?? '';
+
+        if ('{}[],'.includes(currentChar)) {
+            candidates.add(text.slice(0, index) + text.slice(index + 1));
+        }
+
+        for (const insertion of insertions) {
+            candidates.add(text.slice(0, index) + insertion + text.slice(index));
+        }
+
+        if ('{}[]'.includes(currentChar)) {
+            for (const replacement of [']', '}', ',']) {
+                if (replacement === currentChar) continue;
+                candidates.add(text.slice(0, index) + replacement + text.slice(index + 1));
+            }
+        }
+    }
+
+    return Array.from(candidates).map((candidate) => stripTrailingJsonCommas(candidate));
+}
+
+function repairMalformedJsonText<T>(text: string): T | undefined {
+    if (!text || text.length > 20_000) return undefined;
+
+    const initialCandidate = stripTrailingJsonCommas(text);
+    const initialParse = tryParseJsonText<T>(initialCandidate);
+    if (initialParse.success) return initialParse.value;
+
+    const queue: Array<{ text: string; depth: number; error: unknown }> = [
+        { text: initialCandidate, depth: 0, error: initialParse.error },
+    ];
+    const visited = new Set<string>([initialCandidate]);
+    const maxDepth = 4;
+    const maxNodes = 2_000;
+    let explored = 0;
+
+    while (queue.length > 0 && explored < maxNodes) {
+        const current = queue.shift();
+        if (!current) break;
+        explored += 1;
+
+        if (current.depth >= maxDepth) continue;
+
+        const errorPosition = extractJsonParseErrorPosition(current.error);
+        if (errorPosition === null) continue;
+
+        for (const candidate of buildJsonRepairCandidates(current.text, errorPosition)) {
+            if (visited.has(candidate)) continue;
+            visited.add(candidate);
+
+            const candidateParse = tryParseJsonText<T>(candidate);
+            if (candidateParse.success) return candidateParse.value;
+
+            queue.push({
+                text: candidate,
+                depth: current.depth + 1,
+                error: candidateParse.error,
+            });
+        }
+    }
+
+    return undefined;
+}
+
 function normalizePrompt(prompt: string | readonly string[]): string {
     return Array.isArray(prompt) ? prompt.join('\n') : String(prompt ?? '');
+}
+
+function sanitizeGetFieldFieldExpression(field: unknown): unknown {
+    if (typeof field === 'string') {
+        return field.startsWith('$') ? { $ifNull: [field, ''] } : field;
+    }
+
+    if (isRecord(field)) {
+        return '$ifNull' in field ? field : { $ifNull: [field, ''] };
+    }
+
+    return '';
+}
+
+function sanitizePipelineValue(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map((entry) => sanitizePipelineValue(entry));
+    }
+
+    if (!isRecord(value)) return value;
+
+    const nextValue: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+        nextValue[key] = sanitizePipelineValue(entry);
+    }
+
+    if (isRecord(nextValue.$getField)) {
+        nextValue.$getField = {
+            ...nextValue.$getField,
+            field: sanitizeGetFieldFieldExpression(nextValue.$getField.field),
+        };
+    }
+
+    return nextValue;
 }
 
 export function sanitizePipeline(pipeline: unknown): Record<string, unknown>[] {
@@ -338,6 +466,8 @@ export function sanitizePipeline(pipeline: unknown): Record<string, unknown>[] {
             } else if (operator === '$unionWith' && isRecord(value) && Array.isArray(value.pipeline)) {
                 value = { ...value, pipeline: sanitizePipeline(value.pipeline) };
             }
+
+            value = sanitizePipelineValue(value);
 
             return { [operator]: value };
         })
@@ -558,11 +688,6 @@ function toObjectIdString(value: unknown): string | null {
             ? ''
             : String(value);
     return OBJECT_ID_HEX_REGEX.test(normalized) ? normalized : null;
-}
-
-function toObjectId(value: unknown): ObjectId | null {
-    const normalized = toObjectIdString(value);
-    return normalized ? new ObjectId(normalized) : null;
 }
 
 function canonicalizeCollectionToken(token: string): string | null {

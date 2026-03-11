@@ -26,6 +26,7 @@ const defaultDependencies: PhoenixOpenAiResponseRouteDependencies = {
 };
 
 const STREAM_ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
+type PhoenixStreamScope = 'query' | 'disambiguate';
 
 function isStreamingEnabled(): boolean {
     const value = String(process.env.PHX_USE_STREAM ?? process.env.PHOENIX_USE_STREAM ?? '').toLowerCase();
@@ -69,90 +70,108 @@ function getErrorMessage(error: unknown): string {
 }
 
 let openPhoenixLlmLineKey: string | null = null;
+let nextPhoenixStreamLoggerId = 0;
 
-function closeOpenPhoenixLlmLine(): void {
+function forceCloseOpenPhoenixLlmLine(): void {
     if (!openPhoenixLlmLineKey) return;
     process.stdout.write('\n');
     openPhoenixLlmLineKey = null;
 }
 
-function logPhoenixStreamEvent(scope: 'query' | 'disambiguate', event: string, data: unknown): void {
+export function createPhoenixStreamEventLogger(scope: PhoenixStreamScope): {
+    closeOpenLine: () => void;
+    logEvent: (event: string, data: unknown) => void;
+} {
     const prefix = `[PhoenixStream][${scope}]`;
+    const loggerKeyPrefix = `${scope}:${++nextPhoenixStreamLoggerId}:`;
 
-    if (event === 'status' && typeof data === 'object' && data !== null) {
-        closeOpenPhoenixLlmLine();
-        const stage = Reflect.get(data, 'stage');
-        const message = Reflect.get(data, 'message');
-        const attempt = Reflect.get(data, 'attempt');
-        console.log(`${prefix}[status][${String(stage ?? 'unknown')}]${typeof attempt === 'number' ? ` attempt=${attempt}` : ''} ${String(message ?? '')}`.trim());
-        return;
+    function closeOwnOpenPhoenixLlmLine(): void {
+        if (!openPhoenixLlmLineKey?.startsWith(loggerKeyPrefix)) return;
+        forceCloseOpenPhoenixLlmLine();
     }
 
-    if (event === 'llm' && typeof data === 'object' && data !== null) {
-        const kind = Reflect.get(data, 'kind');
-        const stage = Reflect.get(data, 'stage');
-        const attempt = Reflect.get(data, 'attempt');
-        const label = `${String(stage ?? 'unknown')}${typeof attempt === 'number' ? `#${attempt}` : ''}`;
-        const lineKey = `${scope}:${label}`;
+    function logEvent(event: string, data: unknown): void {
 
-        if (kind === 'start') {
-            closeOpenPhoenixLlmLine();
-            console.log(`${prefix}[llm][${label}] start provider=${String(Reflect.get(data, 'provider') ?? 'unknown')} model=${String(Reflect.get(data, 'model') ?? 'unknown')} purpose=${String(Reflect.get(data, 'purpose') ?? 'unknown')}`);
+        if (event === 'status' && typeof data === 'object' && data !== null) {
+            forceCloseOpenPhoenixLlmLine();
+            const stage = Reflect.get(data, 'stage');
+            const message = Reflect.get(data, 'message');
+            const attempt = Reflect.get(data, 'attempt');
+            console.log(`${prefix}[status][${String(stage ?? 'unknown')}]${typeof attempt === 'number' ? ` attempt=${attempt}` : ''} ${String(message ?? '')}`.trim());
             return;
         }
 
-        if (kind === 'delta') {
-            const delta = Reflect.get(data, 'delta');
-            if (typeof delta === 'string' && delta.length > 0) {
-                if (openPhoenixLlmLineKey !== lineKey) {
-                    closeOpenPhoenixLlmLine();
-                    process.stdout.write(`${prefix}[llm][${label}] `);
-                    openPhoenixLlmLineKey = lineKey;
-                }
-                process.stdout.write(delta);
+        if (event === 'llm' && typeof data === 'object' && data !== null) {
+            const kind = Reflect.get(data, 'kind');
+            const stage = Reflect.get(data, 'stage');
+            const attempt = Reflect.get(data, 'attempt');
+            const label = `${String(stage ?? 'unknown')}${typeof attempt === 'number' ? `#${attempt}` : ''}`;
+            const lineKey = `${loggerKeyPrefix}${label}`;
+
+            if (kind === 'start') {
+                forceCloseOpenPhoenixLlmLine();
+                console.log(`${prefix}[llm][${label}] start provider=${String(Reflect.get(data, 'provider') ?? 'unknown')} model=${String(Reflect.get(data, 'model') ?? 'unknown')} purpose=${String(Reflect.get(data, 'purpose') ?? 'unknown')}`);
+                return;
             }
+
+            if (kind === 'delta') {
+                const delta = Reflect.get(data, 'delta');
+                if (typeof delta === 'string' && delta.length > 0) {
+                    if (openPhoenixLlmLineKey !== lineKey) {
+                        forceCloseOpenPhoenixLlmLine();
+                        process.stdout.write(`${prefix}[llm][${label}] `);
+                        openPhoenixLlmLineKey = lineKey;
+                    }
+                    process.stdout.write(delta);
+                }
+                return;
+            }
+
+            if (kind === 'complete') {
+                forceCloseOpenPhoenixLlmLine();
+                const text = Reflect.get(data, 'text');
+                const chars = typeof text === 'string' ? text.length : 0;
+                console.log(`${prefix}[llm][${label}] complete responseId=${String(Reflect.get(data, 'responseId') ?? 'n/a')} chars=${chars}`);
+                return;
+            }
+        }
+
+        if (event === 'result' && typeof data === 'object' && data !== null) {
+            forceCloseOpenPhoenixLlmLine();
+            const results = Reflect.get(data, 'results');
+            const resultCount = Array.isArray(results) ? results.length : Reflect.get(data, 'resultCount');
+            const status = Reflect.get(data, 'status');
+            console.log(`${prefix}[result] status=${String(status ?? 'unknown')} resultCount=${String(resultCount ?? 0)}`);
             return;
         }
 
-        if (kind === 'complete') {
-            closeOpenPhoenixLlmLine();
-            const text = Reflect.get(data, 'text');
-            const chars = typeof text === 'string' ? text.length : 0;
-            console.log(`${prefix}[llm][${label}] complete responseId=${String(Reflect.get(data, 'responseId') ?? 'n/a')} chars=${chars}`);
+        if (event === 'disambiguation' && typeof data === 'object' && data !== null) {
+            forceCloseOpenPhoenixLlmLine();
+            const questions = Reflect.get(data, 'clarifyingQuestions');
+            console.log(`${prefix}[disambiguation] questions=${Array.isArray(questions) ? questions.length : 0}`);
             return;
         }
+
+        if (event === 'end' && typeof data === 'object' && data !== null) {
+            forceCloseOpenPhoenixLlmLine();
+            console.log(`${prefix}[end] ok=${String(Reflect.get(data, 'ok') ?? 'unknown')}`);
+            return;
+        }
+
+        if (event === 'error' && typeof data === 'object' && data !== null) {
+            forceCloseOpenPhoenixLlmLine();
+            console.error(`${prefix}[error] ${String(Reflect.get(data, 'message') ?? 'Unknown error')}`);
+            return;
+        }
+
+        forceCloseOpenPhoenixLlmLine();
+        console.log(`${prefix}[${event}]`);
     }
 
-    if (event === 'result' && typeof data === 'object' && data !== null) {
-        closeOpenPhoenixLlmLine();
-        const results = Reflect.get(data, 'results');
-        const resultCount = Array.isArray(results) ? results.length : Reflect.get(data, 'resultCount');
-        const status = Reflect.get(data, 'status');
-        console.log(`${prefix}[result] status=${String(status ?? 'unknown')} resultCount=${String(resultCount ?? 0)}`);
-        return;
-    }
-
-    if (event === 'disambiguation' && typeof data === 'object' && data !== null) {
-        closeOpenPhoenixLlmLine();
-        const questions = Reflect.get(data, 'clarifyingQuestions');
-        console.log(`${prefix}[disambiguation] questions=${Array.isArray(questions) ? questions.length : 0}`);
-        return;
-    }
-
-    if (event === 'end' && typeof data === 'object' && data !== null) {
-        closeOpenPhoenixLlmLine();
-        console.log(`${prefix}[end] ok=${String(Reflect.get(data, 'ok') ?? 'unknown')}`);
-        return;
-    }
-
-    if (event === 'error' && typeof data === 'object' && data !== null) {
-        closeOpenPhoenixLlmLine();
-        console.error(`${prefix}[error] ${String(Reflect.get(data, 'message') ?? 'Unknown error')}`);
-        return;
-    }
-
-    closeOpenPhoenixLlmLine();
-    console.log(`${prefix}[${event}]`);
+    return {
+        closeOpenLine: closeOwnOpenPhoenixLlmLine,
+        logEvent,
+    };
 }
 
 function isAmbiguousResult(result: unknown): boolean {
@@ -223,6 +242,7 @@ export function createPhoenixOpenAiResponseRouter(
 
     router.get('/query/stream', async (req, res, next) => {
         const userQuery = getStringValue(req.query.userQuery);
+        const logger = createPhoenixStreamEventLogger('query');
 
         if (!userQuery) {
             return res.status(400).json({ message: 'userQuery required' });
@@ -231,7 +251,7 @@ export function createPhoenixOpenAiResponseRouter(
         try {
             sseInit(res);
             const sendEvent = async (event: string, data: unknown) => {
-                logPhoenixStreamEvent('query', event, data);
+                logger.logEvent(event, data);
                 sseSend(res, event, data);
             };
 
@@ -256,12 +276,15 @@ export function createPhoenixOpenAiResponseRouter(
             await closeSseResponse(res);
         } catch (error) {
             try {
+                logger.logEvent('error', { message: getErrorMessage(error) });
                 sseSend(res, 'error', { message: getErrorMessage(error) });
                 sseSend(res, 'end', { ok: false });
                 await closeSseResponse(res);
             } catch {
                 next(error);
             }
+        } finally {
+            logger.closeOpenLine();
         }
     });
 
@@ -289,13 +312,14 @@ export function createPhoenixOpenAiResponseRouter(
     });
 
     router.get('/disambiguate/stream', async (req, res, next) => {
+        const logger = createPhoenixStreamEventLogger('disambiguate');
         try {
             const conversationId = getStringValue(req.query.conversationId);
             const responses = parseResponses(req.query.responses);
 
             sseInit(res);
             const sendEvent = async (event: string, data: unknown) => {
-                logPhoenixStreamEvent('disambiguate', event, data);
+                logger.logEvent(event, data);
                 sseSend(res, event, data);
             };
 
@@ -324,12 +348,15 @@ export function createPhoenixOpenAiResponseRouter(
             await closeSseResponse(res);
         } catch (error) {
             try {
+                logger.logEvent('error', { message: getErrorMessage(error) });
                 sseSend(res, 'error', { message: getErrorMessage(error) });
                 sseSend(res, 'end', { ok: false });
                 await closeSseResponse(res);
             } catch {
                 next(error);
             }
+        } finally {
+            logger.closeOpenLine();
         }
     });
 

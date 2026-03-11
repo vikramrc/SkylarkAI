@@ -6,6 +6,7 @@ import type { PhoenixConversation } from '../persistence/conversations.js';
 import type { PhoenixRuntimeEngine } from '../runtime/contracts.js';
 import {
     createPhoenixOpenAiResponseRouter,
+    createPhoenixStreamEventLogger,
     type PhoenixOpenAiResponseRouteDependencies,
 } from './phoenix-openai-response.js';
 
@@ -111,6 +112,67 @@ async function withStreamEnv(value: string | undefined, run: () => Promise<void>
         }
     }
 }
+
+async function withCapturedStreamLogs(
+    run: (captured: { writes: string[]; logs: string[]; errors: string[] }) => Promise<void>,
+): Promise<void> {
+    const writes: string[] = [];
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const originalWrite = process.stdout.write;
+    const originalLog = console.log;
+    const originalError = console.error;
+
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+        return true;
+    }) as typeof process.stdout.write;
+    console.log = (...args: unknown[]) => {
+        logs.push(args.map((value) => String(value)).join(' '));
+    };
+    console.error = (...args: unknown[]) => {
+        errors.push(args.map((value) => String(value)).join(' '));
+    };
+
+    try {
+        await run({ writes, logs, errors });
+    } finally {
+        process.stdout.write = originalWrite;
+        console.log = originalLog;
+        console.error = originalError;
+    }
+}
+
+test('stream logger keeps concurrent same-stage deltas separated by request', async () => {
+    await withCapturedStreamLogs(async ({ writes }) => {
+        const loggerA = createPhoenixStreamEventLogger('query');
+        const loggerB = createPhoenixStreamEventLogger('query');
+        const prefix = '[PhoenixStream][query][llm][generation#1] ';
+
+        loggerA.logEvent('llm', { kind: 'delta', stage: 'generation', attempt: 1, delta: 'AAA' });
+        loggerB.logEvent('llm', { kind: 'delta', stage: 'generation', attempt: 1, delta: 'BBB' });
+        loggerA.logEvent('llm', { kind: 'delta', stage: 'generation', attempt: 1, delta: 'CCC' });
+        loggerA.closeOpenLine();
+        loggerB.closeOpenLine();
+
+        assert.equal(writes.join(''), `${prefix}AAA\n${prefix}BBB\n${prefix}CCC\n`);
+    });
+});
+
+test('stream logger only closes an open line that belongs to the same request logger', async () => {
+    await withCapturedStreamLogs(async ({ writes }) => {
+        const loggerA = createPhoenixStreamEventLogger('query');
+        const loggerB = createPhoenixStreamEventLogger('query');
+        const prefix = '[PhoenixStream][query][llm][generation#1] ';
+
+        loggerA.logEvent('llm', { kind: 'delta', stage: 'generation', attempt: 1, delta: 'AAA' });
+        loggerB.closeOpenLine();
+        loggerA.logEvent('llm', { kind: 'delta', stage: 'generation', attempt: 1, delta: 'BBB' });
+        loggerA.closeOpenLine();
+
+        assert.equal(writes.join(''), `${prefix}AAABBB\n`);
+    });
+});
 
 test('router gates requests through readiness middleware and returns health payload', async () => {
     let ensureCalls = 0;
