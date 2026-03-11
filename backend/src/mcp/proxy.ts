@@ -46,7 +46,7 @@ export async function proxyToolCall(toolDef: any, args: Record<string, any>, tok
         });
         
         return {
-            content: [{ type: "text", text: JSON.stringify(response.data, null, 2) }]
+            content: [{ type: "text", text: JSON.stringify(response.data) }]
         };
     } catch (error: any) {
         const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
