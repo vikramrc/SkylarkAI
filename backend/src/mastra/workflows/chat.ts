@@ -84,7 +84,7 @@ const chatStep = createStep({
             if (result.toolCalls && result.toolCalls.length > 0) {
                 console.log(`[Workflow] Agent invoked ${result.toolCalls.length} tool(s):`);
                 result.toolCalls.forEach((tc: any) => {
-                    console.log(`  - ${tc.toolName}`);
+                    console.log(`  - ${tc.payload?.toolName || tc.toolName || 'Unknown Tool'}`);
                 });
             }
 
