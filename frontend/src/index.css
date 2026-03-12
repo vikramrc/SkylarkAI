@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Zen+Dots&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  position: relative;
+  overflow-x: auto;
+  min-height: 100vh;
+  font-family: 'Inter', 'Roboto', system-ui, sans-serif;
+  background: #fafafc;
+  color: #1a1a1a;
+}
+
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: auto;
+  pointer-events: none;
+  z-index: -2;
+  filter: blur(64px);
+}
+
+body::before {
+  left: calc(50% - 30rem);
+  top: -20rem;
+  width: 112rem;
+  height: 102.375rem;
+  transform: translateX(-50%) rotate(30deg);
+  opacity: 0.3;
+  background:
+    radial-gradient(circle at 20% 16%, rgba(224, 231, 255, 0.95), transparent 24%),
+    radial-gradient(circle at 36% 30%, rgba(199, 210, 254, 0.88), transparent 22%),
+    radial-gradient(circle at 52% 44%, rgba(165, 180, 252, 0.56), transparent 20%),
+    radial-gradient(circle at 68% 58%, rgba(224, 231, 255, 0.8), transparent 24%),
+    radial-gradient(circle at 82% 24%, rgba(238, 242, 255, 0.78), transparent 18%);
+}
+
+body::after {
+  right: -12rem;
+  bottom: -10rem;
+  width: 24rem;
+  height: 24rem;
+  opacity: 0.08;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.5), transparent 60%);
+}
+
+#root {
+  position: relative;
+  min-height: 100vh;
+  isolation: isolate;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(156 163 175);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 600px) {
+  body::before {
+    left: 50%;
+    top: -16rem;
+    width: 140vw;
+    height: 72rem;
+    transform: translateX(-54%) rotate(24deg);
+  }
+}
