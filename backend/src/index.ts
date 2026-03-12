@@ -68,11 +68,11 @@ function logStartupConfig(port: number): void {
         },
         persistence: {
             SKYLARK_MONGODB_URI: sanitizeConnectionUri(process.env.SKYLARK_MONGODB_URI),
-            SKYLARK_MONGODB_DB_NAME: process.env.SKYLARK_MONGODB_DB_NAME || 'SkylarkDB',
+            SKYLARK_DB_NAME: extractMongoDbName(process.env.SKYLARK_MONGODB_URI),
         },
         querySource: {
-            MONGODB_URI: sanitizeConnectionUri(process.env.MONGODB_URI),
-            MONGODB_DB_NAME: extractMongoDbName(process.env.MONGODB_URI),
+            PHOENIX_MONGO_URI: sanitizeConnectionUri(process.env.PHOENIX_MONGO_URI || process.env.MONGODB_URI),
+            PHOENIX_DB_NAME: extractMongoDbName(process.env.PHOENIX_MONGO_URI || process.env.MONGODB_URI),
         },
         vector: {
             USE_QDRANT_VECTOR_DB: isEnabled(process.env.USE_QDRANT_VECTOR_DB),

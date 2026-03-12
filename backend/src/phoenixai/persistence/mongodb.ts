@@ -20,28 +20,23 @@ export function getPersistenceMongoConfig(): PhoenixMongoConnectionConfig {
     const uri = firstNonEmpty(
         process.env.SKYLARK_MONGODB_URI,
         process.env.SKYLARK_PERSISTENCE_MONGODB_URI,
-    ) ?? 'mongodb://localhost:27017';
-    const dbName = firstNonEmpty(
-        process.env.SKYLARK_MONGODB_DB_NAME,
-        process.env.SKYLARK_PERSISTENCE_MONGODB_DB_NAME,
-    ) ?? 'SkylarkDB';
+    ) ?? 'mongodb://localhost:27017/SkylarkDB';
 
-    return { uri, dbName };
+    return { uri };
 }
 
 export function getQueryMongoConfig(): PhoenixMongoConnectionConfig {
     const uri = firstNonEmpty(
         process.env.PHOENIX_QUERY_MONGODB_URI,
         process.env.PHOENIX_SOURCE_MONGODB_URI,
-        process.env.MONGODB_URI,
-        process.env.MONGO_URI,
-    ) ?? 'mongodb://localhost:27017/ProductsDB';
+        process.env.PHOENIX_MONGO_URI,
+        process.env.PHOENIX_SOURCE_MONGO_URI,
+    ) ?? 'mongodb://localhost:27017/SkylarkDB';
     const dbName = firstNonEmpty(
         process.env.PHOENIX_QUERY_MONGODB_DB_NAME,
         process.env.PHOENIX_SOURCE_MONGODB_DB_NAME,
-        process.env.MONGODB_DB_NAME,
-        process.env.MONGO_DB_NAME,
-        process.env.DB_NAME,
+        process.env.PHOENIX_MONGO_DB_NAME,
+        process.env.PHOENIX_SOURCE_MONGO_DB_NAME,
     );
 
     return dbName ? { uri, dbName } : { uri };

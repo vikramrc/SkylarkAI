@@ -8,13 +8,12 @@ import {
 const MONGO_ENV_KEYS = [
     'SKYLARK_MONGODB_URI',
     'SKYLARK_PERSISTENCE_MONGODB_URI',
-    'SKYLARK_MONGODB_DB_NAME',
     'SKYLARK_PERSISTENCE_MONGODB_DB_NAME',
     'PHOENIX_QUERY_MONGODB_URI',
     'PHOENIX_SOURCE_MONGODB_URI',
     'PHOENIX_QUERY_MONGODB_DB_NAME',
     'PHOENIX_SOURCE_MONGODB_DB_NAME',
-    'MONGODB_URI',
+    'PHOENIX_MONGO_URI',
     'MONGO_URI',
     'MONGODB_DB_NAME',
     'MONGO_DB_NAME',
@@ -57,8 +56,7 @@ test('mongodb config defaults keep Skylark persistence separate from Phoenix que
 test('mongodb config honors Skylark-specific persistence env and Phoenix query compatibility env', () => {
     withEnv({
         SKYLARK_MONGODB_URI: 'mongodb://localhost:27017',
-        SKYLARK_MONGODB_DB_NAME: 'SkylarkDB',
-        MONGODB_URI: 'mongodb://localhost:27017/ProductsDB',
+        PHOENIX_MONGO_URI: 'mongodb://localhost:27017/ProductsDB',
         MONGODB_DB_NAME: 'ProductsDB',
     }, () => {
         assert.deepEqual(getPersistenceMongoConfig(), {

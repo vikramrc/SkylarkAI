@@ -1,6 +1,6 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import { fileURLToPath, URL } from 'node:url';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
   plugins: [react()],
@@ -9,8 +9,10 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  base: '/',
+
   server: {
-    port: 5176,
+    port: 5175,
     host: true,
     proxy: {
       '/api': {
@@ -18,10 +20,16 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/skylark-openai': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/skylark-openai/, '/api/skylark-openai')
+      }
     },
   },
   build: {
     outDir: 'dist',
     sourcemap: true,
   },
-});
+})

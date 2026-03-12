@@ -6,9 +6,9 @@ import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import FormLabel from '@mui/material/FormLabel';
-import { authService } from '@/services/auth.service';
-import type { LoginBody } from '@/services/auth.service';
-import CaptchaWidget from '@/components/CaptchaWidget';
+import { authService } from '../services/auth.service';
+import type { LoginBody } from '../services/auth.service';
+import CaptchaWidget from '../components/CaptchaWidget';
 
 interface Props { onSuccess: (user?: any) => void }
 
@@ -32,7 +32,7 @@ export default function SignIn({ onSuccess }: Props) {
       const res = await authService.login(body);
       onSuccess(res?.user);
     } catch (e: any) {
-      const d = e?.response?.data || e;
+      const d = e?.response?.data;
       if (d?.captchaError) {
         setError(d?.message || 'Invalid CAPTCHA');
       } else {
@@ -64,11 +64,11 @@ export default function SignIn({ onSuccess }: Props) {
         </svg>
       </div>
 
-      <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', px: 2, position: 'relative', zIndex: 10 }}>
-        <Card variant="outlined" sx={{ width: '100%', maxWidth: 560, minHeight: { xs: 'auto', sm: 620 }, p: 4, display: 'flex', flexDirection: 'column', gap: 2, bgcolor: 'rgba(255,255,255,0.60)', backdropFilter: 'blur(12px)', border: '1px solid rgba(15,23,42,0.12)', borderRadius: '8px', boxShadow: '0 4px 18px rgba(15,23,42,0.08)' }}>
+      <Box className="relative z-10" sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', px: 2 }}>
+        <Card variant="outlined" sx={{ width: '100%', maxWidth: 560, minHeight: 620, p: 4, display: 'flex', flexDirection: 'column', gap: 2, bgcolor: 'rgba(255,255,255,0.60)', backdropFilter: 'blur(12px)', border: '1px solid rgba(15,23,42,0.12)', borderRadius: '8px', boxShadow: '0 4px 18px rgba(15,23,42,0.08)' }}>
           {/* Brand */}
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', mb: 3, mt: 2 }}>
-            <Typography sx={{ textAlign: 'center', userSelect: 'none', fontFamily: '"Zen Dots", Roboto, sans-serif', color: '#475569', fontSize: { xs: '1.4rem', sm: '2rem', md: '3rem' }, lineHeight: 1.2 }}>SEIKAIZEN AI</Typography>
+            <Typography sx={{ textAlign: 'center', userSelect: 'none', fontFamily: '"Zen Dots", "Inter", sans-serif', color: '#475569', fontSize: 'clamp(2.5rem, 8vw, 4rem)', lineHeight: 1.2, fontWeight: 400 }}>SKYLARK</Typography>
             <Box sx={{ height: 3, width: 84, borderRadius: 0, mt: 1.5, background: 'linear-gradient(90deg,#2563EB,#1e40af)', clipPath: 'polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%)' }} />
           </Box>
 
@@ -76,7 +76,7 @@ export default function SignIn({ onSuccess }: Props) {
             <Typography color="error" sx={{ textAlign: 'center', mb: 1 }}>{error}</Typography>
           )}
 
-          <Box component="form" onSubmit={onSubmit} noValidate sx={{ display: 'flex', flexDirection: 'column', width: '100%', gap: { xs: 2.25, sm: 3 } }}>
+          <Box component="form" onSubmit={onSubmit} noValidate sx={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 3 }}>
             <div>
               <FormLabel htmlFor="email" sx={{ mb: 0.5 }}>Email</FormLabel>
               <TextField id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="your@email.com" autoComplete="email" autoFocus required fullWidth size="small"
@@ -98,7 +98,7 @@ export default function SignIn({ onSuccess }: Props) {
 
             <Button type="submit" fullWidth variant="contained"
               disabled={!valid || submitting}
-              sx={{ mt: { xs: 1.5, sm: 2.5 }, height: 40, textTransform: 'uppercase', fontWeight: 600, bgcolor: '#1d4ed8', '&:hover': { bgcolor: '#1e40af' } }}>
+              sx={{ mt: 2.5, height: 40, textTransform: 'uppercase', fontWeight: 600, bgcolor: '#1d4ed8', '&:hover': { bgcolor: '#1e40af' } }}>
               {submitting ? 'Signing in…' : 'SIGN IN'}
             </Button>
           </Box>

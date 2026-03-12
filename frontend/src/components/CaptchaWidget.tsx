@@ -59,14 +59,14 @@ export default function CaptchaWidget({ value, onChange, sessionId, onSessionIdC
   return (
     <Box>
       <Stack direction="row" spacing={1.5} alignItems="center">
-        <Box sx={{ position: 'relative', width: { xs: '100%', sm: 200 }, height: 40, border: '1px solid', borderColor: (t) => t.palette.grey[300], bgcolor: (t) => t.palette.grey[100], borderRadius: 1, pl: 1, pr: 5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', '& svg': { width: '100%', height: '100%' } }} dangerouslySetInnerHTML={{ __html: svg }} />
+        <Box sx={{ position: 'relative', width: 200, height: 40, border: '1px solid', borderColor: (t) => t.palette.grey[300], bgcolor: (t) => t.palette.grey[100], borderRadius: 1, pl: 1, pr: 5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' , mb:1}} dangerouslySetInnerHTML={{ __html: svg }} />
           <IconButton aria-label="Refresh CAPTCHA" title="Refresh" size="small" onClick={() => load()} sx={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', width: 24, height: 24, border: '1px solid', borderColor: (t) => t.palette.grey[300], bgcolor: '#fff' }}>
             <RefreshCcw size={16} />
           </IconButton>
         </Box>
         <TextField value={value} onChange={(e) => onChange(e.target.value)} placeholder="Enter CAPTCHA" required size="small"
-          sx={{ flex: 1, maxWidth: { sm: 220 }, '& .MuiOutlinedInput-root': { height: 40 } }} />
+          sx={{ width: 220, '& .MuiOutlinedInput-root': { height: 40 } }} />
       </Stack>
       <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 1 }}>
         Expires in: {mmss}
@@ -80,3 +80,4 @@ export default function CaptchaWidget({ value, onChange, sessionId, onSessionIdC
     </Box>
   );
 }
+

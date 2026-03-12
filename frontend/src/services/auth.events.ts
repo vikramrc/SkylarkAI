@@ -1,10 +1,13 @@
-const listeners = new Set<() => void>();
+// Simple global event helpers to broadcast auth state changes (e.g., unauthorized)
+
+const UNAUTHORIZED_EVENT = 'phoenixai-unauthorized';
 
 export function onUnauthorized(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  window.addEventListener(UNAUTHORIZED_EVENT, listener as EventListener);
+  return () => window.removeEventListener(UNAUTHORIZED_EVENT, listener as EventListener);
 }
 
 export function notifyUnauthorized() {
-  listeners.forEach((listener) => listener());
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
 }
+

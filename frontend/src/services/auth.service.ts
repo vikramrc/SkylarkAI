@@ -1,83 +1,41 @@
-const SESSION_KEY = 'skylarkai.mock.session';
+import axios from 'axios';
+import { API_BASE_URL } from './api.service';
 
-export interface User {
-  email: string;
-  displayName: string;
-}
-
-export interface LoginBody {
+export type LoginBody = {
   email: string;
   password: string;
   captchaSessionId: string;
   captchaInput: string;
-}
+};
 
-interface SessionPayload {
-  user: User;
-}
+export class AuthService {
+  private client = axios.create({ baseURL: API_BASE_URL, withCredentials: true });
 
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
+  async generateCaptcha() {
+    const { data } = await this.client.get(`/auth/captcha/generate`);
+    return data as { sessionId: string; svg: string; expiresIn: number };
+  }
 
-function readSession(): SessionPayload | null {
-  const raw = localStorage.getItem(SESSION_KEY);
-  if (!raw) return null;
+  async refreshCaptcha(sessionId: string) {
+    const { data } = await this.client.post(`/auth/captcha/refresh`, { sessionId });
+    return data as { sessionId: string; svg: string; expiresIn: number };
+  }
 
-  try {
-    return JSON.parse(raw) as SessionPayload;
-  } catch {
-    localStorage.removeItem(SESSION_KEY);
-    return null;
+  async login(body: LoginBody) {
+    const { data } = await this.client.post(`/auth/login`, body);
+    return data as { user: any; expiresIn: number; sessionTimeout: number };
+  }
+
+  async check() {
+    const { data } = await this.client.get('/auth/check');
+    return data as { authenticated: boolean; user?: any; expiresIn?: number };
+  }
+
+  async logout() {
+    const { data } = await this.client.post('/auth/logout');
+    return data;
   }
 }
 
-export const authService = {
-  async check() {
-    await delay(420);
-    const session = readSession();
-    return {
-      authenticated: Boolean(session),
-      user: session?.user,
-    };
-  },
+export const authService = new AuthService();
 
-  async login(body: LoginBody) {
-    await delay(650);
-
-    if (!/.+@.+\..+/.test(body.email) || body.password.trim().length < 6) {
-      throw new Error('Use a valid email and a password of at least 6 characters.');
-    }
-
-    const user = {
-      email: body.email.trim().toLowerCase(),
-      displayName: body.email.split('@')[0],
-    } satisfies User;
-
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ user }));
-    return { user };
-  },
-
-  async logout() {
-    await delay(250);
-    localStorage.removeItem(SESSION_KEY);
-  },
-
-  async generateCaptcha() {
-    await delay(300);
-    return {
-      sessionId: `mock-session-${Date.now()}`,
-      svg: '<svg width="200" height="40" viewBox="0 0 200 40" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#eee"/><text x="50%" y="50%" font-family="monospace" font-size="20" text-anchor="middle" dominant-baseline="middle" fill="#333">MOCK-731</text></svg>',
-      expiresIn: 300,
-    };
-  },
-
-  async refreshCaptcha(sessionId: string) {
-    await delay(300);
-    return {
-      sessionId: `mock-session-${Date.now()}`,
-      svg: '<svg width="200" height="40" viewBox="0 0 200 40" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#eee"/><text x="50%" y="50%" font-family="monospace" font-size="20" text-anchor="middle" dominant-baseline="middle" fill="#333">REFRESH-731</text></svg>',
-      expiresIn: 300,
-    };
-  },
-};
