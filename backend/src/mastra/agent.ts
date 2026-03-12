@@ -39,14 +39,20 @@ export const getSkylarkAgent = (storage?: any) => {
     const queryModel = process.env.MASTRA_OPENAI_QUERY_MODEL || 'gpt-4o';
     const reasoning = (process.env.MASTRA_OPENAI_QUERY_MODEL_REASONING as any) || 'low';
     
-    const configuredModel = openai(queryModel, { reasoningEffort: reasoning });
+    const configuredModel = openai(queryModel);
 
     return new Agent({
         id: 'skylark-operator',
         name: 'Skylark Operator',
         instructions: `You are a helpful assistant with access to MCP tools. Help users interact with the MCP server to manage Planned Maintenance, Inventory, and Fleet Operations. 
 
-When you learn an organization name (like "fleetships") or a vessel name, make sure to update your Working Memory so you can use them automatically for future tool calls.`,
+When you learn an organization name (like "fleetships") or a vessel name, make sure to update your Working Memory so you can use them automatically for future tool calls.
+
+CRITICAL TOOL SEQUENCING: 
+If a tool requires a canonical ID (like costCenterID, machineryID, or scheduleID) and you only have a name, you MUST use a broad query/overview tool first to find the correct ID. 
+- For budgets/costs, use 'budget_query_overview' to find the correct costCenterID before using 'budget_query_cost_analysis'.
+- For machinery/tasks, use 'fleet_query_machinery_status' or 'maintenance_query_schedules' to find IDs before deep-diving.
+DO NOT guess IDs.`,
         model: configuredModel,
         tools: skylarkTools,
         memory: new Memory({

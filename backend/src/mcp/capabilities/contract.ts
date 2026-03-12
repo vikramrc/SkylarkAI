@@ -38,7 +38,7 @@ export const normalizeCapabilityQueryFields = (capability: any) => {
   };
 };
 
-function getParameterDescription(param: string, requiredFields: string[]) {
+export function getParameterDescription(param: string, requiredFields: string[]) {
   const requiredLabel = requiredFields.includes(param) ? "Required" : "Optional";
 
   switch (param) {
@@ -52,6 +52,17 @@ function getParameterDescription(param: string, requiredFields: string[]) {
       return `${requiredLabel} friendly vessel identifier within the resolved organization. Alternative to vesselID.`;
     case "vesselID":
       return `${requiredLabel} canonical raw vessel identifier. Not needed when vesselName is already provided.`;
+    case "costCenterID":
+    case "machineryID":
+    case "scheduleID":
+    case "activityID":
+    case "vendorID":
+    case "partID":
+    case "locationID":
+    case "templateID":
+    case "workHistoryID":
+    case "crewMemberID":
+      return `${requiredLabel} canonical raw MongoDB ObjectId for the ${param.replace("ID", "")}. DO NOT guess this. If you only have a name (e.g., "JPY Budget", "Main Engine"), you MUST first use a broad query/overview tool (like budget.query_overview or fleet.query_machinery_status) to find the correct ID before calling this tool.`;
     default:
       return `${requiredLabel} parameter: ${param}`;
   }
@@ -162,10 +173,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/execution-history",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "tagName", "tagNames", "taggedOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "limit"],
-    purpose: "Returns recent maintenance execution events, completion status, costs, and comments.",
-    whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution.",
-    typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated."],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "workHistoryID", "tagName", "tagNames", "taggedOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "limit"],
+    purpose: "Returns recent maintenance execution events / Activity Work History (AWH), including completion status, costs, and comments.",
+    whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution. Use this for all Activity Work History (AWH) queries.",
+    typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated.", "Show me the latest committed AWH."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {

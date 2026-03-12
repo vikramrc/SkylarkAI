@@ -1,7 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { serviceBackedPhoenixRuntimeEngine } from '../phoenixai/index.js';
-import { capabilitiesContract, buildCapabilityDescription } from '../mcp/capabilities/contract.js';
+import { capabilitiesContract, buildCapabilityDescription, getParameterDescription } from '../mcp/capabilities/contract.js';
 import { proxyToolCall } from '../mcp/proxy.js';
 
 export const directQueryFallback = createTool({
@@ -79,15 +79,14 @@ const mcpTools = capabilitiesContract.reduce((acc, cap) => {
     const allFields = [...(cap.requiredQuery || []), ...(cap.optionalQuery || [])];
     
     allFields.forEach(field => {
-        let fieldSchema = z.string();
+        const description = getParameterDescription(field, cap.requiredQuery || []);
+        let fieldSchema = z.string().describe(description);
         
-        // Add descriptions for common maritime fields to help the LLM
-        if (field === 'organizationShortName') {
-            fieldSchema = fieldSchema.describe('Friendly organization identifier (e.g., "fleetships").');
-        } else if (field === 'vesselName') {
-            fieldSchema = fieldSchema.describe('Friendly vessel identifier (e.g., "MV Phoenix Demo").');
-        } else if (field === 'limit') {
-            fieldSchema = fieldSchema.describe('Maximum number of records to return.');
+        // Strictly enforce ObjectId format for ID fields (except organizationID/vesselID which have friendly fallbacks)
+        if (field.endsWith('ID') && field !== 'organizationID' && field !== 'vesselID') {
+            fieldSchema = fieldSchema.regex(/^[0-9a-fA-F]{24}$/, {
+                message: `${field} must be a valid 24-character hex Mongo ObjectId. Use a lookup tool to find the ID if you only have a name.`
+            });
         }
 
         schemaProps[field] = cap.requiredQuery?.includes(field) ? fieldSchema : fieldSchema.optional();
@@ -113,6 +112,8 @@ const mcpTools = capabilitiesContract.reduce((acc, cap) => {
             if (!updatedInput.vesselName && !updatedInput.vesselID && contextVessel) {
                 updatedInput.vesselName = contextVessel;
             }
+
+            console.log(`[Agent Tool] Calling ${toolId} with:`, JSON.stringify(updatedInput, null, 2));
 
             const result = await proxyToolCall(
                 {

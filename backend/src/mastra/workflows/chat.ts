@@ -30,21 +30,21 @@ const chatStep = createStep({
             }
 
             // Introspect agent state
-            console.log(`[Workflow DEBUG] Agent ID: ${agent.id}`);
-            console.log(`[Workflow DEBUG] Agent has memory: ${agent.hasOwnMemory()}`);
-            const processors = await agent.listInputProcessors();
-            console.log(`[Workflow DEBUG] Agent input processors:`, processors.map((p: any) => p.id) || 'None');
-            console.log(`[Workflow DEBUG] Processing query for runId: ${runId}`);
+            // console.log(`[Workflow DEBUG] Agent ID: ${agent.id}`);
+            // console.log(`[Workflow DEBUG] Agent has memory: ${agent.hasOwnMemory()}`);
+            // const processors = await agent.listInputProcessors();
+            // console.log(`[Workflow DEBUG] Agent input processors:`, processors.map((p: any) => p.id) || 'None');
+            // console.log(`[Workflow DEBUG] Processing query for runId: ${runId}`);
             
             const memory = await agent.getMemory();
             if (memory) {
-                console.log(`[Workflow DEBUG] Memory Instance ID: ${memory.id}`);
+                // console.log(`[Workflow DEBUG] Memory Instance ID: ${memory.id}`);
                 // @ts-ignore - inspecting internal config
-                console.log(`[Workflow DEBUG] Memory Config:`, JSON.stringify(memory.threadConfig || {}, null, 2));
+                // console.log(`[Workflow DEBUG] Memory Config:`, JSON.stringify(memory.threadConfig || {}, null, 2));
                 try {
                     // recall() retrieves messages from the thread
                     const { messages } = await memory.recall({ threadId: runId });
-                    console.log(`[Workflow DEBUG] Recalled History (${messages.length} messages)`);
+                    // console.log(`[Workflow DEBUG] Recalled History (${messages.length} messages)`);
                     if (messages.length > 0) {
                         // Just log the last few contents to avoid spamming the console
                         const snippets = messages.slice(-3).map((m: any) => {
@@ -56,15 +56,15 @@ const chatStep = createStep({
                             }
                             return `[${m.role}]: ${contentStr.slice(0, 50)}...`;
                         });
-                        console.log(`[Workflow DEBUG] Last 3 messages:`, snippets);
+                        // console.log(`[Workflow DEBUG] Last 3 messages:`, snippets);
                     }
 
                     // getWorkingMemory() retrieves structured state
                     const workingMemory = await memory.getWorkingMemory({ threadId: runId, resourceId: 'console-user' });
-                    console.log(`[Workflow DEBUG] Working Memory state:`, workingMemory || 'Empty');
+                    // console.log(`[Workflow DEBUG] Working Memory state:`, workingMemory || 'Empty');
 
                 } catch (e) {
-                    console.log(`[Workflow DEBUG] Memory diagnostic failed: ${e}`);
+                    // console.log(`[Workflow DEBUG] Memory diagnostic failed: ${e}`);
                 }
             }
 
@@ -80,6 +80,13 @@ const chatStep = createStep({
                 },
                 requestContext
             });
+
+            if (result.toolCalls && result.toolCalls.length > 0) {
+                console.log(`[Workflow] Agent invoked ${result.toolCalls.length} tool(s):`);
+                result.toolCalls.forEach((tc: any) => {
+                    console.log(`  - ${tc.toolName}`);
+                });
+            }
 
             if (!result) {
                 console.error(`[chatStep Error]: Agent returned null/undefined result for query: "${userQuery}"`);
@@ -100,7 +107,10 @@ const chatStep = createStep({
 
 export const chatWorkflow = createWorkflow({
     id: 'skylark-chat-workflow',
-    name: 'Skylark Chat Workflow',
+    inputSchema: chatInputSchema,
+    outputSchema: z.object({
+        response: z.string(),
+    }),
 })
 .then(chatStep)
 .commit();
