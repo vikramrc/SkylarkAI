@@ -176,7 +176,7 @@ export default function AppShell({ user, onSignedOut }: AppShellProps) {
               <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography
                   sx={{
-                    fontFamily: '"Zen Dots", "Inter", sans-serif',
+                    fontFamily: '"Zen Dots", "Roboto", sans-serif',
                     fontSize: { xs: '0.78rem', sm: '0.88rem' },
                     lineHeight: 1.2,
                     letterSpacing: '0.05em',

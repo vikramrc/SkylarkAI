@@ -15,9 +15,29 @@ body {
   position: relative;
   overflow-x: auto;
   min-height: 100vh;
-  font-family: 'Inter', 'Roboto', system-ui, sans-serif;
-  background: #fafafc;
+  font-family: 'Roboto', 'Inter', system-ui, sans-serif;
+  background: #FAFAFC;
   color: #1a1a1a;
+}
+
+/* Background container and SVG for the PhoenixAI replica look */
+.background-container {
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  overflow: hidden;
+  filter: blur(64px);
+}
+
+.background-svg {
+  position: relative;
+  left: calc(50% - 30rem);
+  top: -20rem;
+  height: 102.375rem;
+  max-width: none;
+  transform: translateX(-50%) rotate(30deg);
+  opacity: 0.3;
 }
 
 body::before,

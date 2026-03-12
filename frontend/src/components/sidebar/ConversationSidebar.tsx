@@ -66,7 +66,7 @@ export default function ConversationSidebar({
         <Stack spacing={0.5}>
           <Typography
             sx={{
-              fontFamily: '"Zen Dots", "Inter", sans-serif',
+              fontFamily: '"Zen Dots", "Roboto", sans-serif',
               fontSize: '0.78rem',
               lineHeight: 1.2,
               letterSpacing: '0.05em',

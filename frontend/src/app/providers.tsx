@@ -14,7 +14,7 @@ const theme = createTheme({
   },
   shape: { borderRadius: 2 },
   typography: {
-    fontFamily: ['Inter', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'].join(','),
+    fontFamily: ['Roboto', 'Inter', 'Helvetica Neue', 'Arial', 'sans-serif'].join(','),
     h3: { fontWeight: 700, letterSpacing: '-0.04em' },
     h4: { fontWeight: 700, letterSpacing: '-0.04em' },
     h5: { fontWeight: 700, letterSpacing: '-0.03em' },
