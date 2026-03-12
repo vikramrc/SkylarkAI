@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit --pretty false",
     "test:mcp": "tsx scripts/validate-mcp.ts",
     "test:mcp:smoke": "tsx scripts/validate-mcp-smoke.ts",
+    "test:mastra:console": "tsx src/mastra/console.ts",
     "test:phoenix:api": "node scripts/phoenixai/query-smoke.mjs",
     "index:qdrant": "tsx scripts/phoenixai/indexer_qdrant.ts",
     "index:qdrant:collections": "tsx scripts/phoenixai/indexer_collections_qdrant.ts"
@@ -20,9 +21,13 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.41",
     "@langchain/core": "^1.1.31",
     "@langchain/mongodb": "^1.1.0",
     "@langchain/openai": "^1.2.12",
+    "@mastra/core": "^1.12.0",
+    "@mastra/memory": "^1.7.0",
+    "@mastra/mongodb": "^1.5.5",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@qdrant/js-client-rest": "^1.17.0",
     "axios": "^1.13.6",
