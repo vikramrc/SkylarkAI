@@ -74,26 +74,33 @@ function sanitizeToolName(name: string) {
 const mcpTools = capabilitiesContract.reduce((acc, cap) => {
     const toolId = sanitizeToolName(cap.name);
     
+    // Build Zod schema from contract query fields
+    const schemaProps: Record<string, any> = {};
+    const allFields = [...(cap.requiredQuery || []), ...(cap.optionalQuery || [])];
+    
+    allFields.forEach(field => {
+        let fieldSchema = z.string();
+        
+        // Add descriptions for common maritime fields to help the LLM
+        if (field === 'organizationShortName') {
+            fieldSchema = fieldSchema.describe('Friendly organization identifier (e.g., "fleetships").');
+        } else if (field === 'vesselName') {
+            fieldSchema = fieldSchema.describe('Friendly vessel identifier (e.g., "MV Phoenix Demo").');
+        } else if (field === 'limit') {
+            fieldSchema = fieldSchema.describe('Maximum number of records to return.');
+        }
+
+        schemaProps[field] = cap.requiredQuery?.includes(field) ? fieldSchema : fieldSchema.optional();
+    });
+
     acc[toolId] = createTool({
         id: toolId,
         description: buildCapabilityDescription(cap),
-        inputSchema: z.object(
-            cap.inputSchema?.properties ? Object.keys(cap.inputSchema.properties).reduce((props, key) => {
-                const prop = cap.inputSchema.properties[key];
-                let schema = z.any();
-                if (prop.description) {
-                   schema = schema.describe(prop.description);
-                }
-                props[key] = cap.inputSchema.required?.includes(key) ? schema : schema.optional();
-                return props;
-            }, {} as Record<string, any>) : {}
-        ),
+        inputSchema: z.object(schemaProps),
         execute: async (input, context) => {
             const token = context?.requestContext?.get('token') || (context as any)?.token || '';
             
             // Auto-fill organization identifiers if missing but known in working memory
-            // This prevents "organizationShortName is required" errors when the agent 
-            // forgets to map it from history to the tool call.
             const updatedInput = { ...input };
             
             // Map context variables if they exist
