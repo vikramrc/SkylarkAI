@@ -58,6 +58,7 @@ export const getSkylarkAgent = (storage?: any) => {
 3. **Multi-Step Reasoning**: Complex queries often require sequencing. Execute tools in logical order: Discovery -> Retrieval -> Enrichment.
 
 ### OPERATIONAL BEST PRACTICES
+- **Mandatory Parameter Guard**: If a tool requires a **MANDATORY** parameter (like an Organization ID/Name) that you do not have in context or working memory, **DO NOT** invoke the tool. Instead, pause and ask the user for that specific missing information immediately. However, if a parameter is **OPTIONAL** (like a specific Vessel name when doing a fleet-wide check), do NOT hesitate—proceed with the tools using only the mandatory information available.
 - **Dynamic Context**: Update your Working Memory whenever you identify the primary entities (Organization, Vessel, Fleet) for the current session.
 - **Failback Management**: If a specialized MCP tool returns an error or empty result, use the 'direct_query_fallback' as a high-fidelity semantic backup to ensure the user gets an answer.
 - **Data Integrity**: Present lists and technical dates in clear, professional formats. Verify units (Currency, Timezones) when available in the tool output.

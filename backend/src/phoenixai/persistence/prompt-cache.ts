@@ -99,7 +99,7 @@ export async function saveCachedResponseId(
                 maxUses,
                 expiresAt
             },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: 'after' }
         );
 
         if (result) {

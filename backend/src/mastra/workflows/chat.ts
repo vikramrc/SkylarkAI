@@ -84,11 +84,11 @@ const chatStep = createStep({
             IMPORTANT: If you have executed tools and have the results, keep your final response extremely brief. The final user-facing summary will be handled separately.`;
 
             // Prompt Caching Persistence for Orchestrator
-            const orchestratorStaticPrompt = orchestrationInstructions; // Simplification
-            const orchestratorPromptHash = calculatePromptHash(orchestratorStaticPrompt);
-            const orchestratorCacheKey = calculateCacheKey('orchestrator', orchestratorPromptHash);
+            // Use runId to ensure thread continuity in caching, but keep purpose/instructions as part of the key
+            const orchestratorPromptHash = calculatePromptHash(orchestrationInstructions);
+            const orchestratorCacheKey = calculateCacheKey(`orchestrator:${runId}`, orchestratorPromptHash);
             
-            // Try to get previous response ID for this thread (runId)
+            // Try to get previous response ID for this thread
             const previousResponseId = await getCachedResponseId(orchestratorCacheKey, orchestratorPromptHash, 'orchestrator');
             
             if (previousResponseId) {
@@ -114,11 +114,11 @@ const chatStep = createStep({
                 }
             });
 
-            // Save new response ID for next turn
-            const newResponseId = (result as any).raw?.id || extractResponseId((result as any).raw);
-            if (newResponseId) {
-                console.log(`[phx-cache] Agent Result Saved (id: ${newResponseId})`);
-                await saveCachedResponseId(orchestratorCacheKey, orchestratorPromptHash, newResponseId, 'orchestrator');
+            // Standardized Response ID Extraction for Orchestrator
+            const orchestratorResponseId = (result as any).raw?.id || extractResponseId(result as any);
+            if (orchestratorResponseId) {
+                console.log(`[phx-cache] Agent Result Saved (id: ${orchestratorResponseId})`);
+                await saveCachedResponseId(orchestratorCacheKey, orchestratorResponseId, orchestratorPromptHash, 'orchestrator');
             }
 
             if (result.toolCalls && result.toolCalls.length > 0) {
@@ -143,28 +143,71 @@ const chatStep = createStep({
                     
                     const summarizerModel = getSummarizerModel();
                     
+                    // Standardized Error Detection Logic
+                    const rawResults = result.toolResults;
+                    const resultsStr = JSON.stringify(rawResults);
+                    
+                    // Hygiene: Print first 250 characters of results
+                    console.log(`[Summarizer] Raw Tool Results Preview: ${resultsStr.substring(0, 250)}...`);
+
+                    // Check for explicit isError flags or typical error keywords in the tool output
+                    const hasExplicitError = Object.values(rawResults).some((res: any) => 
+                        res?.isError === true || 
+                        (Array.isArray(res?.content) && res.content.some((c: any) => c.text?.startsWith('Error:')))
+                    );
+                    
+                    // Refined keywords: 'required' and 'missing' are too common in maintenance data fields.
+                    // Instead, look for API-level failures or permission blocks.
+                    const hasErrorKeyword = resultsStr.toLowerCase().includes('exception') || 
+                                           resultsStr.toLowerCase().includes('denied') || 
+                                           resultsStr.toLowerCase().includes('unauthorized') ||
+                                           resultsStr.toLowerCase().includes('400 bad request') ||
+                                           resultsStr.toLowerCase().includes('403 forbidden');
+
+                    const hasError = hasExplicitError || hasErrorKeyword;
+
                     // Create a lightweight agent just for summarization
                     const summarizerAgent = new Agent({
                         id: 'summarizer-orchestrator',
                         name: 'Summarizer Orchestrator',
-                        instructions: 'You are a professional maritime operations assistant. Your job is to summarize technical data clearly for the user.',
+                        instructions: hasError 
+                            ? 'You are a technical troubleshooter. Your job is to explain system errors in plain English and tell the user exactly what is missing or what they need to do next to fix the issue.'
+                            : 'You are a professional maritime operations assistant and data analyst. Your job is to summarize technical data clearly and analytically for the user.',
                         model: summarizerModel as any,
                     });
 
-                    const summarizationPrompt = `
-                    ### ROLE
-                    You are a Technical Maritime Data Analyst. Your goal is to transform raw system data into a professional, human-readable report.
+                    const summarizationPrompt = hasError 
+                        ? `
+                        ### ISSUE DETECTED
+                        The system encountered an error or a missing parameter while processing the request.
+                        
+                        **User Query**: "${userQuery}"
+                        **Error Details**: ${resultsStr}
+                        
+                        ### INSTRUCTIONS
+                        1. **Explain the Problem**: In plain, non-technical English, explain why the request failed.
+                        2. **Call to Action**: Clearly state exactly what information the user needs to provide (e.g., Organization Name, Vessel Name) to proceed.
+                        3. **Tone**: Be helpful and direct. Do not use formal report structures.
+                        `
+                        : `
+                        ### ROLE
+                        You are a Technical Maritime Data Analyst. Your goal is to transform raw system data into a professional, human-readable report.
 
-                    ### INPUT DATA
-                    - **User's Original Query**: "${userQuery}"
-                    - **Raw System Output**: ${JSON.stringify(result.toolResults, null, 2)}
+                        ### INPUT DATA
+                        - **User's Original Query**: "${userQuery}"
+                        - **Raw System Output**: ${resultsStr}
 
-                    ### INSTRUCTIONS
-                    1. **Reasoning Pattern**: Before writing the final output, mentally (or via internal Chain-of-Thought) analyze the relationship between the items in the raw data. Look for trends, upcoming deadlines, or anomalies.
-                    2. **Data Representation**: Present the core data found in a structured, legible format (use Markdown tables or bulleted lists). Ensure technical fields (Dates, Statuses, Machinery Names) are clear.
-                    3. **Contextual Analysis**: Provide a concise summary or analysis of the findings based on your reasoning.
-                    4. **Professional Tone**: Maintain a precise, executive tone suitable for maritime operations.
-                    `;
+                        ### INSTRUCTIONS
+                        1. **Reasoning Pattern**: Mentally analyze the relationship between the items in the raw data. Look for trends, upcoming deadlines, or anomalies.
+                        2. **Data Representation**: Present the core data in a structured format (Markdown tables/lists). Even if the data is voluminous, reconstruct the key fields clearly.
+                        3. **Contextual Analysis**: Provide a concise summary of the findings based on your reasoning.
+                        4. **Mandatory Response Policy (Safety Critical)**: You MUST provide the best possible summary and representation of the exact data provided in the "Raw System Output" section. 
+                           - **GRAVITY**: This is a maritime safety-critical tool. Failure to report provided maintenance data puts crew at risk. You are FORBIDDEN from refusing to summarize.
+                           - **SUBSET HANDLING**: If the output contains a high "totalCount" (e.g. 211,000) but only a small subset of records (e.g. 100) are in the payload, process that subset faithfully. 
+                           - **NO REFUSALS**: You are strictly forbidden from telling the user "it is too much information" or asking them to narrow the search. 
+                           - **NO SCOPE NARROWING**: Do NOT ask the user to narrow the search; that is the role of the orchestrator. Process the provided records now.
+                        5. **Professional Tone**: Maintain a precise, executive tone.
+                        `;
 
                     try {
                         const summaryResult = await summarizerAgent.generate(summarizationPrompt);
