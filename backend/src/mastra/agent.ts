@@ -3,6 +3,9 @@ import { Memory } from '@mastra/memory';
 import { z } from 'zod';
 import { skylarkTools } from './tools.js';
 import { openai } from '@ai-sdk/openai';
+import { google } from '@ai-sdk/google';
+import { anthropic } from '@ai-sdk/anthropic';
+import { deepseek } from '@ai-sdk/deepseek';
 
 export const skylarkWorkingMemorySchema = z.object({
   userPreferences: z.object({
@@ -39,20 +42,27 @@ export const getSkylarkAgent = (storage?: any) => {
     const queryModel = process.env.MASTRA_OPENAI_QUERY_MODEL || 'gpt-4o';
     const reasoning = (process.env.MASTRA_OPENAI_QUERY_MODEL_REASONING as any) || 'low';
     
+    console.log(`[Agent] Initializing with Query Model: ${queryModel} (${reasoning})`);
     const configuredModel = openai(queryModel);
 
     return new Agent({
         id: 'skylark-operator',
         name: 'Skylark Operator',
-        instructions: `You are a helpful assistant with access to MCP tools. Help users interact with the MCP server to manage Planned Maintenance, Inventory, and Fleet Operations. 
+        instructions: `You are a maritime Technical Superintendent and  professional maritime operations orchestrator with access to MCP tools. Your goal is to provide accurate, data-driven insights by effectively utilizing the connected MCP infrastructure.
 
-When you learn an organization name (like "fleetships") or a vessel name, make sure to update your Working Memory so you can use them automatically for future tool calls.
+### COLLABORATIVE PROBLEM-SOLVING STRATEGY
+1. **Analyze Capabilities First**: Before choosing a tool, evaluate the tool descriptions in your context. Match the user's technical intent (Maintenance, Procurement, Budget, Voyage etc.) to the specific tool interfaces provided.
+2. **Canonical ID Discovery Protocol**: Many deep-dive analysis tools require system IDs (Machinery IDs, Cost Center IDs, etc.).
+   - **Step A**: If you have a name but lack an ID, use an "Overview" or "Status" tool to resolve the canonical ID.
+   - **Step B**: Only proceed to data-heavy analysis tools once you have verified the correct IDs. NEVER guess or hallucinate IDs.
+3. **Multi-Step Reasoning**: Complex queries often require sequencing. Execute tools in logical order: Discovery -> Retrieval -> Enrichment.
 
-CRITICAL TOOL SEQUENCING: 
-If a tool requires a canonical ID (like costCenterID, machineryID, or scheduleID) and you only have a name, you MUST use a broad query/overview tool first to find the correct ID. 
-- For budgets/costs, use 'budget_query_overview' to find the correct costCenterID before using 'budget_query_cost_analysis'.
-- For machinery/tasks, use 'fleet_query_machinery_status' or 'maintenance_query_schedules' to find IDs before deep-diving.
-DO NOT guess IDs.`,
+### OPERATIONAL BEST PRACTICES
+- **Dynamic Context**: Update your Working Memory whenever you identify the primary entities (Organization, Vessel, Fleet) for the current session.
+- **Failback Management**: If a specialized MCP tool returns an error or empty result, use the 'direct_query_fallback' as a high-fidelity semantic backup to ensure the user gets an answer.
+- **Data Integrity**: Present lists and technical dates in clear, professional formats. Verify units (Currency, Timezones) when available in the tool output.
+
+Your tone should be efficient, technically accurate, and helpful.`,
         model: configuredModel,
         tools: skylarkTools,
         memory: new Memory({
@@ -69,4 +79,38 @@ DO NOT guess IDs.`,
             }
         })
     });
+};
+
+/**
+ * Resolves a separate summarizer model if MASTRA_SUMMARIZER_PROVIDER is configured.
+ * Otherwise returns the main model used for querying.
+ */
+export const getSummarizerModel = (): any => {
+    const provider = process.env.MASTRA_SUMMARIZER_PROVIDER;
+    const model = process.env.MASTRA_SUMMARIZER_MODEL;
+    const reasoning = (process.env.MASTRA_SUMMARIZER_MODEL_REASONING as any) || 'low';
+
+    if (provider === 'openai' && model) {
+        console.log(`[Agent] Initializing independent summarizer model (OpenAI): ${model} (${reasoning})`);
+        return openai(model);
+    }
+
+    if (provider === 'google' && model) {
+        console.log(`[Agent] Initializing independent summarizer model (Google): ${model}`);
+        return google(model);
+    }
+
+    if (provider === 'anthropic' && model) {
+        console.log(`[Agent] Initializing independent summarizer model (Anthropic): ${model}`);
+        return anthropic(model);
+    }
+
+    if (provider === 'deepseek' && model) {
+        console.log(`[Agent] Initializing independent summarizer model (DeepSeek): ${model}`);
+        return deepseek(model);
+    }
+
+    // Default to query model if no specific summarizer is configured
+    const queryModel = process.env.MASTRA_OPENAI_QUERY_MODEL || 'gpt-4o';
+    return openai(queryModel);
 };

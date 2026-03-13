@@ -21,6 +21,9 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@ai-sdk/anthropic": "3.0.58",
+    "@ai-sdk/deepseek": "2.0.24",
+    "@ai-sdk/google": "3.0.43",
     "@ai-sdk/openai": "^3.0.41",
     "@langchain/core": "^1.1.31",
     "@langchain/mongodb": "^1.1.0",

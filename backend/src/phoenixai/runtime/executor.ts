@@ -3,17 +3,14 @@ import { MongoClient, ObjectId } from 'mongodb';
 import type { PhoenixConversation, PhoenixConversationPatch } from '../persistence/conversations.js';
 import { uploadJSONToGridFS, type GridFSUploadResult } from '../persistence/gridfs.js';
 import { connectQueryMongo } from '../persistence/mongodb.js';
-import {
-    AMBIGUITY_RESOLVER_SYSTEM_PROMPT,
-    KEYWORD_EXTRACTOR_SYSTEM_PROMPT,
-    QUERY_GENERATION_SYSTEM_PROMPT,
-} from '../prompts.js';
+import { AMBIGUITY_RESOLVER_SYSTEM_PROMPT, KEYWORD_EXTRACTOR_SYSTEM_PROMPT, QUERY_GENERATION_SYSTEM_PROMPT } from '../prompts.js';
 import {
     dedupByCanonical,
     retrieveChunksGrouped,
     type PhoenixRetrievedItem,
     type PhoenixRetrievalResult,
 } from '../retrieval/index.js';
+import { getCachedResponseId, saveCachedResponseId } from '../persistence/prompt-cache.js';
 import type {
     PhoenixQueryExecutionInput,
     PhoenixQueryStreamExecutionInput,
@@ -21,6 +18,7 @@ import type {
 } from '../services/phoenix-openai-response.js';
 import { detectDualViewOpportunity } from '../utils/dual-view.js';
 import type { PhoenixStreamEmitter } from './contracts.js';
+import crypto from 'node:crypto';
 
 export interface PhoenixResponseMessage {
     role: string;
@@ -193,7 +191,8 @@ function extractResponseText(data: Record<string, unknown>): string {
     return parts.join('');
 }
 
-function extractResponseId(data: Record<string, unknown>): string | undefined {
+export function extractResponseId(data: Record<string, unknown>): string | undefined {
+    if (!data) return undefined;
     if (typeof data.response_id === 'string') return data.response_id;
     if (typeof data.id === 'string') return data.id;
 
@@ -203,7 +202,7 @@ function extractResponseId(data: Record<string, unknown>): string | undefined {
     return undefined;
 }
 
-function extractUsage(data: Record<string, unknown>): unknown {
+export function extractUsage(data: Record<string, unknown>): unknown {
     if (data.usage !== undefined) return data.usage;
 
     const nestedResponse = isRecord(data.response) ? data.response : undefined;
@@ -395,9 +394,19 @@ function repairMalformedJsonText<T>(text: string): T | undefined {
     return undefined;
 }
 
-function normalizePrompt(prompt: string | readonly string[]): string {
+export function normalizePrompt(prompt: string | readonly string[]): string {
     return Array.isArray(prompt) ? prompt.join('\n') : String(prompt ?? '');
 }
+
+export function calculatePromptHash(prompt: string | readonly string[]): string {
+    const text = normalizePrompt(prompt);
+    return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+export function calculateCacheKey(purpose: string, promptHash: string): string {
+    return `phx:${purpose}:${promptHash.slice(0, 16)}`;
+}
+
 
 function sanitizeGetFieldFieldExpression(field: unknown): unknown {
     if (typeof field === 'string') {
@@ -1766,12 +1775,16 @@ export function createOpenAiResponseClient(): PhoenixResponseClient {
             if (systemInstructions) input.push({ role: 'system', content: [{ type: 'input_text', text: systemInstructions }] });
             if (userInput) input.push({ role: 'user', content: [{ type: 'input_text', text: userInput }] });
 
+            const cacheKey = calculateCacheKey(purpose, calculatePromptHash(systemInstructions));
             const requestBody = {
                 model: selectedModel,
                 input,
                 reasoning: { effort: resolveOpenAiReasoningEffort(purpose) },
                 ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+                prompt_cache_key: cacheKey,
             };
+
+            console.log(`[phx-client] Request: purpose=${purpose}, model=${selectedModel}, cacheKey=${cacheKey}, prevId=${previousResponseId || 'none'}`);
 
             if (onStreamEvent) {
                 const response = await fetch('https://api.openai.com/v1/responses', {
@@ -1914,10 +1927,14 @@ export function createOpenAiResponseClient(): PhoenixResponseClient {
 
             const data = await response.json() as Record<string, unknown>;
             if (!response.ok) {
+                console.error(`[phx-client] Error: status=${response.status}, error=${JSON.stringify(data)}`);
                 throw formatOpenAiError(response.status, data);
             }
 
+            const responseId = extractResponseId(data);
+            console.log(`[phx-client] Response: status=${response.status}, responseId=${responseId || 'unknown'}`);
             return { content: extractResponseText(data), usage: data.usage, raw: data };
+
         },
     };
 }
@@ -1956,15 +1973,27 @@ async function runPhoenixQuery(
     await emitStatus(onEvent, 'keywords', 'Extracting Phoenix keywords');
     let extractedKeywords: string[] = [];
     try {
+        const keywordPrompt = getKeywordExtractorPrompt();
+        const keywordPromptHash = calculatePromptHash(keywordPrompt);
+        const keywordCacheKey = calculateCacheKey('keyword_extraction', keywordPromptHash);
+        const cachedKeywordResponseId = await getCachedResponseId(keywordCacheKey, keywordPromptHash, 'keyword_extraction');
+
         const keywordStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'keywords' });
         const keywordResponse = await responseClient.createResponse({
             messages: [
-                { role: 'system', content: getKeywordExtractorPrompt() },
+                { role: 'system', content: keywordPrompt },
                 { role: 'user', content: userQuery },
             ],
             purpose: 'keyword_extraction',
+            ...(cachedKeywordResponseId ? { previousResponseId: cachedKeywordResponseId } : {}),
             ...(keywordStreamEmitter ? { onStreamEvent: keywordStreamEmitter } : {}),
         });
+
+        const keywordResponseId = extractResponseId(keywordResponse.raw as Record<string, unknown>);
+        if (keywordResponseId) {
+            await saveCachedResponseId(keywordCacheKey, keywordResponseId, keywordPromptHash, 'keyword_extraction');
+        }
+
         const keywordJson = safeParseLLMJSON<{ keywords?: unknown }>(keywordResponse.content, {});
         extractedKeywords = Array.isArray(keywordJson.keywords)
             ? keywordJson.keywords.map((keyword) => String(keyword).trim()).filter((keyword) => keyword.length > 0)
@@ -1979,20 +2008,34 @@ async function runPhoenixQuery(
     const narrowedSchema = narrowSchemaForAmbiguity(schema, rag, extractedKeywords);
 
     await emitStatus(onEvent, 'ambiguity', 'Resolving ambiguity against narrowed schema');
-    const ambiguityPrompt = `${AMBIGUITY_RESOLVER_SYSTEM_PROMPT}\n\nInjected schema:\n${JSON.stringify(narrowedSchema)}`;
+    const ambiguityStaticPrompt = AMBIGUITY_RESOLVER_SYSTEM_PROMPT;
+    const ambiguityDynamicContext = `Injected schema:\n${JSON.stringify(narrowedSchema)}`;
+    const ambiguityPromptHash = calculatePromptHash(ambiguityStaticPrompt);
+    const ambiguityCacheKey = calculateCacheKey('ambiguity', ambiguityPromptHash);
+    const cachedAmbiguityResponseId = await getCachedResponseId(ambiguityCacheKey, ambiguityPromptHash, 'ambiguity');
+
     const ambiguityStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'ambiguity' });
     const ambiguityResponse = await responseClient.createResponse({
         messages: [
-            { role: 'system', content: ambiguityPrompt },
+            { role: 'system', content: ambiguityStaticPrompt },
+            { role: 'system', content: ambiguityDynamicContext },
             { role: 'user', content: JSON.stringify({ user_query: userQuery }) },
         ],
         purpose: 'ambiguity',
+        ...(cachedAmbiguityResponseId ? { previousResponseId: cachedAmbiguityResponseId } : {}),
         ...(ambiguityStreamEmitter ? { onStreamEvent: ambiguityStreamEmitter } : {}),
     });
+
+    const ambiguityResponseId = extractResponseId(ambiguityResponse.raw as Record<string, unknown>);
+    if (ambiguityResponseId) {
+        await saveCachedResponseId(ambiguityCacheKey, ambiguityResponseId, ambiguityPromptHash, 'ambiguity');
+    }
+
     let ambiguityJson = safeParseLLMJSON<Record<string, unknown>>(ambiguityResponse.content, {
         is_ambiguous: false,
         normalized_request: userQuery,
     });
+
     if (!isRecord(ambiguityJson)) {
         ambiguityJson = { is_ambiguous: false, normalized_request: userQuery };
     }
@@ -2084,24 +2127,35 @@ async function runPhoenixQuery(
                 { messageKey: retryCount === 0 ? 'status.generating_query' : 'status.re_analyzing', attempt },
             );
 
+            const generationStaticPrompt = getQueryGenerationPrompt();
+            const generationDynamicContext = JSON.stringify({
+                user_query: normalizedRequest,
+                business_context_snippet: '', // TODO: Inject business context if needed
+                collections: narrowedSchema, // Using narrowedSchema as collections info
+            });
+
+            const generationPromptHash = calculatePromptHash(generationStaticPrompt);
+            const generationCacheKey = calculateCacheKey('generation', generationPromptHash);
+            const cachedGenerationResponseId = await getCachedResponseId(generationCacheKey, generationPromptHash, 'generation');
+
             const generationStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'generation', attempt });
             const generationResponse = await responseClient.createResponse({
                 messages: [
-                    { role: 'system', content: getQueryGenerationPrompt() },
-                    {
-                        role: 'user',
-                        content: JSON.stringify({
-                            user_query: normalizedRequest,
-                            business_context_snippet: '',
-                            collections: narrowedSchema,
-                        }),
-                    },
+                    { role: 'system', content: generationStaticPrompt },
+                    { role: 'user', content: generationDynamicContext },
                 ],
                 purpose: 'generation',
+                ...(cachedGenerationResponseId ? { previousResponseId: cachedGenerationResponseId } : {}),
                 ...(generationStreamEmitter ? { onStreamEvent: generationStreamEmitter } : {}),
             });
 
+            const generationResponseId = extractResponseId(generationResponse.raw as Record<string, unknown>);
+            if (generationResponseId) {
+                await saveCachedResponseId(generationCacheKey, generationResponseId, generationPromptHash, 'generation');
+            }
+
             generatedQuery = parseGeneratedQueryResponse(generationResponse);
+
             baseCollection = typeof generatedQuery.base_collection === 'string' ? generatedQuery.base_collection : '';
             const sanitizedPipeline = Array.isArray(generatedQuery.pipeline) ? generatedQuery.pipeline : [];
 
