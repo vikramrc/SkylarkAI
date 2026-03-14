@@ -43,7 +43,8 @@ export const directQueryFallback = createTool({
                         break;
                     case 'result':
                         finalData = d;
-                        console.log(`[DirectQuery Result] Received Final Data`);
+                        const preview = d.results?.length === 0 ? '[]' : JSON.stringify(d.results).slice(0, 251);
+                        console.log(`[DirectQuery Result] Received Final Data: ${preview}`);
                         break;
                     case 'error':
                         console.error(`[DirectQuery Error] ${d.message || JSON.stringify(d)}`);

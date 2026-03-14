@@ -116,7 +116,8 @@ const chatStep = createStep({
 
             // Standardized Response ID Extraction for Orchestrator
             const orchestratorResponseId = (result as any).raw?.id || extractResponseId(result as any);
-            if (orchestratorResponseId) {
+            // Save to cache ONLY if it's a new generation (prevent resetting 'uses' count)
+            if (orchestratorResponseId && !previousResponseId) {
                 console.log(`[phx-cache] Agent Result Saved (id: ${orchestratorResponseId})`);
                 await saveCachedResponseId(orchestratorCacheKey, orchestratorResponseId, orchestratorPromptHash, 'orchestrator');
             }
@@ -139,7 +140,7 @@ const chatStep = createStep({
                 });
 
                 if (summarizerModelName && summarizerModelName !== 'none' && externalToolCalls.length > 0) {
-                    console.log(`[Summarizer] Transitioning to provider ${summarizerProvider || 'default'} model: ${summarizerModelName} for final analysis...`);
+                    // console.log(`[Summarizer] Transitioning to provider ${summarizerProvider || 'default'} model: ${summarizerModelName} for final analysis...`);
                     
                     const summarizerModel = getSummarizerModel();
                     
@@ -148,7 +149,7 @@ const chatStep = createStep({
                     const resultsStr = JSON.stringify(rawResults);
                     
                     // Hygiene: Print first 250 characters of results
-                    console.log(`[Summarizer] Raw Tool Results Preview: ${resultsStr.substring(0, 250)}...`);
+                    // console.log(`[Summarizer] Raw Tool Results Preview: ${resultsStr.substring(0, 250)}...`);
 
                     // Check for explicit isError flags or typical error keywords in the tool output
                     const hasExplicitError = Object.values(rawResults).some((res: any) => 
@@ -212,7 +213,7 @@ const chatStep = createStep({
                     try {
                         const summaryResult = await summarizerAgent.generate(summarizationPrompt);
 
-                        console.log(`[Summarizer] Generated response with ${summarizerModelName}`);
+                        // console.log(`[Summarizer] Generated response with ${summarizerModelName}`);
                         result.text = summaryResult.text;
                     } catch (sumError) {
                         console.error(`[Summarizer Error] Failed to generate summary with ${summarizerModelName}:`, sumError);
@@ -226,7 +227,7 @@ const chatStep = createStep({
                 return { response: "I'm sorry, I encountered an error processing your request." };
             }
 
-            console.log(`[Workflow] Final generated response: "${result.text || '[No text content]'}"`);
+            // console.log(`[Workflow] Final generated response: "${result.text || '[No text content]'}"`);
 
             return {
                 response: result.text || "I processed your request but didn't generate a text response.",
