@@ -73,7 +73,11 @@ export const directQueryFallback = createTool({
             data: finalData || result,
         };
     } catch (error: any) {
-        console.error(`[Mastra Fallback] Direct Query Engine failed after ${Date.now() - startTime}ms:`, error.message);
+        if (error.message?.includes('AMBIGUITY_STOP:')) {
+            console.log(`[Mastra Fallback] Interruption: Ambiguity identified.`);
+        } else {
+            console.error(`[Mastra Fallback] Direct Query Engine failed after ${Date.now() - startTime}ms:`, error.message);
+        }
         throw error;
     }
   },

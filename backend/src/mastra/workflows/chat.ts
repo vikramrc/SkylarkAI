@@ -117,8 +117,9 @@ const chatStep = createStep({
                 });
             } catch (error: any) {
                 // Handle token-efficient ambiguity interruption
-                if (error.message?.startsWith('AMBIGUITY_STOP:')) {
-                    const ambiguityJsonStr = error.message.replace('AMBIGUITY_STOP:', '');
+                const ambiguityMatch = error.message.match(/AMBIGUITY_STOP:(.*)/);
+                if (ambiguityMatch) {
+                    const ambiguityJsonStr = ambiguityMatch[1];
                     try {
                         const ambiguityData = JSON.parse(ambiguityJsonStr);
                         
@@ -128,13 +129,13 @@ const chatStep = createStep({
                                 threadId: runId,
                                 resourceId: 'console-user',
                                 workingMemory: {
-                                    activeTopics: ambiguityData.keywords || [],
+                                    activeTopics: (ambiguityData.keywords || ambiguityData.keywords) || [],
                                 }
                             });
                         }
 
-                        const questions = Array.isArray(ambiguityData.clarifyingQuestions) ? ambiguityData.clarifyingQuestions : [];
-                        const suggestions = Array.isArray(ambiguityData.assumptions) ? ambiguityData.assumptions : [];
+                        const questions = Array.isArray(ambiguityData.clarifyingQuestions) ? ambiguityData.clarifyingQuestions : (Array.isArray(ambiguityData.clarifying_questions) ? ambiguityData.clarifying_questions : []);
+                        const suggestions = Array.isArray(ambiguityData.assumptions) ? ambiguityData.assumptions : (Array.isArray(ambiguityData.suggestions) ? ambiguityData.suggestions : []);
                         
                         let responseText = `I found some ambiguity in your request. Could you please clarify?\n\n`;
                         if (questions.length > 0) {
@@ -162,6 +163,61 @@ const chatStep = createStep({
                 await saveCachedResponseId(orchestratorCacheKey, orchestratorResponseId, orchestratorPromptHash, 'orchestrator');
             }
 
+            // Check if ANY tool results contain an AMBIGUITY_STOP error
+            const toolResults = (result as any).toolResults || {};
+            let ambiguityData: any = null;
+            let memoryUpdated = false;
+
+            for (const toolRes of Object.values(toolResults) as any[]) {
+                const errorMessage = toolRes?.error?.message || toolRes?.message;
+                const ambiguityMatch = typeof errorMessage === 'string' ? errorMessage.match(/AMBIGUITY_STOP:(.*)/) : null;
+
+                if (ambiguityMatch && ambiguityMatch[1]) {
+                    try {
+                        ambiguityData = JSON.parse(ambiguityMatch[1]);
+                    } catch (e) {
+                        console.error('[Workflow] Failed to parse ambiguity JSON from tool result:', e);
+                    }
+                }
+                // Also check if memory was updated in this turn
+                if (toolRes?.success === true && (toolRes?.data?.source === 'working_memory' || toolRes?.toolName === 'updateWorkingMemory')) {
+                    memoryUpdated = true;
+                }
+            }
+
+            if (ambiguityData) {
+                console.log(`[Workflow] Ambiguity detected in tool results. Bypassing summarizer.`);
+                
+                // Manually update working memory if not already done by the tool
+                if (!memoryUpdated && memory) {
+                    await memory.updateWorkingMemory({
+                        threadId: runId,
+                        resourceId: 'console-user',
+                        workingMemory: {
+                            activeTopics: ambiguityData.keywords || [],
+                        }
+                    });
+                    memoryUpdated = true;
+                }
+
+                const questions = Array.isArray(ambiguityData.clarifyingQuestions) ? ambiguityData.clarifyingQuestions : (Array.isArray(ambiguityData.clarifying_questions) ? ambiguityData.clarifying_questions : []);
+                const suggestions = Array.isArray(ambiguityData.assumptions) ? ambiguityData.assumptions : (Array.isArray(ambiguityData.suggestions) ? ambiguityData.suggestions : []);
+                
+                let responseText = memoryUpdated ? `✅ **Working Memory Updated**\n\n` : '';
+                responseText += `I found some ambiguity in your request. Could you please clarify?\n\n`;
+                
+                if (questions.length > 0) {
+                    responseText += `**Clarifying Questions:**\n${questions.map((q: string) => `- ${q}`).join('\n')}\n\n`;
+                }
+                if (suggestions.length > 0) {
+                    responseText += `**Possible interpretations/suggestions:**\n${suggestions.map((s: string) => `- ${s}`).join('\n')}\n\n`;
+                }
+
+                responseText += `**Ambiguity Context:**\n\`\`\`json\n${JSON.stringify(ambiguityData, null, 2)}\n\`\`\``;
+
+                return { response: responseText };
+            }
+
             if (result.toolCalls && result.toolCalls.length > 0) {
                 console.log(`[Workflow] Agent invoked ${result.toolCalls.length} tool(s):`);
                 result.toolCalls.forEach((tc: any) => {
@@ -180,7 +236,7 @@ const chatStep = createStep({
                 });
 
                 if (summarizerModelName && summarizerModelName !== 'none' && externalToolCalls.length > 0) {
-                    // console.log(`[Summarizer] Transitioning to provider ${summarizerProvider || 'default'} model: ${summarizerModelName} for final analysis...`);
+                    console.log(`[Summarizer] Transitioning to provider ${summarizerProvider || 'default'} model: ${summarizerModelName} for final analysis...`);
                     
                     const summarizerModel = getSummarizerModel();
                     
@@ -274,7 +330,7 @@ const chatStep = createStep({
                     try {
                         const summaryResult = await summarizerAgent.generate(summarizationPrompt);
 
-                        // console.log(`[Summarizer] Generated response with ${summarizerModelName}`);
+                        console.log(`[Summarizer] Generated response with ${summarizerModelName}`);
                         result.text = summaryResult.text;
                     } catch (sumError) {
                         console.error(`[Summarizer Error] Failed to generate summary with ${summarizerModelName}:`, sumError);
