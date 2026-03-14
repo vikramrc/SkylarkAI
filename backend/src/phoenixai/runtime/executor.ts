@@ -328,6 +328,25 @@ export function extractUsage(data: Record<string, unknown>): unknown {
     return nestedResponse?.usage;
 }
 
+/**
+ * Logs a colorful breakdown of token usage, highlighting cached tokens.
+ */
+export function logUsageBreakdown(purpose: string, usage: any, logPrefix: string = '[phx-usage]'): void {
+    if (!usage) return;
+
+    const p = usage.prompt_tokens || usage.promptTokens || 0;
+    const c = usage.completion_tokens || usage.completionTokens || 0;
+    const t = usage.total_tokens || usage.totalTokens || 0;
+    const cached = usage.prompt_tokens_details?.cached_tokens || usage.promptTokensDetails?.cachedTokens || 0;
+
+    const GREY = '\x1b[90m';
+    const GREEN = '\x1b[32m';
+    const MAGENTA = '\x1b[35m';
+    const RESET = '\x1b[0m';
+
+    console.log(`${GREY}${logPrefix} ${purpose}: tokens=${t} (prompt=${p}${cached > 0 ? `, ${GREEN}cached=${cached}${GREY}` : ''}, ${MAGENTA}completion=${c}${GREY})${RESET}`);
+}
+
 async function processSseFrame(
     frame: string,
     onEvent: (eventName: string, dataText: string) => Promise<void>,
@@ -2120,6 +2139,7 @@ async function runPhoenixQuery(
         if (keywordResponseId) {
             await saveStaticCachedResponseId(keywordCacheKey, keywordResponseId, keywordPromptHash, 'keyword_extraction', '[DirectQuery-phx-cache]');
         }
+        logUsageBreakdown('keyword_extraction', keywordResponse.usage, '[DirectQuery-phx-cache]');
 
         const keywordJson = safeParseLLMJSON<{ keywords?: unknown }>(keywordResponse.content, {});
         extractedKeywords = Array.isArray(keywordJson.keywords)
@@ -2161,6 +2181,7 @@ async function runPhoenixQuery(
     if (ambiguityResponseId) {
         await saveStaticCachedResponseId(ambiguityCacheKey, ambiguityResponseId, ambiguityPromptHash, 'ambiguity', '[DirectQuery-phx-cache]');
     }
+    logUsageBreakdown('ambiguity', ambiguityResponse.usage, '[DirectQuery-phx-cache]');
 
     let ambiguityJson = safeParseLLMJSON<Record<string, unknown>>(ambiguityResponse.content, {
         is_ambiguous: false,
@@ -2292,6 +2313,7 @@ async function runPhoenixQuery(
                 // saveStaticCachedResponseId ensures 30-day TTL for static key tracking
                 await saveStaticCachedResponseId(generationCacheKey, generationResponseId, generationPromptHash, 'generation', '[DirectQuery-phx-cache]');
             }
+            logUsageBreakdown('generation', generationResponse.usage, '[DirectQuery-phx-cache]');
 
             generatedQuery = parseGeneratedQueryResponse(generationResponse);
 

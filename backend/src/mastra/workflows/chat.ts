@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
 import { getSummarizerModel } from '../agent.js';
 import { getCachedResponseId, saveCachedResponseId, saveStaticCachedResponseId } from '../../phoenixai/persistence/prompt-cache.js';
-import { calculatePromptHash, calculateCacheKey, extractResponseId, extractUsage, prepareMongoForLLM } from '../../phoenixai/runtime/executor.js';
+import { calculatePromptHash, calculateCacheKey, extractResponseId, extractUsage, prepareMongoForLLM, logUsageBreakdown } from '../../phoenixai/runtime/executor.js';
 import { ambiguityStore, getAmbiguity } from '../ambiguity-store.js';
 
 
@@ -109,6 +109,7 @@ const chatStep = createStep({
                         }
                     }
                 });
+                logUsageBreakdown('orchestrator', (result as any).usage, '[Orchestrator-phx-usage]');
             } catch (error: any) {
                 // Only genuine unexpected errors should bubble up.
                 // Ambiguity is now returned as a sentinel value from the tool
