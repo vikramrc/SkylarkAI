@@ -1,6 +1,14 @@
 import mongoose, { Schema, type Document } from 'mongoose';
 import { connectPersistenceMongo } from './mongodb.js';
 
+const COLORS = {
+    GREEN: '\x1b[32m',
+    RED: '\x1b[31m',
+    YELLOW: '\x1b[33m',
+    CYAN: '\x1b[36m',
+    RESET: '\x1b[0m',
+};
+
 export interface IPromptCache extends Document {
     key: string;            // Hash of purpose + specific configuration
     purpose: string;
@@ -35,7 +43,7 @@ export async function getCachedResponseId(key: string, currentPromptHash: string
         const cached = await PromptCacheModel.findOne({ key });
 
         if (!cached) {
-            console.log(`${logPrefix} Cache MISS for ${key} (uses: 0/5) -> Proceeding to generate... (purpose: ${purpose ?? 'unknown'})`);
+            console.log(`${COLORS.YELLOW}${logPrefix} Cache MISS for ${key}${COLORS.RESET} (uses: 0/5) -> Proceeding to generate... (purpose: ${purpose ?? 'unknown'})`);
             return null;
         }
 
@@ -55,16 +63,16 @@ export async function getCachedResponseId(key: string, currentPromptHash: string
 
         // Invalidate if expired (Mongo TTL might not have cleaned it yet)
         if (cached.expiresAt < new Date()) {
-            console.log(`${logPrefix} Cache EXPIRED for ${key}: TTL elapsed`);
+            console.log(`${COLORS.RED}${logPrefix} Cache EXPIRED for ${key}: TTL elapsed${COLORS.RESET}`);
             await PromptCacheModel.deleteOne({ _id: cached._id }).catch(() => {});
             return null;
         }
 
         // Increment uses
         cached.uses += 1;
-        await cached.save().catch((err: any) => console.warn(`${logPrefix} Failed to increment use count:`, err));
+        await cached.save().catch((err: any) => console.warn(`${COLORS.RED}${logPrefix} Failed to increment use count:${COLORS.RESET}`, err));
 
-        console.log(`${logPrefix} Cache HIT for ${key} (uses: ${cached.uses}/${cached.maxUses}) -> responseId: ${cached.responseId}`);
+        console.log(`${COLORS.GREEN}${logPrefix} Cache HIT for ${key}${COLORS.RESET} (uses: ${cached.uses}/${cached.maxUses}) -> responseId: ${cached.responseId}`);
 
         return cached.responseId;
     } catch (error) {

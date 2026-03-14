@@ -3,7 +3,7 @@ import { RequestContext } from '@mastra/core/request-context';
 import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
 import { getSummarizerModel } from '../agent.js';
-import { getCachedResponseId, saveCachedResponseId } from '../../phoenixai/persistence/prompt-cache.js';
+import { getCachedResponseId, saveCachedResponseId, saveStaticCachedResponseId } from '../../phoenixai/persistence/prompt-cache.js';
 import { calculatePromptHash, calculateCacheKey, extractResponseId, extractUsage, prepareMongoForLLM } from '../../phoenixai/runtime/executor.js';
 import { ambiguityStore, getAmbiguity } from '../ambiguity-store.js';
 
@@ -91,7 +91,7 @@ const chatStep = createStep({
             const orchestratorCacheKey = 'skylark:orchestrator:v1';
             const orchestratorPromptHash = calculatePromptHash(orchestrationInstructions);
 
-            console.log(`[phx-client] Agent Request: orchestrator=${queryModel}, cacheKey=${orchestratorCacheKey}, runId=${runId}`);
+            console.log(`\x1b[36m[phx-client] Agent Request: orchestrator=${queryModel}, cacheKey=${orchestratorCacheKey}, runId=${runId}\x1b[0m`);
 
             let result;
             try {
@@ -104,7 +104,8 @@ const chatStep = createStep({
                     requestContext,
                     providerOptions: {
                         openai: {
-                            prompt_cache_key: orchestratorCacheKey,
+                            promptCacheKey: orchestratorCacheKey,
+                            promptCacheRetention: '24h',
                         }
                     }
                 });
@@ -117,7 +118,7 @@ const chatStep = createStep({
 
             // Standardized Response ID Extraction for Orchestrator
             const orchestratorResponseId = (result as any).raw?.id || extractResponseId(result as any);
-            // Provider prefix caching is automatic if instructions are identical, so we don't need local MongoDB save here.
+            // Provider prefix caching is automatic via promptCacheKey, so we don't need context resumption here.
 
             // PRIMARY CHECK: shared ambiguity store written by the tool directly
             // This is the most reliable mechanism and doesn't depend on toolResults shape.
@@ -127,7 +128,7 @@ const chatStep = createStep({
 
             if (ambiguityData) {
                 ambiguityStore.delete(runId); // Immediate cleanup after successful consumption
-                console.log(`[Workflow] Ambiguity sentinel found in store for run ${runId}. Bypassing summarizer.`);
+                console.log(`\x1b[35m[Workflow] Ambiguity sentinel found in store for run ${runId}. Bypassing summarizer.\x1b[0m`);
             } else {
                 console.log(`[Workflow] Ambiguity store MISS for run ${runId}. Checking toolResults fallback...`);
                 // FALLBACK: scan toolResults in case the store key didn't match
