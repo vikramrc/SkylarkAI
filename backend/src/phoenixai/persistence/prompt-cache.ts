@@ -110,4 +110,43 @@ export async function saveCachedResponseId(
         console.warn(`${logPrefix} Silent failure in saveCachedResponseId:`, error);
     }
 }
+/**
+ * Saves a static (non-user-specific) cached response ID with a very long TTL.
+ * Use this for shared static prompts like `keyword_extraction` and `ambiguity`
+ * that are NOT scoped to a specific user or session.
+ *
+ * TTL: 30 days. MaxUses: 10,000 (effectively permanent until the prompt changes).
+ */
+export async function saveStaticCachedResponseId(
+    key: string,
+    responseId: string,
+    promptHash: string,
+    purpose: string,
+    logPrefix: string = '[phx-cache]'
+) {
+    try {
+        if (!responseId) return;
 
+        await connectPersistenceMongo();
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+        const result = await PromptCacheModel.findOneAndUpdate(
+            { key },
+            {
+                responseId,
+                promptHash,
+                purpose,
+                uses: 1,
+                maxUses: 10000, // effectively unlimited
+                expiresAt
+            },
+            { upsert: true, returnDocument: 'after' }
+        );
+
+        if (result) {
+            console.log(`${logPrefix} PERSISTED static responseId ${responseId} (30-day TTL, 10000 uses) for key ${key} (purpose: ${purpose})`);
+        }
+    } catch (error) {
+        console.warn(`${logPrefix} Silent failure in saveStaticCachedResponseId:`, error);
+    }
+}

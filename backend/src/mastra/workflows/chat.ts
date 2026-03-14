@@ -5,6 +5,7 @@ import { Agent } from '@mastra/core/agent';
 import { getSummarizerModel } from '../agent.js';
 import { getCachedResponseId, saveCachedResponseId } from '../../phoenixai/persistence/prompt-cache.js';
 import { calculatePromptHash, calculateCacheKey, extractResponseId, extractUsage, prepareMongoForLLM } from '../../phoenixai/runtime/executor.js';
+import { ambiguityStore, getAmbiguity } from '../ambiguity-store.js';
 
 
 const chatInputSchema = z.object({
@@ -77,27 +78,20 @@ const chatStep = createStep({
 
             const requestContext = new RequestContext();
             requestContext.set('token', authToken);
+            requestContext.set('runId', runId);
 
             const agentInstructions = await agent.getInstructions();
             const orchestrationInstructions = `${agentInstructions}
             
             IMPORTANT: If you have executed tools and have the results, keep your final response extremely brief. The final user-facing summary will be handled separately.`;
 
-            // Prompt Caching Persistence for Orchestrator
-            // Use runId to ensure thread continuity in caching, but keep purpose/instructions as part of the key
+            // Static Provider Cache Key for Orchestrator turns
+            // Using a static key ensures that the LLM provider (OpenAI/Gemini)
+            // caches the massive instructions + tool definitions across ALL users.
+            const orchestratorCacheKey = 'skylark:orchestrator:v1';
             const orchestratorPromptHash = calculatePromptHash(orchestrationInstructions);
-            const orchestratorCacheKey = calculateCacheKey(`orchestrator:${runId}`, orchestratorPromptHash);
-            
-            // Try to get previous response ID for this thread
-            const previousResponseId = await getCachedResponseId(orchestratorCacheKey, orchestratorPromptHash, 'orchestrator');
-            
-            if (previousResponseId) {
-                console.log(`[phx-cache] Agent Cache HIT (key: ${orchestratorCacheKey})`);
-            } else {
-                console.log(`[phx-cache] Agent Cache MISS (key: ${orchestratorCacheKey})`);
-            }
 
-            console.log(`[phx-client] Agent Request: orchestrator=${queryModel}, cacheKey=${orchestratorCacheKey}, prevId=${previousResponseId || 'none'}`);
+            console.log(`[phx-client] Agent Request: orchestrator=${queryModel}, cacheKey=${orchestratorCacheKey}, runId=${runId}`);
 
             let result;
             try {
@@ -111,101 +105,91 @@ const chatStep = createStep({
                     providerOptions: {
                         openai: {
                             prompt_cache_key: orchestratorCacheKey,
-                            ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
                         }
                     }
                 });
             } catch (error: any) {
-                // Handle token-efficient ambiguity interruption
-                const ambiguityMatch = error.message.match(/AMBIGUITY_STOP:(.*)/);
-                if (ambiguityMatch) {
-                    const ambiguityJsonStr = ambiguityMatch[1];
-                    try {
-                        const ambiguityData = JSON.parse(ambiguityJsonStr);
-                        
-                        // Manually update working memory to keep session in sync
-                        if (memory) {
-                            await memory.updateWorkingMemory({
-                                threadId: runId,
-                                resourceId: 'console-user',
-                                workingMemory: {
-                                    activeTopics: (ambiguityData.keywords || ambiguityData.keywords) || [],
-                                }
-                            });
-                        }
-
-                        const questions = Array.isArray(ambiguityData.clarifyingQuestions) ? ambiguityData.clarifyingQuestions : (Array.isArray(ambiguityData.clarifying_questions) ? ambiguityData.clarifying_questions : []);
-                        const suggestions = Array.isArray(ambiguityData.assumptions) ? ambiguityData.assumptions : (Array.isArray(ambiguityData.suggestions) ? ambiguityData.suggestions : []);
-                        
-                        let responseText = `I found some ambiguity in your request. Could you please clarify?\n\n`;
-                        if (questions.length > 0) {
-                            responseText += `**Clarifying Questions:**\n${questions.map((q: string) => `- ${q}`).join('\n')}\n\n`;
-                        }
-                        if (suggestions.length > 0) {
-                            responseText += `**Possible interpretations/suggestions:**\n${suggestions.map((s: string) => `- ${s}`).join('\n')}`;
-                        }
-
-                        console.log(`[Workflow] Bypassing orchestrator final turn for ambiguity.`);
-                        return { response: responseText };
-                    } catch (parseError) {
-                        console.error('[Workflow] Failed to parse ambiguity JSON from interruption:', parseError);
-                        throw error; // Rethrow original error if we can't parse
-                    }
-                }
+                // Only genuine unexpected errors should bubble up.
+                // Ambiguity is now returned as a sentinel value from the tool
+                // (not thrown), so nothing related to ambiguity will ever land here.
                 throw error;
             }
 
             // Standardized Response ID Extraction for Orchestrator
             const orchestratorResponseId = (result as any).raw?.id || extractResponseId(result as any);
-            // Save to cache ONLY if it's a new generation (prevent resetting 'uses' count)
-            if (orchestratorResponseId && !previousResponseId) {
-                console.log(`[phx-cache] Agent Result Saved (id: ${orchestratorResponseId})`);
-                await saveCachedResponseId(orchestratorCacheKey, orchestratorResponseId, orchestratorPromptHash, 'orchestrator');
-            }
+            // Provider prefix caching is automatic if instructions are identical, so we don't need local MongoDB save here.
 
-            // Check if ANY tool results contain an AMBIGUITY_STOP error
+            // PRIMARY CHECK: shared ambiguity store written by the tool directly
+            // This is the most reliable mechanism and doesn't depend on toolResults shape.
             const toolResults = (result as any).toolResults || {};
-            let ambiguityData: any = null;
+            let ambiguityData: any = getAmbiguity(runId);
             let memoryUpdated = false;
 
-            for (const toolRes of Object.values(toolResults) as any[]) {
-                const errorMessage = toolRes?.error?.message || toolRes?.message;
-                const ambiguityMatch = typeof errorMessage === 'string' ? errorMessage.match(/AMBIGUITY_STOP:(.*)/) : null;
-
-                if (ambiguityMatch && ambiguityMatch[1]) {
-                    try {
-                        ambiguityData = JSON.parse(ambiguityMatch[1]);
-                    } catch (e) {
-                        console.error('[Workflow] Failed to parse ambiguity JSON from tool result:', e);
-                    }
+            if (ambiguityData) {
+                ambiguityStore.delete(runId); // Immediate cleanup after successful consumption
+                console.log(`[Workflow] Ambiguity sentinel found in store for run ${runId}. Bypassing summarizer.`);
+            } else {
+                console.log(`[Workflow] Ambiguity store MISS for run ${runId}. Checking toolResults fallback...`);
+                // FALLBACK: scan toolResults in case the store key didn't match
+                const toolResultKeys = Object.keys(toolResults);
+                if (toolResultKeys.length > 0) {
+                    console.log(`[Workflow] Tool result keys: ${toolResultKeys.join(', ')}`);
                 }
-                // Also check if memory was updated in this turn
-                if (toolRes?.success === true && (toolRes?.data?.source === 'working_memory' || toolRes?.toolName === 'updateWorkingMemory')) {
-                    memoryUpdated = true;
+
+                for (const toolRes of Object.values(toolResults) as any[]) {
+                    const res = toolRes?.result ?? toolRes;
+                    if (res?.__ambiguity_stop === true && res?.data) {
+                        ambiguityData = res.data;
+                        console.log(`[Workflow] Ambiguity sentinel found in toolResults fallback. Bypassing summarizer.`);
+                    }
+                    if (res?.success === true && res?.source === 'working_memory') {
+                        memoryUpdated = true;
+                    }
                 }
             }
 
             if (ambiguityData) {
                 console.log(`[Workflow] Ambiguity detected in tool results. Bypassing summarizer.`);
                 
-                // Manually update working memory if not already done by the tool
+                // Manually update working memory with FULL ambiguity details
                 if (!memoryUpdated && memory) {
                     await memory.updateWorkingMemory({
                         threadId: runId,
                         resourceId: 'console-user',
                         workingMemory: {
                             activeTopics: ambiguityData.keywords || [],
+                            lastAmbiguityDetails: ambiguityData
                         }
                     });
                     memoryUpdated = true;
                 }
 
-                const questions = Array.isArray(ambiguityData.clarifyingQuestions) ? ambiguityData.clarifyingQuestions : (Array.isArray(ambiguityData.clarifying_questions) ? ambiguityData.clarifying_questions : []);
-                const suggestions = Array.isArray(ambiguityData.assumptions) ? ambiguityData.assumptions : (Array.isArray(ambiguityData.suggestions) ? ambiguityData.suggestions : []);
+                const questions = Array.isArray(ambiguityData.clarifyingQuestions) ? ambiguityData.clarifyingQuestions : 
+                                 (Array.isArray(ambiguityData.clarifying_questions) ? ambiguityData.clarifying_questions : []);
+                
+                const suggestions = Array.isArray(ambiguityData.assumptions) ? ambiguityData.assumptions : 
+                                   (Array.isArray(ambiguityData.suggestions) ? ambiguityData.suggestions : 
+                                   (Array.isArray(ambiguityData.possibleInterpretations) ? ambiguityData.possibleInterpretations : 
+                                   (Array.isArray(ambiguityData.possible_interpretations) ? ambiguityData.possible_interpretations : [])));
+
+                const issues = Array.isArray(ambiguityData.detectedIssues) ? ambiguityData.detectedIssues : 
+                              (Array.isArray(ambiguityData.detected_issues) ? ambiguityData.detected_issues : []);
                 
                 let responseText = memoryUpdated ? `✅ **Working Memory Updated**\n\n` : '';
                 responseText += `I found some ambiguity in your request. Could you please clarify?\n\n`;
                 
+                if (issues.length > 0) {
+                    responseText += `**Detected Issues:**\n`;
+                    issues.forEach((issue: any) => {
+                        if (typeof issue === 'string') {
+                            responseText += `- ${issue}\n`;
+                        } else if (issue.problem) {
+                            responseText += `- **${issue.category || 'General'}**: ${issue.problem}\n`;
+                        }
+                    });
+                    responseText += `\n`;
+                }
+
                 if (questions.length > 0) {
                     responseText += `**Clarifying Questions:**\n${questions.map((q: string) => `- ${q}`).join('\n')}\n\n`;
                 }

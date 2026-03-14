@@ -29,6 +29,7 @@ export const skylarkWorkingMemorySchema = z.object({
     supplierFocus: z.string().describe("A vendor they are currently analyzing").optional(),
   }).optional(),
   activeTopics: z.array(z.string()).describe("General active topics string array for the LLM to easily glance at").optional(), 
+  lastAmbiguityDetails: z.any().describe("The full raw ambiguity JSON from the last interrupted turn").optional(),
 });
 
 export const getSkylarkAgent = (storage?: any) => {

@@ -60,6 +60,18 @@ function groupRetrievedResults(
                 .filter((synonym) => synonym.length > 0 && q.includes(synonym.toLowerCase()));
         }
 
+        // Normalize 'Form' -> 'forms' across all metadata to handle seed data mismatch
+        // This ensures mapping rules and structure hits align with the normalized loadSchema
+        if (metadata.collection === 'Form') {
+            metadata.collection = 'forms';
+        }
+        if (Array.isArray(metadata.target_collections)) {
+            metadata.target_collections = metadata.target_collections.map(c => c === 'Form' ? 'forms' : c);
+        }
+        if (Array.isArray(metadata.maps_to)) {
+            metadata.maps_to = metadata.maps_to.map(m => (isRecord(m) && m.collection === 'Form') ? { ...m, collection: 'forms' } : m);
+        }
+
         const item: PhoenixRetrievedItem = {
             text: String(doc.pageContent ?? doc.text ?? ''),
             score,
@@ -68,7 +80,13 @@ function groupRetrievedResults(
         };
 
         if (docType === 'business_context') grouped.business_context.push(item);
-        else if (docType === 'technical_structure') grouped.technical_structure_fields.push(item);
+        else if (docType === 'technical_structure') {
+            // Mandatory logging for RAG transparency
+            if (metadata.collection || metadata.field_path) {
+                console.log(`[RAG Retrieval] Hit: collection=${metadata.collection || 'N/A'}, field=${metadata.field_path || 'N/A'}, score=${score.toFixed(4)}`);
+            }
+            grouped.technical_structure_fields.push(item);
+        }
         else if (docType === 'domain_logic') grouped.domain_logic_rules.push(item);
         else if (docType === 'mapping_rules') grouped.mapping_rules.push(item);
     }

@@ -10,7 +10,7 @@ import {
     type PhoenixRetrievedItem,
     type PhoenixRetrievalResult,
 } from '../retrieval/index.js';
-import { getCachedResponseId, saveCachedResponseId } from '../persistence/prompt-cache.js';
+import { getCachedResponseId, saveCachedResponseId, saveStaticCachedResponseId } from '../persistence/prompt-cache.js';
 import type {
     PhoenixQueryExecutionInput,
     PhoenixQueryStreamExecutionInput,
@@ -2098,27 +2098,23 @@ async function runPhoenixQuery(
     let extractedKeywords: string[] = [];
     try {
         const keywordPrompt = getKeywordExtractorPrompt();
+        // Use a static global key for provider prefix caching
+        const keywordCacheKey = 'skylark:keyword_extraction:v1';
         const keywordPromptHash = calculatePromptHash(keywordPrompt);
-        const keywordCacheKey = calculateCacheKey('keyword_extraction', keywordPromptHash);
-        const cachedKeywordResponseId = await getCachedResponseId(keywordCacheKey, keywordPromptHash, 'keyword_extraction', '[DirectQuery-phx-cache]');
 
-        const keywordModel = selectOpenAiResponseModel('keyword_extraction');
-        // console.log(`[phx-client] Request: purpose=keyword_extraction, model=${keywordModel}, cacheKey=${keywordCacheKey}, prevId=${cachedKeywordResponseId || 'none'}`);
-
-        const keywordStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'keywords' });
+        const keywordStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'keyword_extraction' });
         const keywordResponse = await responseClient.createResponse({
             messages: [
                 { role: 'system', content: keywordPrompt },
                 { role: 'user', content: userQuery },
             ],
             purpose: 'keyword_extraction',
-            ...(cachedKeywordResponseId ? { previousResponseId: cachedKeywordResponseId } : {}),
             ...(keywordStreamEmitter ? { onStreamEvent: keywordStreamEmitter } : {}),
         });
 
         const keywordResponseId = extractResponseId(keywordResponse.raw as Record<string, unknown>);
         if (keywordResponseId) {
-            await saveCachedResponseId(keywordCacheKey, keywordResponseId, keywordPromptHash, 'keyword_extraction', 5, '[DirectQuery-phx-cache]');
+            await saveStaticCachedResponseId(keywordCacheKey, keywordResponseId, keywordPromptHash, 'keyword_extraction', '[DirectQuery-phx-cache]');
         }
 
         const keywordJson = safeParseLLMJSON<{ keywords?: unknown }>(keywordResponse.content, {});
@@ -2135,15 +2131,14 @@ async function runPhoenixQuery(
     const narrowedSchema = narrowSchemaForAmbiguity(schema, rag, extractedKeywords);
 
     await emitStatus(onEvent, 'ambiguity', 'Resolving ambiguity against narrowed schema');
+    const ambiguityModel = selectOpenAiResponseModel('ambiguity');
     const ambiguityStaticPrompt = AMBIGUITY_RESOLVER_SYSTEM_PROMPT;
     const ambiguityDynamicContext = `Injected schema:\n${JSON.stringify(narrowedSchema)}`;
+    
+    // Use a static global key for provider prefix caching
+    const ambiguityCacheKey = 'skylark:ambiguity:v1';
     const ambiguityPromptHash = calculatePromptHash(ambiguityStaticPrompt);
-    const ambiguityCacheKey = calculateCacheKey('ambiguity', ambiguityPromptHash);
-    const cachedAmbiguityResponseId = await getCachedResponseId(ambiguityCacheKey, ambiguityPromptHash, 'ambiguity', '[DirectQuery-phx-cache]');
-
-    const ambiguityModel = selectOpenAiResponseModel('ambiguity');
-    // console.log(`[phx-client] Request: purpose=ambiguity, model=${ambiguityModel}, cacheKey=${ambiguityCacheKey}, prevId=${cachedAmbiguityResponseId || 'none'}`);
-
+    
     const ambiguityStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'ambiguity' });
     const ambiguityResponse = await responseClient.createResponse({
         messages: [
@@ -2152,13 +2147,13 @@ async function runPhoenixQuery(
             { role: 'user', content: JSON.stringify({ user_query: userQuery }) },
         ],
         purpose: 'ambiguity',
-        ...(cachedAmbiguityResponseId ? { previousResponseId: cachedAmbiguityResponseId } : {}),
         ...(ambiguityStreamEmitter ? { onStreamEvent: ambiguityStreamEmitter } : {}),
     });
 
     const ambiguityResponseId = extractResponseId(ambiguityResponse.raw as Record<string, unknown>);
+    // We still save to our internal registry for technical tracking, but provider caching is the goal.
     if (ambiguityResponseId) {
-        await saveCachedResponseId(ambiguityCacheKey, ambiguityResponseId, ambiguityPromptHash, 'ambiguity', 5, '[DirectQuery-phx-cache]');
+        await saveStaticCachedResponseId(ambiguityCacheKey, ambiguityResponseId, ambiguityPromptHash, 'ambiguity', '[DirectQuery-phx-cache]');
     }
 
     let ambiguityJson = safeParseLLMJSON<Record<string, unknown>>(ambiguityResponse.content, {
@@ -2261,6 +2256,7 @@ async function runPhoenixQuery(
                 { messageKey: retryCount === 0 ? 'status.generating_query' : 'status.re_analyzing', attempt },
             );
 
+            const generationModel = selectOpenAiResponseModel('generation');
             const generationStaticPrompt = getQueryGenerationPrompt();
             const generationDynamicContext = JSON.stringify({
                 user_query: normalizedRequest,
@@ -2268,12 +2264,9 @@ async function runPhoenixQuery(
                 collections: narrowedSchema, // Using narrowedSchema as collections info
             });
 
+            // Use a static global key for provider prefix caching
+            const generationCacheKey = 'skylark:query_generation:v1';
             const generationPromptHash = calculatePromptHash(generationStaticPrompt);
-            const generationCacheKey = calculateCacheKey('generation', generationPromptHash);
-            const cachedGenerationResponseId = await getCachedResponseId(generationCacheKey, generationPromptHash, 'generation', '[DirectQuery-phx-cache]');
-
-            const generationModel = selectOpenAiResponseModel('generation');
-            // console.log(`[phx-client] Request: purpose=generation, model=${generationModel}, cacheKey=${generationCacheKey}, prevId=${cachedGenerationResponseId || 'none'}`);
 
             const generationStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'generation', attempt });
             const generationResponse = await responseClient.createResponse({
@@ -2282,13 +2275,13 @@ async function runPhoenixQuery(
                     { role: 'user', content: generationDynamicContext },
                 ],
                 purpose: 'generation',
-                ...(cachedGenerationResponseId ? { previousResponseId: cachedGenerationResponseId } : {}),
                 ...(generationStreamEmitter ? { onStreamEvent: generationStreamEmitter } : {}),
             });
 
             const generationResponseId = extractResponseId(generationResponse.raw as Record<string, unknown>);
             if (generationResponseId) {
-                await saveCachedResponseId(generationCacheKey, generationResponseId, generationPromptHash, 'generation', 5, '[DirectQuery-phx-cache]');
+                // saveStaticCachedResponseId ensures 30-day TTL for static key tracking
+                await saveStaticCachedResponseId(generationCacheKey, generationResponseId, generationPromptHash, 'generation', '[DirectQuery-phx-cache]');
             }
 
             generatedQuery = parseGeneratedQueryResponse(generationResponse);

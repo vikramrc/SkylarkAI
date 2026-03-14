@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { serviceBackedPhoenixRuntimeEngine } from '../phoenixai/index.js';
 import { capabilitiesContract, buildCapabilityDescription, getParameterDescription } from '../mcp/capabilities/contract.js';
 import { proxyToolCall } from '../mcp/proxy.js';
+import { ambiguityStore, setAmbiguity } from './ambiguity-store.js';
 
 export const directQueryFallback = createTool({
   id: 'direct_query_fallback',
@@ -61,8 +62,48 @@ export const directQueryFallback = createTool({
         const isAmbiguous = (result as any)?.status === 'ambiguous' || (result as any)?.is_ambiguous === true;
         
         if (isAmbiguous) {
-            console.log(`[Mastra Fallback] Ambiguity detected. Interrupting orchestrator turn for efficiency.`);
-            throw new Error(`AMBIGUITY_STOP:${JSON.stringify(result)}`);
+            console.log(`[Mastra Fallback] Ambiguity detected. Returning sentinel to workflow.`);
+            // Write to shared store so the workflow can intercept BEFORE the summarizer.
+            const getRunId = (ctx: any) => {
+                if (!ctx) return null;
+                // Check RequestContext first (passed from workflow)
+                // Note: Mastra tools usually pass this in context.requestContext
+                const rc = ctx.requestContext;
+                if (rc && typeof rc.get === 'function') {
+                    const ctxRunId = rc.get('runId');
+                    if (ctxRunId) return ctxRunId;
+                }
+                
+                // Fallback to direct get if context itself is the RequestContext
+                if (typeof ctx.get === 'function') {
+                    const ctxRunId = ctx.get('runId');
+                    if (ctxRunId) return ctxRunId;
+                }
+
+                // Fallback to AI SDK internal IDs
+                if (ctx.runId) return ctx.runId;
+                if (ctx.threadId) return ctx.threadId;
+                return null;
+            };
+            const threadId = getRunId(context);
+            if (threadId) {
+                setAmbiguity(threadId, result);
+                console.log(`[Mastra Fallback] Ambiguity stored for thread: ${threadId}`);
+            } else {
+                console.warn(`[Mastra Fallback] WARNING: No threadId/runId found in context. Cannot write to Ambiguity Store.`);
+                console.log(`[Mastra Fallback] Context keys available:`, context ? Object.keys(context) : 'null');
+                if (context?.requestContext) {
+                    console.log(`[Mastra Fallback] RequestContext keys available:`, Object.keys(context.requestContext));
+                }
+            }
+            // Also return a sentinel value — do NOT throw. Throwing wraps the error in
+            // MastraError which makes the JSON impossible to reliably scan in the workflow.
+            return {
+                success: false,
+                source: 'direct_query_layer',
+                __ambiguity_stop: true,
+                data: result,
+            };
         }
 
         console.log(`[Mastra Fallback] Direct Query Engine finished in ${Date.now() - startTime}ms`);
@@ -73,11 +114,7 @@ export const directQueryFallback = createTool({
             data: finalData || result,
         };
     } catch (error: any) {
-        if (error.message?.includes('AMBIGUITY_STOP:')) {
-            console.log(`[Mastra Fallback] Interruption: Ambiguity identified.`);
-        } else {
-            console.error(`[Mastra Fallback] Direct Query Engine failed after ${Date.now() - startTime}ms:`, error.message);
-        }
+        console.error(`[Mastra Fallback] Direct Query Engine failed after ${Date.now() - startTime}ms:`, error.message);
         throw error;
     }
   },
