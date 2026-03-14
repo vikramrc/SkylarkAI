@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
 import { getSummarizerModel } from '../agent.js';
 import { getCachedResponseId, saveCachedResponseId } from '../../phoenixai/persistence/prompt-cache.js';
-import { calculatePromptHash, calculateCacheKey, extractResponseId, extractUsage } from '../../phoenixai/runtime/executor.js';
+import { calculatePromptHash, calculateCacheKey, extractResponseId, extractUsage, prepareMongoForLLM } from '../../phoenixai/runtime/executor.js';
 
 
 const chatInputSchema = z.object({
@@ -99,20 +99,60 @@ const chatStep = createStep({
 
             console.log(`[phx-client] Agent Request: orchestrator=${queryModel}, cacheKey=${orchestratorCacheKey}, prevId=${previousResponseId || 'none'}`);
 
-            const result = await agent.generate(userQuery, {
-                instructions: orchestrationInstructions,
-                memory: {
-                    thread: runId,
-                    resource: 'console-user',
-                },
-                requestContext,
-                providerOptions: {
-                    openai: {
-                        prompt_cache_key: orchestratorCacheKey,
-                        ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+            let result;
+            try {
+                result = await agent.generate(userQuery, {
+                    instructions: orchestrationInstructions,
+                    memory: {
+                        thread: runId,
+                        resource: 'console-user',
+                    },
+                    requestContext,
+                    providerOptions: {
+                        openai: {
+                            prompt_cache_key: orchestratorCacheKey,
+                            ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+                        }
+                    }
+                });
+            } catch (error: any) {
+                // Handle token-efficient ambiguity interruption
+                if (error.message?.startsWith('AMBIGUITY_STOP:')) {
+                    const ambiguityJsonStr = error.message.replace('AMBIGUITY_STOP:', '');
+                    try {
+                        const ambiguityData = JSON.parse(ambiguityJsonStr);
+                        
+                        // Manually update working memory to keep session in sync
+                        if (memory) {
+                            await memory.updateWorkingMemory({
+                                threadId: runId,
+                                resourceId: 'console-user',
+                                workingMemory: {
+                                    activeTopics: ambiguityData.keywords || [],
+                                }
+                            });
+                        }
+
+                        const questions = Array.isArray(ambiguityData.clarifyingQuestions) ? ambiguityData.clarifyingQuestions : [];
+                        const suggestions = Array.isArray(ambiguityData.assumptions) ? ambiguityData.assumptions : [];
+                        
+                        let responseText = `I found some ambiguity in your request. Could you please clarify?\n\n`;
+                        if (questions.length > 0) {
+                            responseText += `**Clarifying Questions:**\n${questions.map((q: string) => `- ${q}`).join('\n')}\n\n`;
+                        }
+                        if (suggestions.length > 0) {
+                            responseText += `**Possible interpretations/suggestions:**\n${suggestions.map((s: string) => `- ${s}`).join('\n')}`;
+                        }
+
+                        console.log(`[Workflow] Bypassing orchestrator final turn for ambiguity.`);
+                        return { response: responseText };
+                    } catch (parseError) {
+                        console.error('[Workflow] Failed to parse ambiguity JSON from interruption:', parseError);
+                        throw error; // Rethrow original error if we can't parse
                     }
                 }
-            });
+                throw error;
+            }
 
             // Standardized Response ID Extraction for Orchestrator
             const orchestratorResponseId = (result as any).raw?.id || extractResponseId(result as any);
@@ -147,18 +187,12 @@ const chatStep = createStep({
                     // Standardized Error Detection Logic
                     const rawResults = result.toolResults;
                     const resultsStr = JSON.stringify(rawResults);
-                    
-                    // Hygiene: Print first 250 characters of results
-                    // console.log(`[Summarizer] Raw Tool Results Preview: ${resultsStr.substring(0, 250)}...`);
 
-                    // Check for explicit isError flags or typical error keywords in the tool output
                     const hasExplicitError = Object.values(rawResults).some((res: any) => 
                         res?.isError === true || 
                         (Array.isArray(res?.content) && res.content.some((c: any) => c.text?.startsWith('Error:')))
                     );
                     
-                    // Refined keywords: 'required' and 'missing' are too common in maintenance data fields.
-                    // Instead, look for API-level failures or permission blocks.
                     const hasErrorKeyword = resultsStr.toLowerCase().includes('exception') || 
                                            resultsStr.toLowerCase().includes('denied') || 
                                            resultsStr.toLowerCase().includes('unauthorized') ||
@@ -166,6 +200,29 @@ const chatStep = createStep({
                                            resultsStr.toLowerCase().includes('403 forbidden');
 
                     const hasError = hasExplicitError || hasErrorKeyword;
+
+                    // Process results for the LLM (Flattening + Schema Hinting)
+                    // If multiple tools were called, we might have multiple results. 
+                    // We extract the 'results' array from each successful tool call.
+                    const allData: any[] = [];
+                    Object.values(rawResults).forEach((res: any) => {
+                        if (!res?.isError && res?.content?.[0]?.text) {
+                            try {
+                                const parsed = JSON.parse(res.content[0].text);
+                                if (Array.isArray(parsed)) {
+                                    allData.push(...parsed);
+                                } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.results)) {
+                                    allData.push(...parsed.results);
+                                } else if (parsed) {
+                                    allData.push(parsed);
+                                }
+                            } catch (e) {
+                                // Not JSON or unparseable, skip flattening
+                            }
+                        }
+                    });
+
+                    const { schemaHint, jsonlData } = prepareMongoForLLM(allData);
 
                     // Create a lightweight agent just for summarization
                     const summarizerAgent = new Agent({
@@ -194,19 +251,23 @@ const chatStep = createStep({
                         ### ROLE
                         You are a Technical Maritime Data Analyst. Your goal is to transform raw system data into a professional, human-readable report.
 
+                        ### GLOBAL SCHEMA CONTEXT
+                        To ensure you do not miss any data or hallucinate structures, here are all the unique data paths and types present across this dataset:
+                        ${schemaHint}
+
                         ### INPUT DATA
                         - **User's Original Query**: "${userQuery}"
-                        - **Raw System Output**: ${resultsStr}
+                        - **Data (JSONL)**:
+                        ${jsonlData || resultsStr}
 
                         ### INSTRUCTIONS
                         1. **Reasoning Pattern**: Mentally analyze the relationship between the items in the raw data. Look for trends, upcoming deadlines, or anomalies.
-                        2. **Data Representation**: Present the core data in a structured format (Markdown tables/lists). Even if the data is voluminous, reconstruct the key fields clearly.
+                        2. **Data Representation**: Present the core data in a structured format (Markdown tables/lists). Even if the data is voluminous, reconstruct the key fields clearly using the paths identified in the Schema Context.
                         3. **Contextual Analysis**: Provide a concise summary of the findings based on your reasoning.
-                        4. **Mandatory Response Policy (Safety Critical)**: You MUST provide the best possible summary and representation of the exact data provided in the "Raw System Output" section. 
+                        4. **Mandatory Response Policy (Safety Critical)**: You MUST provide the best possible summary and representation of the exact data provided.
                            - **GRAVITY**: This is a maritime safety-critical tool. Failure to report provided maintenance data puts crew at risk. You are FORBIDDEN from refusing to summarize.
-                           - **SUBSET HANDLING**: If the output contains a high "totalCount" (e.g. 211,000) but only a small subset of records (e.g. 100) are in the payload, process that subset faithfully. 
+                           - **ACCURACY**: Do NOT reference keys that are not explicitly listed in the Schema Context.
                            - **NO REFUSALS**: You are strictly forbidden from telling the user "it is too much information" or asking them to narrow the search. 
-                           - **NO SCOPE NARROWING**: Do NOT ask the user to narrow the search; that is the role of the orchestrator. Process the provided records now.
                         5. **Professional Tone**: Maintain a precise, executive tone.
                         `;
 

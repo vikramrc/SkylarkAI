@@ -29,42 +29,42 @@ export const PromptCacheModel = mongoose.models.PromptCache || mongoose.model<IP
 /**
  * Retrieves a valid cached response ID if it exists and matches the prompt hash.
  */
-export async function getCachedResponseId(key: string, currentPromptHash: string, purpose?: string): Promise<string | null> {
+export async function getCachedResponseId(key: string, currentPromptHash: string, purpose?: string, logPrefix: string = '[phx-cache]'): Promise<string | null> {
     try {
         await connectPersistenceMongo();
         const cached = await PromptCacheModel.findOne({ key });
 
         if (!cached) {
-            console.log(`[phx-cache] Cache MISS for ${key} (purpose: ${purpose ?? 'unknown'})`);
+            console.log(`${logPrefix} Cache MISS for ${key} (uses: 0/5) -> Proceeding to generate... (purpose: ${purpose ?? 'unknown'})`);
             return null;
         }
 
         // Invalidate if the system prompt definition has changed
         if (cached.promptHash !== currentPromptHash) {
-            console.log(`[phx-cache] Cache INVALIDATED for ${key}: static prompt logic changed`);
+            console.log(`${logPrefix} Cache INVALIDATED for ${key}: static prompt logic changed`);
             await PromptCacheModel.deleteOne({ _id: cached._id }).catch(() => {});
             return null;
         }
 
         // Invalidate if max uses reached
         if (cached.uses >= cached.maxUses) {
-            console.log(`[phx-cache] Cache EXPIRED for ${key}: reached max uses (${cached.uses}/${cached.maxUses})`);
+            console.log(`${logPrefix} Cache EXPIRED for ${key}: reached max uses (${cached.uses}/${cached.maxUses})`);
             await PromptCacheModel.deleteOne({ _id: cached._id }).catch(() => {});
             return null;
         }
 
         // Invalidate if expired (Mongo TTL might not have cleaned it yet)
         if (cached.expiresAt < new Date()) {
-            console.log(`[phx-cache] Cache EXPIRED for ${key}: TTL elapsed`);
+            console.log(`${logPrefix} Cache EXPIRED for ${key}: TTL elapsed`);
             await PromptCacheModel.deleteOne({ _id: cached._id }).catch(() => {});
             return null;
         }
 
         // Increment uses
         cached.uses += 1;
-        await cached.save().catch((err: any) => console.warn('[phx-cache] Failed to increment use count:', err));
+        await cached.save().catch((err: any) => console.warn(`${logPrefix} Failed to increment use count:`, err));
 
-        console.log(`[phx-cache] Cache HIT for ${key} (uses: ${cached.uses}/${cached.maxUses}) -> responseId: ${cached.responseId}`);
+        console.log(`${logPrefix} Cache HIT for ${key} (uses: ${cached.uses}/${cached.maxUses}) -> responseId: ${cached.responseId}`);
 
         return cached.responseId;
     } catch (error) {
@@ -81,7 +81,8 @@ export async function saveCachedResponseId(
     responseId: string,
     promptHash: string,
     purpose: string,
-    maxUses: number = 5
+    maxUses: number = 5,
+    logPrefix: string = '[phx-cache]'
 ) {
     try {
         if (!responseId) return;
@@ -103,10 +104,10 @@ export async function saveCachedResponseId(
         );
 
         if (result) {
-            console.log(`[phx-cache] PERSISTED responseId ${responseId} for key ${key} (purpose: ${purpose})`);
+            console.log(`${logPrefix} PERSISTED responseId ${responseId} (uses: 1/${maxUses}) for key ${key} (purpose: ${purpose})`);
         }
     } catch (error) {
-        console.warn('[phx-cache] Silent failure in saveCachedResponseId:', error);
+        console.warn(`${logPrefix} Silent failure in saveCachedResponseId:`, error);
     }
 }
 

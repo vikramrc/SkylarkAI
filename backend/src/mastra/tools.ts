@@ -43,8 +43,12 @@ export const directQueryFallback = createTool({
                         break;
                     case 'result':
                         finalData = d;
-                        const preview = d.results?.length === 0 ? '[]' : JSON.stringify(d.results).slice(0, 251);
-                        console.log(`[DirectQuery Result] Received Final Data: ${preview}`);
+                        try {
+                            const preview = d?.results ? (d.results.length === 0 ? '[]' : JSON.stringify(d.results).slice(0, 251)) : 'No results field';
+                            console.log(`[DirectQuery Result] Received Final Data: ${preview}`);
+                        } catch (logError) {
+                            console.log(`[DirectQuery Result] Received Final Data (Preview failed)`);
+                        }
                         break;
                     case 'error':
                         console.error(`[DirectQuery Error] ${d.message || JSON.stringify(d)}`);
@@ -54,6 +58,13 @@ export const directQueryFallback = createTool({
         });
 
         const result = await resultPromise;
+        const isAmbiguous = (result as any)?.status === 'ambiguous' || (result as any)?.is_ambiguous === true;
+        
+        if (isAmbiguous) {
+            console.log(`[Mastra Fallback] Ambiguity detected. Interrupting orchestrator turn for efficiency.`);
+            throw new Error(`AMBIGUITY_STOP:${JSON.stringify(result)}`);
+        }
+
         console.log(`[Mastra Fallback] Direct Query Engine finished in ${Date.now() - startTime}ms`);
 
         return {

@@ -106,6 +106,116 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return prototype === Object.prototype || prototype === null;
 }
 
+const ALLOWED_STAGES = new Set([
+    '$match', '$project', '$addFields', '$set', '$unset', '$limit', '$skip', '$sort',
+    '$lookup', '$unwind', '$group', '$count', '$facet', '$replaceRoot', '$replaceWith',
+    '$setWindowFields', '$unionWith'
+]);
+
+function validatePipeline(pipeline: readonly Record<string, unknown>[]): void {
+    if (!Array.isArray(pipeline)) {
+        throw new Error('Pipeline must be an array');
+    }
+    for (const stage of pipeline) {
+        if (!isPlainObject(stage)) {
+            throw new Error('Each pipeline stage must be an object');
+        }
+        const keys = Object.keys(stage);
+        if (keys.length !== 1) {
+            throw new Error('Each stage must have a single operator');
+        }
+        const op = keys[0] as string;
+        if (!ALLOWED_STAGES.has(op)) {
+            throw new Error(`Stage ${op} not allowed`);
+        }
+    }
+}
+
+function sanitizePipelineValue(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map((entry) => sanitizePipelineValue(entry));
+    }
+
+    if (!isPlainObject(value)) return value;
+
+    const nextValue: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+        nextValue[key] = sanitizePipelineValue(entry);
+    }
+
+    if (isPlainObject(nextValue.$getField)) {
+        nextValue.$getField = {
+            ...nextValue.$getField,
+            field: sanitizeGetFieldFieldExpression(nextValue.$getField.field),
+        };
+    }
+
+    return nextValue;
+}
+
+function sanitizePipeline(p: readonly any[] | unknown): any[] {
+    const pipeline = Array.isArray(p) ? p : [];
+    return pipeline.map((stage) => {
+        const op = Object.keys(stage || {})[0];
+        if (!op) return null;
+
+        let val = stage[op];
+
+        if (op === '$limit') {
+            const n = Number(val);
+            if (!Number.isFinite(n) || n <= 0) return null; // drop invalid $limit
+        } else if (op === '$skip') {
+            const n = Number(val);
+            if (!Number.isFinite(n) || n < 0) val = 0; // clamp
+        } else if (op === '$facet' && val && typeof val === 'object') {
+            const out: Record<string, any> = {};
+            for (const k of Object.keys(val)) out[k] = sanitizePipeline(val[k]);
+            val = out;
+        } else if (op === '$lookup' && val?.pipeline) {
+            val = { ...val, pipeline: sanitizePipeline(val.pipeline) };
+        } else if (op === '$unionWith' && val?.pipeline) {
+            val = { ...val, pipeline: sanitizePipeline(val.pipeline) };
+        }
+
+        // Deep value sanitization (includes $getField fix)
+        val = sanitizePipelineValue(val);
+
+        return { [op]: val };
+    }).filter((s): s is Record<string, any> => s !== null);
+}
+
+function stripGridFSKeys(input: any): any {
+    if (Array.isArray(input)) return input.map(stripGridFSKeys);
+    if (isPlainObject(input)) {
+        const out: Record<string, any> = {};
+        for (const [k, v] of Object.entries(input)) {
+            if (k === 'gridFSMetadata' || k === 'gridFSFileId') continue;
+            out[k] = stripGridFSKeys(v);
+        }
+        return out;
+    }
+    return input;
+}
+
+function stripPrivateKeys(input: any): any {
+    if (Array.isArray(input)) return input.map(stripPrivateKeys);
+    if (isPlainObject(input)) {
+        const out: Record<string, any> = {};
+        for (const [k, v] of Object.entries(input)) {
+            if (typeof k === 'string' && k.startsWith('_') && k !== '_id') continue;
+            out[k] = stripPrivateKeys(v);
+        }
+        return out;
+    }
+    return input;
+}
+
+function extractResponseTextCandidate(raw: unknown): string {
+    if (typeof raw === 'string') return raw;
+    if (isRecord(raw)) return extractResponseText(raw);
+    return '';
+}
+
 async function emitStatus(
     onEvent: PhoenixStreamEmitter | undefined,
     stage: string,
@@ -114,6 +224,14 @@ async function emitStatus(
 ): Promise<void> {
     if (!onEvent) return;
     await onEvent({ event: 'status', data: { stage, message, ...(details ?? {}) } });
+}
+
+async function emitResult(
+    onEvent: PhoenixStreamEmitter | undefined,
+    data: unknown,
+): Promise<void> {
+    if (!onEvent) return;
+    await onEvent({ event: 'result', data });
 }
 
 function createRuntimeLlmEmitter(
@@ -420,81 +538,20 @@ function sanitizeGetFieldFieldExpression(field: unknown): unknown {
     return '';
 }
 
-function sanitizePipelineValue(value: unknown): unknown {
-    if (Array.isArray(value)) {
-        return value.map((entry) => sanitizePipelineValue(entry));
-    }
-
-    if (!isRecord(value)) return value;
-
-    const nextValue: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-        nextValue[key] = sanitizePipelineValue(entry);
-    }
-
-    if (isRecord(nextValue.$getField)) {
-        nextValue.$getField = {
-            ...nextValue.$getField,
-            field: sanitizeGetFieldFieldExpression(nextValue.$getField.field),
-        };
-    }
-
-    return nextValue;
-}
-
-export function sanitizePipeline(pipeline: unknown): Record<string, unknown>[] {
-    if (!Array.isArray(pipeline)) return [];
-
-    return pipeline
-        .map((stage) => {
-            if (!isRecord(stage)) return null;
-
-            const operator = Object.keys(stage)[0];
-            if (!operator) return null;
-
-            let value = Reflect.get(stage, operator);
-
-            if (operator === '$limit') {
-                const numeric = Number(value);
-                if (!Number.isFinite(numeric) || numeric <= 0) {
-                    return null;
-                }
-            } else if (operator === '$skip') {
-                const numeric = Number(value);
-                if (!Number.isFinite(numeric) || numeric < 0) {
-                    value = 0;
-                }
-            } else if (operator === '$facet' && isRecord(value)) {
-                const nextValue: Record<string, unknown> = {};
-                for (const key of Object.keys(value)) {
-                    nextValue[key] = sanitizePipeline(Reflect.get(value, key));
-                }
-                value = nextValue;
-            } else if (operator === '$lookup' && isRecord(value) && Array.isArray(value.pipeline)) {
-                value = { ...value, pipeline: sanitizePipeline(value.pipeline) };
-            } else if (operator === '$unionWith' && isRecord(value) && Array.isArray(value.pipeline)) {
-                value = { ...value, pipeline: sanitizePipeline(value.pipeline) };
-            }
-
-            value = sanitizePipelineValue(value);
-
-            return { [operator]: value };
-        })
-        .filter((stage): stage is Record<string, unknown> => stage !== null);
-}
-
-function extractResponseTextCandidate(raw: unknown): string {
-    if (typeof raw === 'string') return raw;
-    if (isRecord(raw)) return extractResponseText(raw);
-    return '';
-}
-
 function normalizeGeneratedQuery(raw: unknown): Record<string, unknown> {
     const fallback: Record<string, unknown> = { base_collection: '', pipeline: [] };
     const parsed = safeParseLLMJSON<Record<string, unknown>>(raw, fallback);
     const generatedQuery = isRecord(parsed) ? { ...parsed } : { ...fallback };
     const baseCollection = typeof generatedQuery.base_collection === 'string' ? generatedQuery.base_collection : '';
+    
+    // Apply nested sanitization and security whitelisting
     const pipeline = sanitizePipeline(generatedQuery.pipeline);
+    try {
+        validatePipeline(pipeline);
+    } catch (e) {
+        console.error('[Security] Pipeline validation failed:', e instanceof Error ? e.message : e);
+        return fallback; // Return empty if malicious operators found
+    }
 
     return {
         ...generatedQuery,
@@ -577,32 +634,6 @@ function logMalformedGeneratedQueryDebug(response: PhoenixResponseResult): void 
     }));
 }
 
-function stripGridFSKeys(input: unknown): unknown {
-    if (Array.isArray(input)) return input.map(stripGridFSKeys);
-    if (isPlainObject(input)) {
-        const output: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(input)) {
-            if (key === 'gridFSMetadata' || key === 'gridFSFileId') continue;
-            output[key] = stripGridFSKeys(value);
-        }
-        return output;
-    }
-    return input;
-}
-
-function stripPrivateKeys(input: unknown): unknown {
-    if (Array.isArray(input)) return input.map(stripPrivateKeys);
-    if (isPlainObject(input)) {
-        const output: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(input)) {
-            if (key.startsWith('_')) continue;
-            output[key] = stripPrivateKeys(value);
-        }
-        return output;
-    }
-    return input;
-}
-
 function cleanResultsForClient(results: unknown[]): unknown[] {
     return stripPrivateKeys(stripGridFSKeys(results)) as unknown[];
 }
@@ -640,6 +671,7 @@ interface PhoenixActivityWorkHistoryAuxiliaryData {
 const OBJECT_ID_HEX_REGEX = /^[a-fA-F0-9]{24}$/;
 
 const LEGACY_ENRICHMENT_MAPPING: Record<string, { collection: string; display: PhoenixEnrichmentDisplayResolver }> = {
+    // Core PMS mappings
     activityID: { collection: 'Activity', display: 'description' },
     maintenanceScheduleID: { collection: 'MaintenanceSchedule', display: 'shortName' },
     organizationID: { collection: 'Organization', display: 'orgShortName' },
@@ -647,7 +679,7 @@ const LEGACY_ENRICHMENT_MAPPING: Record<string, { collection: string; display: P
     machineryID: { collection: 'Machinery', display: 'machineryName' },
     vesselID: { collection: 'Vessel', display: 'vesselName' },
     formTemplateID: { collection: 'FormTemplate', display: 'name' },
-    performedBy: { collection: 'User', display: 'email' },
+    performedBy: { collection: 'User', display: (doc) => doc.firstName && doc.lastName ? `${doc.firstName} ${doc.lastName}` : (doc.email || 'System') },
     fromLocationID: { collection: 'InventoryLocation', display: 'locationName' },
     partID: { collection: 'InventoryPart', display: 'partName' },
     toLocationID: { collection: 'InventoryLocation', display: 'locationName' },
@@ -658,17 +690,33 @@ const LEGACY_ENRICHMENT_MAPPING: Record<string, { collection: string; display: P
     approvedBy: { collection: 'User', display: 'email' },
     documentMetadataID: {
         collection: 'DocumentMetadata',
-        display: (doc) => doc.originalFileName ?? doc.documentName,
+        display: (doc) => doc.originalFileName ?? doc.documentName ?? 'Unnamed Document',
     },
     documentTypeID: {
         collection: 'DocumentType',
-        display: (doc) => doc.typeName ?? doc.name,
+        display: (doc) => doc.typeName ?? doc.name ?? 'Unspecified Type',
     },
+    // Exhaustive registry additions (ported from PhoenixAI)
+    crewMemberID: { collection: 'CrewMember', display: (doc) => doc.firstName && doc.lastName ? `${doc.firstName} ${doc.lastName}` : doc.email },
+    assignedTo: { collection: 'User', display: 'email' },
+    workflowStatusID: { collection: 'WorkflowStatus', display: 'statusName' },
+    shiftPatternID: { collection: 'ShiftPattern', display: 'patternName' },
+    voyageID: { collection: 'Voyage', display: 'voyageNumber' },
+    portID: { collection: 'Port', display: 'portName' },
+    countryID: { collection: 'Country', display: 'countryName' },
+    currencyID: { collection: 'Currency', display: 'currencyCode' },
+    costCenterID: { collection: 'CostCenter', display: 'name' },
+    budgetID: { collection: 'Budget', display: 'name' },
+    accountCodeID: { collection: 'AccountCode', display: 'code' },
+    requisitionID: { collection: 'Requisition', display: 'requisitionNo' },
+    purchaseOrderID: { collection: 'PurchaseOrder', display: 'poNumber' },
+    invoiceID: { collection: 'Invoice', display: 'invoiceNo' },
+    vendorID: { collection: 'Vendor', display: 'vendorName' },
 };
 
 const COLLECTION_ALIAS = new Map<string, string>([
-    ['form', 'Form'],
-    ['forms', 'Form'],
+    ['form', 'forms'],
+    ['forms', 'forms'],
     ['activityworkhistory', 'ActivityWorkHistory'],
     ['activityworkhistoryevent', 'ActivityWorkHistoryEvent'],
     ['inventorylocation', 'InventoryLocation'],
@@ -684,7 +732,7 @@ for (const { collection, display } of Object.values(LEGACY_ENRICHMENT_MAPPING)) 
         DISPLAY_BY_COLLECTION.set(collection, display);
     }
 }
-DISPLAY_BY_COLLECTION.set('Form', 'name');
+DISPLAY_BY_COLLECTION.set('forms', 'name');
 
 function toObjectIdString(value: unknown): string | null {
     if (value instanceof ObjectId) {
@@ -1137,6 +1185,59 @@ function attachActivityWorkHistoryAuxiliaryFields(
     }
 }
 
+/**
+ * Cleans Mongo results, extracts a dynamic schema map, and formats as JSONL.
+ * Ported and enhanced for token efficiency and schema "warm-up".
+ */
+export function prepareMongoForLLM(data: any[]) {
+    if (!Array.isArray(data)) return { schemaHint: '[]', jsonlData: '' };
+
+    // 1. Prune empty values to save tokens
+    const pruneEmpty = (obj: any): any => {
+        if (obj === null || obj === undefined) return undefined;
+        if (Array.isArray(obj)) {
+            const filtered = obj.map(pruneEmpty).filter((val) => val !== undefined);
+            return filtered.length > 0 ? filtered : undefined;
+        }
+        if (typeof obj === 'object') {
+            const prunedObj: Record<string, any> = {};
+            for (const [key, value] of Object.entries(obj)) {
+                const prunedVal = pruneEmpty(value);
+                if (prunedVal !== undefined) prunedObj[key] = prunedVal;
+            }
+            return Object.keys(prunedObj).length > 0 ? prunedObj : undefined;
+        }
+        return obj;
+    };
+
+    // 2. Extract deep keys for the Schema Hint with basic type info
+    const extractKeys = (obj: any, prefix = ''): string[] => {
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
+        return Object.keys(obj).flatMap((k) => {
+            const value = obj[k];
+            const fullPath = prefix ? `${prefix}.${k}` : k;
+            
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                return [fullPath, ...extractKeys(value, fullPath)];
+            }
+            
+            // Add basic type hint
+            const type = value === null ? 'null' : Array.isArray(value) ? 'Array' : typeof value;
+            return [`${fullPath}:${type}`];
+        });
+    };
+
+    const cleanedData = data.map(pruneEmpty).filter(Boolean);
+
+    // 3. Generate the Schema Hint and JSONL
+    // Depth-first unique keys
+    const allKeys = Array.from(new Set(cleanedData.flatMap((doc) => extractKeys(doc))));
+    const schemaHint = `[${allKeys.join(', ')}]`;
+    const jsonlData = cleanedData.map((doc) => JSON.stringify(doc)).join('\n');
+
+    return { schemaHint, jsonlData };
+}
+
 export async function enrichHumanReadableResults(
     results: unknown[],
     fetchDocuments: PhoenixEnrichmentFetchDocuments = defaultEnrichmentFetchDocuments,
@@ -1532,9 +1633,23 @@ export async function loadPmsCollectionsVectorSchema(): Promise<PhoenixCollectio
     if (!schemaCache) {
         schemaCache = readFile(new URL('../../../seed/pms_collections_vector_schema.json', import.meta.url), 'utf8')
             .then((content) => JSON.parse(content) as unknown)
-            .then((value) => Array.isArray(value)
-                ? value.filter((item): item is PhoenixCollectionSchemaEntry => isRecord(item) && typeof item.CollectionName === 'string')
-                : []);
+            .then((value) => {
+                if (!Array.isArray(value)) return [];
+                return value
+                    .filter((item): item is PhoenixCollectionSchemaEntry => isRecord(item) && typeof item.CollectionName === 'string')
+                    .map((item) => {
+                        if (item.CollectionName === 'Form') {
+                            return {
+                                ...item,
+                                CollectionName: 'forms',
+                                Description: typeof item.Description === 'string' 
+                                    ? item.Description.replace(/Form(?!Template|Sequence)/g, 'forms') 
+                                    : item.Description
+                            };
+                        }
+                        return item;
+                    });
+            });
     }
 
     return schemaCache;
@@ -1709,7 +1824,7 @@ function applyTargetCollectionHeuristics(
     if (/\btag\w*/i.test(normalizedRequest)) collections.add('SearchableTag');
     if (/\bform\w*/i.test(normalizedRequest)) {
         collections.add('FormTemplate');
-        collections.add('Form');
+        collections.add('forms');
     }
     if (collections.has('ActivityWorkHistory')) {
         collections.add('FormTemplateActivityMapping');
@@ -1738,15 +1853,24 @@ async function executePipelineConsoleNormalized(
     baseCollection: string,
     pipeline: readonly Record<string, unknown>[],
 ): Promise<{ results: unknown[]; resultCount: number; executionTimeMs: number }> {
-    const db = await connectQueryMongo();
-    const collection = db.collection(baseCollection);
-    const startedAt = Date.now();
-    const results = await collection.aggregate([...pipeline], { allowDiskUse: true }).toArray();
-    return {
-        results,
-        resultCount: results.length,
-        executionTimeMs: Date.now() - startedAt,
-    };
+    const physicalBase = physicalCollectionName(baseCollection);
+    
+    // Deep security and hygiene (ported from PhoenixAI)
+    const sanitized = sanitizePipeline(pipeline);
+    validatePipeline(sanitized as Record<string, unknown>[]);
+
+    const connection = await connectQueryMongo();
+    if (!connection) throw new Error('Mongo connection not ready');
+
+    const coll = connection.collection(physicalBase);
+    const t0 = Date.now();
+    const results = await coll.aggregate(sanitized, { allowDiskUse: true }).toArray();
+    const dt = Date.now() - t0;
+    
+    // Result hygiene (strip technical keys)
+    const cleanResults = cleanResultsForClient(results);
+
+    return { results: cleanResults, resultCount: cleanResults.length, executionTimeMs: dt };
 }
 
 function shouldRetryOnEmptyResults(): boolean {
@@ -1976,7 +2100,10 @@ async function runPhoenixQuery(
         const keywordPrompt = getKeywordExtractorPrompt();
         const keywordPromptHash = calculatePromptHash(keywordPrompt);
         const keywordCacheKey = calculateCacheKey('keyword_extraction', keywordPromptHash);
-        const cachedKeywordResponseId = await getCachedResponseId(keywordCacheKey, keywordPromptHash, 'keyword_extraction');
+        const cachedKeywordResponseId = await getCachedResponseId(keywordCacheKey, keywordPromptHash, 'keyword_extraction', '[DirectQuery-phx-cache]');
+
+        const keywordModel = selectOpenAiResponseModel('keyword_extraction');
+        // console.log(`[phx-client] Request: purpose=keyword_extraction, model=${keywordModel}, cacheKey=${keywordCacheKey}, prevId=${cachedKeywordResponseId || 'none'}`);
 
         const keywordStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'keywords' });
         const keywordResponse = await responseClient.createResponse({
@@ -1991,7 +2118,7 @@ async function runPhoenixQuery(
 
         const keywordResponseId = extractResponseId(keywordResponse.raw as Record<string, unknown>);
         if (keywordResponseId) {
-            await saveCachedResponseId(keywordCacheKey, keywordResponseId, keywordPromptHash, 'keyword_extraction');
+            await saveCachedResponseId(keywordCacheKey, keywordResponseId, keywordPromptHash, 'keyword_extraction', 5, '[DirectQuery-phx-cache]');
         }
 
         const keywordJson = safeParseLLMJSON<{ keywords?: unknown }>(keywordResponse.content, {});
@@ -2012,7 +2139,10 @@ async function runPhoenixQuery(
     const ambiguityDynamicContext = `Injected schema:\n${JSON.stringify(narrowedSchema)}`;
     const ambiguityPromptHash = calculatePromptHash(ambiguityStaticPrompt);
     const ambiguityCacheKey = calculateCacheKey('ambiguity', ambiguityPromptHash);
-    const cachedAmbiguityResponseId = await getCachedResponseId(ambiguityCacheKey, ambiguityPromptHash, 'ambiguity');
+    const cachedAmbiguityResponseId = await getCachedResponseId(ambiguityCacheKey, ambiguityPromptHash, 'ambiguity', '[DirectQuery-phx-cache]');
+
+    const ambiguityModel = selectOpenAiResponseModel('ambiguity');
+    // console.log(`[phx-client] Request: purpose=ambiguity, model=${ambiguityModel}, cacheKey=${ambiguityCacheKey}, prevId=${cachedAmbiguityResponseId || 'none'}`);
 
     const ambiguityStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'ambiguity' });
     const ambiguityResponse = await responseClient.createResponse({
@@ -2028,7 +2158,7 @@ async function runPhoenixQuery(
 
     const ambiguityResponseId = extractResponseId(ambiguityResponse.raw as Record<string, unknown>);
     if (ambiguityResponseId) {
-        await saveCachedResponseId(ambiguityCacheKey, ambiguityResponseId, ambiguityPromptHash, 'ambiguity');
+        await saveCachedResponseId(ambiguityCacheKey, ambiguityResponseId, ambiguityPromptHash, 'ambiguity', 5, '[DirectQuery-phx-cache]');
     }
 
     let ambiguityJson = safeParseLLMJSON<Record<string, unknown>>(ambiguityResponse.content, {
@@ -2050,7 +2180,11 @@ async function runPhoenixQuery(
             clarifyingQuestions: Array.isArray(ambiguityJson.clarifying_questions) ? ambiguityJson.clarifying_questions : [],
             assumptions: Array.isArray(ambiguityJson.suggestions) ? ambiguityJson.suggestions : [],
             resolvedQuery: normalizedRequest,
+            ambiguityDetails: ambiguityJson, // Include the full JSON as requested
         };
+        
+        await emitResult(onEvent, patch);
+        
         const updated = await dependencies.updateConversation(startedConversation.conversationId, patch);
         return updated ? toServiceResult(updated) : buildFallbackConversation(startedConversation, patch);
     }
@@ -2136,7 +2270,10 @@ async function runPhoenixQuery(
 
             const generationPromptHash = calculatePromptHash(generationStaticPrompt);
             const generationCacheKey = calculateCacheKey('generation', generationPromptHash);
-            const cachedGenerationResponseId = await getCachedResponseId(generationCacheKey, generationPromptHash, 'generation');
+            const cachedGenerationResponseId = await getCachedResponseId(generationCacheKey, generationPromptHash, 'generation', '[DirectQuery-phx-cache]');
+
+            const generationModel = selectOpenAiResponseModel('generation');
+            // console.log(`[phx-client] Request: purpose=generation, model=${generationModel}, cacheKey=${generationCacheKey}, prevId=${cachedGenerationResponseId || 'none'}`);
 
             const generationStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'generation', attempt });
             const generationResponse = await responseClient.createResponse({
@@ -2151,7 +2288,7 @@ async function runPhoenixQuery(
 
             const generationResponseId = extractResponseId(generationResponse.raw as Record<string, unknown>);
             if (generationResponseId) {
-                await saveCachedResponseId(generationCacheKey, generationResponseId, generationPromptHash, 'generation');
+                await saveCachedResponseId(generationCacheKey, generationResponseId, generationPromptHash, 'generation', 5, '[DirectQuery-phx-cache]');
             }
 
             generatedQuery = parseGeneratedQueryResponse(generationResponse);
