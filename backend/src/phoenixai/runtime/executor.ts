@@ -334,10 +334,14 @@ export function extractUsage(data: Record<string, unknown>): unknown {
 export function logUsageBreakdown(purpose: string, usage: any, logPrefix: string = '[phx-usage]'): void {
     if (!usage) return;
 
-    const p = usage.prompt_tokens || usage.promptTokens || 0;
-    const c = usage.completion_tokens || usage.completionTokens || 0;
-    const t = usage.total_tokens || usage.totalTokens || 0;
-    const cached = usage.prompt_tokens_details?.cached_tokens || usage.promptTokensDetails?.cachedTokens || 0;
+    // Handle various key names (openai vs vercel ai sdk vs mastra)
+    const p = usage.prompt_tokens ?? usage.promptTokens ?? usage.input_tokens ?? usage.inputTokens ?? 0;
+    const c = usage.completion_tokens ?? usage.completionTokens ?? usage.output_tokens ?? usage.outputTokens ?? 0;
+    const t = usage.total_tokens ?? usage.totalTokens ?? 0;
+    
+    // OpenAI specific details for prompt caching
+    const promptDetails = usage.prompt_tokens_details ?? usage.promptTokensDetails;
+    const cached = promptDetails?.cached_tokens ?? promptDetails?.cachedTokens ?? 0;
 
     const GREY = '\x1b[90m';
     const GREEN = '\x1b[32m';
