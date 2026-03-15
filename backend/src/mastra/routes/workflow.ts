@@ -12,10 +12,15 @@ export function createMastraWorkflowRouter() {
         try {
             const { userQuery, runId } = req.body;
             
-            // Fallback to cookie string if Authorization header is missing
+            // Extract session token value securely from raw cookie string if header is missing
+            const cookies = req.headers.cookie || '';
+            const match = cookies.match(/(X-Session-ID|session|token)=([^;]+)/i);
             const authToken = req.headers.authorization 
                 ? req.headers.authorization.split(' ')[1] 
-                : req.headers.cookie;
+                : (match ? match[2] : undefined);
+
+            console.log(`\x1b[35m[Mastra Route DEBUG] Raw Cookie:\x1b[0m`, cookies || '[None]');
+            console.log(`\x1b[35m[Mastra Route DEBUG] Extracted authToken:\x1b[0m`, authToken || '[Undefined]');
 
             if (!userQuery) {
                 return res.status(400).json({ message: 'userQuery is required' });
