@@ -8,6 +8,8 @@ import {
     serviceBackedPhoenixRuntimeEngine,
 } from './phoenixai/index.js';
 
+import { createMastraWorkflowRouter } from './mastra/routes/workflow.js';
+
 dotenv.config();
 
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
@@ -154,6 +156,9 @@ setupMcpRoutes(app);
 
 // Mount Phoenix one-shot runtime routes
 app.use('/api/phoenix-openai', createPhoenixOpenAiResponseRouter(serviceBackedPhoenixRuntimeEngine));
+
+// Mount Mastra workflow routes
+app.use('/api/mastra', createMastraWorkflowRouter());
 
 app.listen(PORT, () => {
     console.log(`\n🚀 SkylarkAI Backend is LIVE on port ${PORT}`);

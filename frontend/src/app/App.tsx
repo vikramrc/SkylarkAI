@@ -4,7 +4,7 @@ import ChatInterface from '@/components/ChatInterface';
 import RequestResponse from '@/components/RequestResponse';
 import DisambiguationFlow from '@/components/DisambiguationFlow';
 import HitlSummary from '@/components/HitlSummary';
-import NewChatLayout from '@/components/new-ui/NewChatLayout';
+import NewChatLayoutV2 from '@/components/new-ui/NewChatLayoutV2';
 import apiService from '@/services/api.service';
 import { useTranslation } from 'react-i18next';
 import { TbLanguage } from 'react-icons/tb';
@@ -170,9 +170,8 @@ const App: React.FC = () => {
             </defs>
           </svg>
         </div>
-        <NewChatLayout
+        <NewChatLayoutV2
           onToggleUI={() => setUseNewUI(false)}
-          phoenixUseStream={phoenixUseStream}
         />
       </>
     );

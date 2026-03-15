@@ -2124,7 +2124,7 @@ async function runPhoenixQuery(
         const keywordPrompt = getKeywordExtractorPrompt();
         // Use a static global key for provider prefix caching
         const keywordCacheKey = 'skylark:keyword_extraction:v1';
-        const keywordPromptHash = calculatePromptHash(keywordPrompt);
+        const keywordPromptHash = calculatePromptHash(`${keywordPrompt}\n${userQuery}`);
         const previousKeywordId = await getCachedResponseId(keywordCacheKey, keywordPromptHash, 'keyword_extraction', '[DirectQuery-phx-cache]');
 
         const keywordStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'keyword_extraction' });
@@ -2165,7 +2165,7 @@ async function runPhoenixQuery(
     
     // Use a static global key for provider prefix caching
     const ambiguityCacheKey = 'skylark:ambiguity:v1';
-    const ambiguityPromptHash = calculatePromptHash(ambiguityStaticPrompt);
+    const ambiguityPromptHash = calculatePromptHash(`${ambiguityStaticPrompt}\n${userQuery}`);
     const previousAmbiguityId = await getCachedResponseId(ambiguityCacheKey, ambiguityPromptHash, 'ambiguity', '[DirectQuery-phx-cache]');
     
     const ambiguityStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'ambiguity' });
@@ -2297,20 +2297,54 @@ async function runPhoenixQuery(
 
             // Use a static global key for provider prefix caching
             const generationCacheKey = 'skylark:query_generation:v1';
-            const generationPromptHash = calculatePromptHash(generationStaticPrompt);
+            const generationPromptHash = calculatePromptHash(`${generationStaticPrompt}\n${generationDynamicContext}`);
             const previousGenerationId = await getCachedResponseId(generationCacheKey, generationPromptHash, 'generation', '[DirectQuery-phx-cache]');
 
             const generationStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'generation', attempt });
-            const generationResponse = await responseClient.createResponse({
-                messages: [
-                    { role: 'system', content: generationStaticPrompt },
-                    { role: 'user', content: generationDynamicContext },
-                ],
-                purpose: 'generation',
-                promptCacheKey: generationCacheKey,
-                previousResponseId: previousGenerationId || undefined,
-                ...(generationStreamEmitter ? { onStreamEvent: generationStreamEmitter } : {}),
-            });
+            let generationResponse: PhoenixResponseResult = { content: '' };
+            let generationAttempts = 0;
+            const maxGenerationAttempts = 3;
+
+            while (generationAttempts < maxGenerationAttempts) {
+                try {
+                    generationResponse = await responseClient.createResponse({
+                        messages: [
+                            { role: 'system', content: generationStaticPrompt },
+                            { role: 'user', content: generationDynamicContext },
+                        ],
+                        purpose: 'generation',
+                        promptCacheKey: generationCacheKey,
+                        previousResponseId: previousGenerationId || undefined,
+                        ...(generationStreamEmitter ? { onStreamEvent: generationStreamEmitter } : {}),
+                    });
+                    break; // Success
+                } catch (error: any) {
+                    if (error.message && error.message.includes('Rate limit reached')) {
+                        generationAttempts++;
+                        if (generationAttempts >= maxGenerationAttempts) throw error;
+
+                        let delayMs = 3000; // Default 3s
+                        const match = error.message.match(/try again in (\d+\.?\d*)s/i);
+                        if (match && match[1]) {
+                            delayMs = Math.ceil(parseFloat(match[1]) * 1000) + 1000; // add 1s buffer
+                        } else {
+                            delayMs = Math.pow(2, generationAttempts) * 1000;
+                        }
+
+                        // Broadcast to UI
+                        await emitStatus(
+                            onEvent,
+                            'retry',
+                            `Rate limit hit. Retrying generation in ${(delayMs / 1000).toFixed(1)}s...`,
+                            { attempt: generationAttempts, delayMs }
+                        );
+
+                        await new Promise((resolve) => setTimeout(resolve, delayMs));
+                    } else {
+                        throw error;
+                    }
+                }
+            }
 
             const generationResponseId = extractResponseId(generationResponse.raw as Record<string, unknown>);
             if (generationResponseId) {

@@ -111,6 +111,9 @@ const chatStep = createStep({
                     }
                 });
                 logUsageBreakdown('orchestrator', (result as any).usage, '[Orchestrator-phx-usage]');
+                
+                console.log(`\x1b[33m[Workflow DEBUG] Orchestrator Text:\x1b[0m`, (result as any).text || '[No Text]');
+                console.log(`\x1b[33m[Workflow DEBUG] Tool Results:\x1b[0m`, JSON.stringify((result as any).toolResults || {}, null, 2));
             } catch (error: any) {
                 // Only genuine unexpected errors should bubble up.
                 // Ambiguity is now returned as a sentinel value from the tool

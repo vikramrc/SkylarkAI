@@ -15,6 +15,11 @@ export default defineConfig({
     port: 5175,
     host: true,
     proxy: {
+      '/api/mastra': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        secure: false,
+      },
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
