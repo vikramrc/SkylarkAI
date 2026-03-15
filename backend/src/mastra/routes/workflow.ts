@@ -14,7 +14,7 @@ export function createMastraWorkflowRouter() {
             
             // Extract session token value securely from raw cookie string if header is missing
             const cookies = req.headers.cookie || '';
-            const match = cookies.match(/(X-Session-ID|session|token)=([^;]+)/i);
+            const match = cookies.match(/\b(X-Session-ID|session|token)=([^;]+)/i);
             const authToken = req.headers.authorization 
                 ? req.headers.authorization.split(' ')[1] 
                 : (match ? match[2] : undefined);
