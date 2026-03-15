@@ -40,11 +40,25 @@ export const getSkylarkAgent = (storage?: any) => {
     console.log(`[Agent] Storage type: ${storage.constructor.name}`);
   }
 
-    const queryModel = process.env.MASTRA_OPENAI_QUERY_MODEL || 'gpt-4o';
-    const reasoning = (process.env.MASTRA_OPENAI_QUERY_MODEL_REASONING as any) || 'low';
-    
-    console.log(`[Agent] Initializing with Query Model: ${queryModel} (${reasoning})`);
-    const configuredModel = openai(queryModel);
+    const provider = process.env.MASTRA_ORCHESTRATOR_PROVIDER || 'openai';
+    const queryModel = process.env.MASTRA_ORCHESTRATOR_QUERY_MODEL || 'gpt-4o';
+    const reasoning = (process.env.MASTRA_ORCHESTRATOR_QUERY_MODEL_REASONING as any) || 'low';
+
+    console.log(`[Agent] Initializing with Orchestrator Provider: ${provider}, Model: ${queryModel} (${reasoning})`);
+
+    let configuredModel;
+    if (provider === 'openai') {
+        configuredModel = openai(queryModel);
+    } else if (provider === 'google') {
+        configuredModel = google(queryModel);
+    } else if (provider === 'anthropic') {
+        configuredModel = anthropic(queryModel);
+    } else if (provider === 'deepseek') {
+        configuredModel = deepseek(queryModel);
+    } else {
+        console.warn(`[Agent] Unknown provider '${provider}', falling back to OpenAI`);
+        configuredModel = openai(queryModel);
+    }
 
     return new Agent({
         id: 'skylark-operator',
@@ -112,7 +126,22 @@ export const getSummarizerModel = (): any => {
         return deepseek(model);
     }
 
-    // Default to query model if no specific summarizer is configured
-    const queryModel = process.env.MASTRA_OPENAI_QUERY_MODEL || 'gpt-4o';
-    return openai(queryModel);
+    // Default to orchestrator model if no specific summarizer is configured
+    const orchestratorProvider = process.env.MASTRA_ORCHESTRATOR_PROVIDER || 'openai';
+    const queryModel = process.env.MASTRA_ORCHESTRATOR_QUERY_MODEL || 'gpt-4o';
+
+    console.log(`[Agent] Falling back to orchestrator model for summarization: ${orchestratorProvider}/${queryModel}`);
+
+    if (orchestratorProvider === 'openai') {
+        return openai(queryModel);
+    } else if (orchestratorProvider === 'google') {
+        return google(queryModel);
+    } else if (orchestratorProvider === 'anthropic') {
+        return anthropic(queryModel);
+    } else if (orchestratorProvider === 'deepseek') {
+        return deepseek(queryModel);
+    } else {
+        console.warn(`[Agent] Unknown orchestrator provider '${orchestratorProvider}', falling back to OpenAI`);
+        return openai(queryModel);
+    }
 };

@@ -73,8 +73,9 @@ const chatStep = createStep({
                 }
             }
 
-            const queryModel = process.env.MASTRA_OPENAI_QUERY_MODEL || 'gpt-4o';
-            console.log(`\n[Workflow] Step processing query: "${userQuery}" for run ${runId} (Orchestrator: ${queryModel})`);
+            const orchestratorProvider = process.env.MASTRA_ORCHESTRATOR_PROVIDER || 'openai';
+            const queryModel = process.env.MASTRA_ORCHESTRATOR_QUERY_MODEL || 'gpt-4o';
+            console.log(`\n[Workflow] Step processing query: "${userQuery}" for run ${runId} (Orchestrator: ${orchestratorProvider}/${queryModel})`);
 
             const requestContext = new RequestContext();
             requestContext.set('token', authToken);
@@ -91,7 +92,7 @@ const chatStep = createStep({
             const orchestratorCacheKey = 'skylark:orchestrator:v1';
             const orchestratorPromptHash = calculatePromptHash(orchestrationInstructions);
 
-            console.log(`\x1b[36m[phx-client] Agent Request: orchestrator=${queryModel}, cacheKey=${orchestratorCacheKey}, runId=${runId}\x1b[0m`);
+            console.log(`\x1b[36m[phx-client] Agent Request: orchestrator=${orchestratorProvider}/${queryModel}, cacheKey=${orchestratorCacheKey}, runId=${runId}\x1b[0m`);
 
             let result;
             try {
