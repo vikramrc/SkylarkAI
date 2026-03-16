@@ -35,7 +35,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
 
   // Preserve runId acrosssubmissions for continuous context turn memory
   const runIdRef = useRef<string | null>(null);
-  const [timelineStatus, setTimelineStatus] = useState<any>(null);
+  const [timelineStatuses, setTimelineStatuses] = useState<Record<string, any>>({});
 
   const sampleQueries = (t('chat.sample_queries', { returnObjects: true }) as unknown as string[]) || [];
 
@@ -51,7 +51,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
     if (!currentConversation) {
       setMessages([]);
       runIdRef.current = null;
-      setTimelineStatus(null);
+      setTimelineStatuses({});
       return;
     }
     // For loaded conversations, we could hydrate from content histories if needed
@@ -82,12 +82,15 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
 
     // Timeline trigger (Simulate progression since HTTP Post is single response)
     const tlId = `tl-${Date.now()}`;
-    setTimelineStatus({
-      id: tlId,
-      stage: 'ambiguity',
-      message: 'Analyzing request...',
-      startTime: Date.now(),
-    });
+    setTimelineStatuses((prev) => ({
+      ...prev,
+      [tlId]: {
+        id: tlId,
+        stage: 'ambiguity',
+        message: 'Analyzing request...',
+        startTime: Date.now(),
+      }
+    }));
 
     const timelineMessage: Message = {
       id: tlId,
@@ -106,42 +109,99 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
     }, 50);
 
     try {
-      // Direct Fetch to the newly added Mastra bridge route
-      const response = await fetch('/api/mastra/workflow/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Header forwarding for transparent Auth will set cookie relays automatically
-        },
-        body: JSON.stringify({ userQuery, runId }),
-        credentials: 'include',
+      const sseUrl = `/api/mastra/workflow/chat?userQuery=${encodeURIComponent(userQuery)}&runId=${encodeURIComponent(runId)}`;
+      const eventSource = new EventSource(sseUrl);
+      
+      let fullAiText = '';
+      const aiMessageId = `ai-${Date.now()}`;
+      let aiMessageMounted = false;
+
+      // EventSource doesn't support headers natively for Cookie support, but works natively for transparent domains.
+      // If authorization token forwarded cookies are standard, EventSource propagates them securely.
+
+      eventSource.addEventListener('text_delta', (e: any) => {
+         try {
+             const data = JSON.parse(e.data);
+             const delta = data.delta;
+             if (!delta) return;
+
+             if (!aiMessageMounted) {
+               aiMessageMounted = true;
+               fullAiText = delta;
+               setMessages((prev) => [
+                 ...prev,
+                 { id: aiMessageId, type: 'ai', content: delta, timestamp: new Date() },
+               ]);
+             } else {
+               fullAiText += delta;
+               setMessages((prev) =>
+                 prev.map((m) => m.id === aiMessageId ? { ...m, content: fullAiText } : m)
+               );
+             }
+             
+             const sc = scrollContainerRef.current;
+             if (sc) sc.scrollTo({ top: sc.scrollHeight, behavior: 'auto' });
+         } catch {}
       });
 
-      if (!response.ok) {
-        throw new Error(`Mastra Workflow request failed with status: ${response.status}`);
-      }
+      eventSource.addEventListener('status_update', (e: any) => {
+         try {
+             const data = JSON.parse(e.data);
+             if (data.message) {
+                 setTimelineStatuses((prev) => ({
+                     ...prev,
+                     [tlId]: { ...(prev[tlId] || {}), stage: 'execute', message: data.message }
+                 }));
+             }
+         } catch {}
+      });
 
-      const result = await response.json();
+      eventSource.addEventListener('result', (e: any) => {
+         try {
+             const data = JSON.parse(e.data);
+             if (data.response) {
+               if (!aiMessageMounted) {
+                  aiMessageMounted = true;
+                  setMessages((prev) => [
+                    ...prev,
+                    { id: aiMessageId, type: 'ai', content: data.response, timestamp: new Date() }
+                  ]);
+               } else {
+                   setMessages((prev) => prev.map((m) => m.id === aiMessageId ? { ...m, content: data.response } : m));
+               }
+             }
+             setTimelineStatuses((prev) => ({
+                 ...prev,
+                 [tlId]: { ...(prev[tlId] || {}), stage: 'done', message: '' }
+             }));
 
-      setTimelineStatus({ stage: 'done', message: '' });
+             if (!currentConversation) {
+               onNewConversation({ conversationId: runId, userQuery, status: 'completed', createdAt: new Date() });
+             }
+             eventSource.close();
+         } catch {}
+       });
 
-      if (result.status === 'success') {
-        // Append AI response with MdBubbleContent
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `ai-${Date.now()}`,
-            type: 'ai',
-            content: result.response,
-            timestamp: new Date(),
-          },
-        ]);
-        
-        // Notify Parent of a continuous updates on stream
-        if (!currentConversation) {
-            onNewConversation({ conversationId: runId, userQuery, status: 'completed', createdAt: new Date() });
-        }
-      }
+      eventSource.addEventListener('workflow_error', (e: any) => {
+         console.error('SSE Workflow Error Event:', e);
+         try {
+             if (e.data) {
+                 const data = JSON.parse(e.data);
+                 if (data.message) {
+                     setTimelineStatuses((prev) => ({
+                         ...prev,
+                         [tlId]: { ...(prev[tlId] || {}), stage: 'error', message: data.message }
+                     }));
+                 }
+             }
+         } catch {}
+         eventSource.close();
+      });
+
+      // Timeout safety loop closure
+      return () => {
+         eventSource.close();
+      };
 
     } catch (error: any) {
       console.error('Failed to submit Mastra query:', error);
@@ -154,7 +214,10 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
           timestamp: new Date(),
         },
       ]);
-      setTimelineStatus(null);
+      setTimelineStatuses((prev) => ({
+          ...prev,
+          [tlId]: { ...(prev[tlId] || {}), stage: 'error', message: error.message || 'Workflow Request Failed' }
+      }));
     } finally {
       setIsProcessing(false);
     }
@@ -201,8 +264,8 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                   <Lightbulb className="w-5 h-5 text-amber-500 mr-2" />
                   <span className="text-base font-medium text-gray-700">{t('chat.try_asking')}</span>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl mx-auto">
-                  {sampleQueries.slice(0, 4).map((sample, idx) => (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {sampleQueries.map((sample, idx) => (
                     <button
                       key={idx}
                       onClick={() => setQuery(sample)}
@@ -213,6 +276,36 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                   ))}
                 </div>
               </div>
+
+              <div className="flex items-center mb-8">
+                <div className="flex-1 border-t border-gray-200" />
+                <span className="px-4 text-xs text-gray-400">{t('chat.divider_or')}</span>
+                <div className="flex-1 border-t border-gray-200" />
+              </div>
+
+              <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="w-full">
+                <div className="relative">
+                  <textarea
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={t('chat.placeholder')}
+                    className="w-full px-5 py-4 pr-12 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none text-base bg-white shadow-sm"
+                    rows={4}
+                    disabled={isProcessing}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+                    }}
+                  />
+                  <button 
+                    type="button" 
+                    onClick={handleSubmit} 
+                    disabled={!query.trim() || isProcessing} 
+                    className="absolute bottom-3 right-3 p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         ) : (
@@ -233,9 +326,9 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                     </div>
                   </div>
                 )}
-                {message.type === 'timeline' && timelineStatus && timelineStatus.stage !== 'done' && (
+                {message.type === 'timeline' && timelineStatuses[message.id] && (
                   <div className="max-w-2xl mx-auto w-full">
-                    <StreamingTimeline status={timelineStatus} />
+                    <StreamingTimeline status={timelineStatuses[message.id]} />
                   </div>
                 )}
                 {message.type === 'disambiguation' && (
@@ -250,35 +343,38 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
         )}
       </div>
 
-      {/* Input Area */}
-      <div className="border-t border-gray-100 bg-white/80 backdrop-blur-md px-4 py-4 z-20">
-        <div className="max-w-4xl mx-auto">
-          <div className="relative bg-white rounded-xl border border-gray-200 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100/30 shadow-sm transition-all duration-200">
-            <textarea
-              ref={textareaRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={isProcessing ? "Processing response..." : (t('chat.placeholder') as string)}
-              disabled={isProcessing}
-              rows={1}
-              className="w-full px-4 py-3.5 pr-14 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-400 text-sm rounded-xl"
-              style={{ maxHeight: '150px' }}
-            />
-            <button
-              onClick={handleSubmit}
-              disabled={isProcessing || !query.trim()}
-              className={`absolute right-2 bottom-2 p-2 rounded-lg transition-all ${
-                isProcessing || !query.trim()
-                  ? 'bg-gray-50 text-gray-400'
-                  : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
-              }`}
-            >
-              <Send className="w-4 h-4" />
-            </button>
+      {/* Floating Viewport Input Area (Transparent center anchor) */}
+      {!showWelcome && (
+        <div className="bg-transparent px-4 pb-10 pt-4 z-20">
+          <div className="max-w-4xl mx-auto">
+            <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="w-full">
+              <div className="relative bg-white rounded-xl border border-gray-200 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/30 shadow-sm transition-all duration-200">
+                <textarea
+                  ref={textareaRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={isProcessing ? "Processing response..." : (t('chat.placeholder') as string)}
+                  disabled={isProcessing}
+                  rows={4}
+                  className="w-full px-5 py-4 pr-14 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-400 text-base rounded-xl"
+                />
+                <button
+                  type="submit"
+                  disabled={isProcessing || !query.trim()}
+                  className={`absolute right-3 bottom-3 p-2.5 rounded-xl transition-all ${
+                    isProcessing || !query.trim()
+                      ? 'bg-gray-50 text-gray-400'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
+                  }`}
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

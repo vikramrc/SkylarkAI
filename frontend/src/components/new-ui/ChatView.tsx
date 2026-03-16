@@ -444,6 +444,12 @@ const ChatView: React.FC<ChatViewProps> = ({
                 </div>
               </div>
 
+              <div className="flex items-center mb-8">
+                <div className="flex-1 border-t border-gray-200" />
+                <span className="px-4 text-xs text-gray-400">{t('chat.divider_or')}</span>
+                <div className="flex-1 border-t border-gray-200" />
+              </div>
+
               <div className="w-full max-w-3xl mx-auto">
                 <div className="relative">
                   <div className="relative bg-white rounded-xl shadow-xl border border-gray-200 focus-within:border-blue-500 transition-colors duration-200">

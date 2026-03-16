@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CheckCircle2, AlertCircle, Loader2, Circle, ChevronRight, Check, ChevronDown } from 'lucide-react';
 
 // Vertical, centered timeline that ACCUMULATES events per stage (tree view)
 // Messages never vanish; duplicates are suppressed per (stage|messageKey|message)
@@ -37,6 +38,7 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
   const lastKeyRef = useRef<string | null>(null);
   // After a BE re_analyzing event, allow the next 'executing_query' message to appear again
   const allowNextExecuteRepeatRef = useRef<boolean>(false);
+  const [isExpanded, setIsExpanded] = useState(true);
 
   useEffect(() => {
     const id = window.setInterval(() => setSpinnerFrame((p) => (p + 1) % SPINNER_FRAMES.length), 80);
@@ -145,6 +147,24 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
         }
       }
 
+      // Special-case: if general string status is 'error', mark the last item of the list as failed with details
+      if (status.stage === 'error' || status.stage === 'failed') {
+        const errIdx = base.length - 1;
+        if (errIdx >= 0) {
+          const it = base[errIdx];
+          const duration = Math.max(0, Math.floor((now - it.timestamp) / 1000));
+          const nextArr = [...base];
+          nextArr[errIdx] = { 
+            ...it, 
+            forcedError: true, 
+            message: status.message || it.message, 
+            elapsedSeconds: Math.max(it.elapsedSeconds, duration) 
+          };
+          allowNextExecuteRepeatRef.current = true;
+          return nextArr;
+        }
+      }
+
       // Find the last item for this stage to support de-duplication
       let lastIdx = -1;
       for (let i = base.length - 1; i >= 0; i--) {
@@ -217,69 +237,96 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
   const stageLabel = (s: string) => (s === 'ambiguity' ? t('chat.subtle.ambiguity') : s === 'generation' ? t('chat.subtle.generation') : t('chat.subtle.execute'));
   const formatClockTs = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour12: false });
 
+  const MASKED_LOGS: Record<string, string> = {
+    'direct_query_fallback': 'Consulting knowledge base',
+    'budget_query_cost_analysis': 'Analyzing budget constraints',
+    'list_maintenance_activities': 'Mapping maintenance schedules',
+    'fetching_data': 'Retrieving records',
+    'executing_query': 'Querying databases',
+    'analyzing_request': 'Re-evaluating parameters',
+    're_analyzing': 'Recalibrating constraints',
+  };
+
+  const getFriendlyText = (raw: string) => {
+    const norm = raw.trim().toLowerCase();
+    for (const [k, v] of Object.entries(MASKED_LOGS)) {
+      if (norm.includes(k.toLowerCase())) return v;
+    }
+    return raw;
+  };
+
+  const totalSeconds = items.length > 0 
+    ? Math.max(0, Math.floor((nowMs - items[0].timestamp) / 1000)) 
+    : 0;
+
   return (
     <div className="flex justify-center mt-4">
-      <div className="w-full max-w-2xl space-y-6">
-        {STAGES.map((stage, idx) => {
-          const active = status.stage === stage;
-          const completed = activeIdx > -1 && idx < activeIdx;
-          const stageItems = itemsByStage[stage] || [];
-          return (
-            <div key={stage} className="space-y-2 relative">
-              <div className="flex items-center gap-3">
-                {active ? (
-                  <span className={['orb','orb-smooth', 'animate-pulse-glow', (status.activityLevel ?? 0) >= 4 ? 'glow-3' : (status.activityLevel ?? 0) >= 3 ? 'glow-2' : (status.activityLevel ?? 0) >= 2 ? 'glow-1' : 'glow-0'].join(' ')} />
-                ) : completed ? (
-                  <svg className="w-7 h-7 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                ) : (
-                  <span className="inline-block w-7 h-7 rounded-full border-2 border-gray-300" />
+      <div className="w-full max-w-xl bg-white border border-gray-100/80 rounded-2xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] p-5 space-y-5">
+        
+        {/* Header/Timer */}
+        <div className="flex items-center justify-between gap-1.5 text-gray-800 text-sm font-semibold border-b border-gray-50 pb-3 cursor-pointer select-none" onClick={() => setIsExpanded(!isExpanded)}>
+          <div className="flex items-center gap-2">
+            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`} />
+            <span>Thought Process</span>
+          </div>
+          <span className="tabular-nums text-xs text-gray-400">{totalSeconds}s</span>
+        </div>
+
+        {isExpanded && (
+
+        <div className="space-y-2 relative">
+          {items.map((it, idx) => {
+            const isLast = idx === items.length - 1;
+            const textRaw = it.messageKey ? t(it.messageKey) : (it.message ?? '');
+            const text = getFriendlyText(textRaw);
+            const forcedError = (it as any).forcedError === true;
+            const textHasError = (it.messageKey && (it.messageKey.toLowerCase().includes('error') || it.messageKey === 'status.cancelled')) || /^error[:\s]/i.test(it.message || '');
+            const iconIsError = forcedError || textHasError;
+            const isActive = !iconIsError && isLast && status.stage !== 'done';
+
+            return (
+              <div key={it.id} className="relative">
+                {/* Visual Connector Line between nodes */}
+                {!isLast && (
+                  <div className="absolute left-[13px] top-9 h-full w-[2px] bg-gray-100" style={{ zIndex: 1 }}></div>
                 )}
-                <span className={`text-base font-semibold ${active ? 'text-primary-700' : completed ? 'text-green-700' : 'text-gray-500'}`}>{stageLabel(stage)}</span>
-              </div>
 
-              {/* Connector Line */}
-              {idx < STAGES.length - 1 && (
-                <div className={`absolute left-[14px] top-8 bottom-0 w-0.5 -ml-px h-full ${completed ? 'bg-green-200' : 'bg-gray-200'}`} style={{ height: 'calc(100% + 8px)', zIndex: -1 }}></div>
-              )}
+                <div className={`flex items-start gap-3.5 p-3 rounded-xl transition-all ${isActive ? 'bg-gray-50/70 font-medium' : iconIsError ? 'bg-red-50/20 border border-red-100/30' : 'bg-transparent'}`} style={{ zIndex: 10, position: 'relative' }}>
+                  {isActive ? (
+                    <div className="p-1 rounded-full bg-white shadow-sm ring-1 ring-gray-100 flex-shrink-0 mt-0.5">
+                      <Loader2 className="w-4 h-4 text-black animate-spin" />
+                    </div>
+                  ) : iconIsError ? (
+                    <div className="p-1 rounded-full bg-red-50 flex-shrink-0 mt-0.5">
+                      <AlertCircle className="w-4 h-4 text-red-600" />
+                    </div>
+                  ) : (
+                    <div className="p-1 rounded-full bg-black flex-shrink-0 mt-0.5">
+                      <Check className="w-4 h-4 text-white" strokeWidth={3} />
+                    </div>
+                  )}
 
-              {stageItems.length > 0 && (
-                <div className="ml-3.5 pl-6 border-l-2 border-transparent space-y-2 relative">
-                  {stageItems.map((it, i) => {
-                    const isLast = i === stageItems.length - 1;
-                    const next = !isLast ? stageItems[i + 1] : undefined;
-                    const isActiveMessage = active && isLast;
-                    const text = it.messageKey ? t(it.messageKey) : (it.message ?? '');
-                    const forcedError = (it as any).forcedError === true;
-                    const textHasError = (it.messageKey && (it.messageKey.toLowerCase().includes('error') || it.messageKey === 'status.cancelled')) || /^error[:\s]/i.test(it.message || '');
-                    const iconIsError = forcedError || textHasError;
-                    const showSpinner = isActiveMessage && !iconIsError; // spinner for the latest item until a new one arrives
-                    // For non-last items within the same stage, compute seconds from this item's timestamp to the next item's timestamp.
-                    const betweenMsgSeconds = next ? Math.max(0, Math.floor((next.timestamp - it.timestamp) / 1000)) : undefined;
-                    const displaySeconds = showSpinner
-                      ? Math.max(it.elapsedSeconds, Math.max(0, Math.floor((nowMs - it.timestamp) / 1000)))
-                      : (betweenMsgSeconds ?? it.elapsedSeconds);
-                    return (
-                      <div key={it.id} className="flex items-center gap-2 animate-fade-in-up">
-                        <span className="text-gray-400 text-sm">{isLast ? '\u2514\u2500\u2500' : '\u251c\u2500\u2500'}</span>
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <span className={`text-sm ${textHasError ? 'text-red-700' : 'text-gray-900'} whitespace-pre-wrap break-words`}>{text}</span>
-                          {iconIsError ? (
-                            <svg className="w-3.5 h-3.5 text-red-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'relative', top: '1px' }}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                          ) : showSpinner ? (
-                            <span className="text-sm inline-flex items-center" style={{ color: '#8b5cf6', lineHeight: 'inherit', position: 'relative', top: '1px' }} aria-hidden="true">{SPINNER_FRAMES[spinnerFrame]}</span>
-                          ) : (
-                            <svg className="w-3.5 h-3.5 text-green-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'relative', top: '1px' }}><polyline points="20 6 9 17 4 12" /></svg>
-                          )}
-                          <span className="text-xs text-gray-500 ml-auto tabular-nums whitespace-nowrap flex-shrink-0">{formatClockTs(it.timestamp)} · {displaySeconds}s</span>
-                        </div>
+                  <div className="flex-1 min-w-0">
+                    <span className={`text-sm font-medium ${iconIsError ? 'text-red-800' : isActive ? 'text-gray-900' : 'text-gray-600'}`}>
+                      {text}
+                    </span>
+                    {iconIsError && it.message && it.message !== textRaw && (
+                      <div className="text-xs text-gray-500 mt-1.5 bg-gray-50 border border-gray-100/80 rounded-lg px-2.5 py-1.5 max-w-fit shadow-sm">
+                        {it.message.replace(/^error:?\s*/i, '')}
                       </div>
-                    );
-                  })}
+                    )}
+                  </div>
+
+                  <span className="text-xs text-gray-400 tabular-nums flex-shrink-0">
+                    {it.elapsedSeconds}s
+                  </span>
                 </div>
-              )}
-            </div>
-          );
-        })}
+              </div>
+            );
+          })}
+        </div>
+        )}
+
       </div>
     </div>
   );

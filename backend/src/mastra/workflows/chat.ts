@@ -94,9 +94,9 @@ const chatStep = createStep({
 
             console.log(`\x1b[36m[phx-client] Agent Request: orchestrator=${orchestratorProvider}/${queryModel}, cacheKey=${orchestratorCacheKey}, runId=${runId}\x1b[0m`);
 
-            let result;
+            let result: any;
             try {
-                result = await agent.generate(userQuery, {
+                const streamResult = await agent.stream(userQuery, {
                     instructions: orchestrationInstructions,
                     memory: {
                         thread: runId,
@@ -110,10 +110,22 @@ const chatStep = createStep({
                         }
                     }
                 });
-                logUsageBreakdown('orchestrator', (result as any).usage, '[Orchestrator-phx-usage]');
+
+                // Stream word deltas into callback immediately if it exists
+                if (streamResult.textStream) {
+                    for await (const chunk of streamResult.textStream) {
+                        if (inputData?.onChunk) {
+                            inputData.onChunk(chunk);
+                        }
+                    }
+                }
+
+                // Await full buffered output structure for downstream compatibility
+                result = await streamResult.getFullOutput();
                 
-                console.log(`\x1b[33m[Workflow DEBUG] Orchestrator Text:\x1b[0m`, (result as any).text || '[No Text]');
-                console.log(`\x1b[33m[Workflow DEBUG] Tool Results:\x1b[0m`, JSON.stringify((result as any).toolResults || {}, null, 2));
+                logUsageBreakdown('orchestrator', (result as any).usage, '[Orchestrator-phx-usage]');
+                console.log(`\x1b[33m[Workflow DEBUG] Orchestrator Text:\x1b[0m`, (result as any).text?.slice(0, 100) + '...');
+                console.log(`\x1b[33m[Workflow DEBUG] Tool Results (keys):\x1b[0m`, Object.keys((result as any).toolResults || []).join(', '));
             } catch (error: any) {
                 // Only genuine unexpected errors should bubble up.
                 // Ambiguity is now returned as a sentinel value from the tool
@@ -318,7 +330,17 @@ const chatStep = createStep({
                         `;
 
                     try {
-                        const summaryResult = await summarizerAgent.generate(summarizationPrompt);
+                        const summaryStream = await summarizerAgent.stream(summarizationPrompt);
+
+                        if (summaryStream.textStream) {
+                            for await (const chunk of summaryStream.textStream) {
+                                if (inputData?.onChunk) {
+                                    inputData.onChunk(chunk);
+                                }
+                            }
+                        }
+
+                        const summaryResult = await summaryStream.getFullOutput();
 
                         console.log(`[Summarizer] Generated response with ${summarizerModelName}`);
                         result.text = summaryResult.text;

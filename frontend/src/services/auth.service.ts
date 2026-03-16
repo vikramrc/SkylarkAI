@@ -27,8 +27,16 @@ export class AuthService {
   }
 
   async check() {
-    const { data } = await this.client.get('/auth/check');
-    return data as { authenticated: boolean; user?: any; expiresIn?: number };
+    try {
+      const { data } = await this.client.get('/auth/check-auth');
+      return { 
+        authenticated: !!data?.user, 
+        user: data?.user, 
+        expiresIn: data?.expiresIn 
+      };
+    } catch {
+      return { authenticated: false };
+    }
   }
 
   async logout() {

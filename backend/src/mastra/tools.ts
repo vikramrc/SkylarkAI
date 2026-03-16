@@ -14,9 +14,26 @@ export const directQueryFallback = createTool({
   execute: async (input, context) => {
     const userQuery = input?.userQuery || '';
     console.log(`[Mastra Fallback] Calling Direct Query Engine (Streaming)...`);
+    const getRunId = (ctx: any) => {
+        if (!ctx) return null;
+        const rc = ctx.requestContext;
+        if (rc && typeof rc.get === 'function') {
+            const ctxRunId = rc.get('runId');
+            if (ctxRunId) return ctxRunId;
+        }
+        if (typeof ctx.get === 'function') {
+            const ctxRunId = ctx.get('runId');
+            if (ctxRunId) return ctxRunId;
+        }
+        return ctx.runId || ctx.threadId || null;
+    };
+
+    const threadId = getRunId(context);
+    console.log(`[DirectQuery Tool] Extracted runId for status reporting: ${threadId}`);
+
+    let finalData: any = null;
     const startTime = Date.now();
-    let finalData = null;
-    
+
     try {
         if (!serviceBackedPhoenixRuntimeEngine.processUserQueryStream) {
             throw new Error('Direct query engine does not support streaming');
@@ -31,6 +48,12 @@ export const directQueryFallback = createTool({
                 switch (eventName) {
                     case 'status':
                         console.log(`[DirectQuery Status] ${d.stage}: ${d.message}`);
+                        // Relay Status update incrementally to Client Stream
+                        if (threadId) {
+                            import('./workflow-events.js').then(({ emitStatusUpdate }) => {
+                                emitStatusUpdate(threadId, d.message || d.stage);
+                            }).catch(() => {});
+                        }
                         break;
                     case 'llm':
                         if (d.kind === 'start') {
@@ -46,7 +69,7 @@ export const directQueryFallback = createTool({
                         finalData = d;
                         try {
                             const preview = d?.results ? (d.results.length === 0 ? '[]' : JSON.stringify(d.results).slice(0, 251)) : 'No results field';
-                            console.log(`[DirectQuery Result] Received Final Data: ${preview}`);
+                            console.log(`[DirectQuery Result] Received Final Data: ${preview.slice(0, 40)}...`);
                         } catch (logError) {
                             console.log(`[DirectQuery Result] Received Final Data (Preview failed)`);
                         }
@@ -166,7 +189,7 @@ const mcpTools = capabilitiesContract.reduce((acc, cap) => {
                 updatedInput.vesselName = contextVessel;
             }
 
-            console.log(`[Agent Tool] Calling ${toolId} with:`, JSON.stringify(updatedInput, null, 2));
+            console.log(`[Agent Tool] Calling ${toolId} with inputs:`, JSON.stringify(updatedInput, null, 2));
 
             const result = await proxyToolCall(
                 {
