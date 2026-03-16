@@ -90,7 +90,7 @@ const DisambiguationFlow: React.FC<DisambiguationFlowProps> = ({ conversation, o
     try {
       if (useStreaming) {
         if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; }
-        const url = `/phoenix-openai/disambiguate/stream?conversationId=${encodeURIComponent(conversation.conversationId)}&responses=${encodeURIComponent(JSON.stringify(filteredResponses))}`;
+        const url = `/phoenix/disambiguate/stream?conversationId=${encodeURIComponent(conversation.conversationId)}\u0026responses=${encodeURIComponent(JSON.stringify(filteredResponses))}`;
         const es = apiService.createEventSource(url);
         eventSourceRef.current = es;
         setStreamActive(true);

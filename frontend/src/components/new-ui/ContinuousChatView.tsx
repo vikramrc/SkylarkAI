@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Square, Lightbulb } from 'lucide-react';
+import { Send, Square, Lightbulb, MessageSquare } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import MdBubbleContent from './MdBubbleContent';
 import StreamingTimeline from './StreamingTimeline';
@@ -184,23 +184,34 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
         {showWelcome ? (
           <div className="flex-1 h-full flex items-center justify-center p-6 relative overflow-hidden">
             <div className="max-w-3xl w-full text-center z-10">
-              <h2 className="text-3xl font-bold text-gray-900 mb-2 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                {t('chat.welcome_title')}
-              </h2>
-              <p className="text-gray-600 text-base mb-10 max-w-xl mx-auto">
-                Continuous Continuous workflow environment synced with the Mastra workspace context.
-              </p>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl mx-auto">
-                {sampleQueries.slice(0, 4).map((sample, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setQuery(sample)}
-                    className="p-4 text-left bg-white/80 border border-gray-100 rounded-xl hover:border-indigo-300 hover:shadow-sm transition-all text-sm"
-                  >
-                    <span className="text-gray-700">"{sample}"</span>
-                  </button>
-                ))}
+              <div className="mb-8">
+                <div className="inline-flex items-center justify-center w-20 h-20 bg-primary-100 rounded-full mb-5 mx-auto">
+                  <MessageSquare className="w-10 h-10 text-primary-600" />
+                </div>
+                <h2 className="text-3xl font-semibold text-gray-900 mb-3" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  {t('chat.welcome_title')}
+                </h2>
+                <p className="text-gray-600 text-base mb-10 max-w-xl mx-auto">
+                  {t('chat.welcome_body')}
+                </p>
+              </div>
+
+              <div className="mb-8">
+                <div className="flex items-center justify-center mb-5">
+                  <Lightbulb className="w-5 h-5 text-amber-500 mr-2" />
+                  <span className="text-base font-medium text-gray-700">{t('chat.try_asking')}</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl mx-auto">
+                  {sampleQueries.slice(0, 4).map((sample, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setQuery(sample)}
+                      className="p-4 text-left bg-white border border-gray-200 rounded-lg hover:border-primary-300 hover:bg-primary-50 transition-colors duration-200 text-base"
+                    >
+                      <span className="text-gray-700">"{sample}"</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

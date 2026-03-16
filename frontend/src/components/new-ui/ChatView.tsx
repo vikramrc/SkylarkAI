@@ -413,17 +413,20 @@ const ChatView: React.FC<ChatViewProps> = ({
             </div>
 
             <div className="max-w-3xl w-full text-center z-10 relative">
-              <div className="mb-10">
-                <h2 className="text-4xl font-bold text-gray-900 mb-4 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
+              <div className="mb-8">
+                <div className="inline-flex items-center justify-center w-20 h-20 bg-primary-100 rounded-full mb-5 mx-auto">
+                  <MessageSquare className="w-10 h-10 text-primary-600" />
+                </div>
+                <h2 className="text-3xl font-semibold text-gray-900 mb-3" style={{ fontFamily: 'Outfit, sans-serif' }}>
                   {t('chat.welcome_title')}
                 </h2>
-                <p className="text-gray-600 text-lg mb-12 max-w-2xl mx-auto leading-relaxed">
+                <p className="text-gray-600 text-base mb-10 max-w-2xl mx-auto">
                   {t('chat.welcome_body')}
                 </p>
               </div>
-
-              <div className="mb-12">
-                <div className="flex items-center justify-center mb-6">
+ 
+              <div className="mb-8">
+                <div className="flex items-center justify-center mb-5">
                   <Lightbulb className="w-5 h-5 text-amber-500 mr-2" />
                   <span className="text-base font-medium text-gray-700">{t('chat.try_asking')}</span>
                 </div>
@@ -432,10 +435,10 @@ const ChatView: React.FC<ChatViewProps> = ({
                     <button
                       key={idx}
                       onClick={() => handleSampleQueryClick(sample)}
-                      className="group p-5 text-left bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl hover:border-primary-300 hover:bg-white hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
+                      className="p-4 text-left bg-white border border-gray-200 rounded-lg hover:border-primary-300 hover:bg-primary-50 transition-colors duration-200 text-base"
                       disabled={isProcessing}
                     >
-                      <span className="text-base text-gray-700 group-hover:text-primary-700 transition-colors">"{sample}"</span>
+                      "{sample}"
                     </button>
                   ))}
                 </div>

@@ -19,9 +19,6 @@ export function createMastraWorkflowRouter() {
                 ? req.headers.authorization.split(' ')[1] 
                 : (match ? match[2] : undefined);
 
-            console.log(`\x1b[35m[Mastra Route DEBUG] Raw Cookie:\x1b[0m`, cookies || '[None]');
-            console.log(`\x1b[35m[Mastra Route DEBUG] Extracted authToken:\x1b[0m`, authToken || '[Undefined]');
-
             if (!userQuery) {
                 return res.status(400).json({ message: 'userQuery is required' });
             }

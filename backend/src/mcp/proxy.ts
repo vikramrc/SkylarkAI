@@ -13,7 +13,7 @@ function hasProvidedValue(value: any) {
  * It is 100% agnostic. Needs token passed, or it takes the one attached to the session.
  */
 export async function proxyToolCall(toolDef: any, args: Record<string, any>, token: string) {
-    const backendUrl = process.env.PHOENIX_CLOUD_BE_URL || 'https://localhost:3000';
+    const backendUrl = process.env.PHOENIX_CLOUD_URL || 'https://localhost:3000';
     
     // Safety check strictly to inform the LLM/User if they forgot required arguments.
     // Do not hardcode organizationID here because the contract may legitimately allow
@@ -27,21 +27,43 @@ export async function proxyToolCall(toolDef: any, args: Record<string, any>, tok
         };
     }
     
-    if (!token) {
-        return {
-            content: [{ type: "text", text: "Error: No authentication token was provided by the MCP Client connection." }],
-            isError: true
-        };
+    try {
+        const headers: Record<string, string> = {};
+
+    if (token) {
+        const isCookieString = token.includes(';') || token.includes('=');
+        if (isCookieString) {
+            headers['Cookie'] = token;
+        } else {
+            headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+            
+            // Extract organizationID from token if available and not already provided
+            try {
+                const tokenString = token.startsWith('Bearer ') ? token.split(' ')[1] : token;
+                if (tokenString) {
+                    const tokenParts = tokenString.split('.');
+                    if (tokenParts.length === 3) {
+                        const payloadPart = tokenParts[1];
+                        if (payloadPart) {
+                            const payload = JSON.parse(Buffer.from(payloadPart, 'base64').toString());
+                            if (payload.iss && !args.organizationID && !args.organizationShortName && !args.organizationName) {
+                                args.organizationID = payload.iss;
+                                console.log(`[Proxy] Automatically injected organizationID from token: ${payload.iss}`);
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                // Safe to ignore if not a valid JWT or parse fails
+            }
+        }
     }
 
-    try {
         const response = await axios({
             method: toolDef._originalMethod || 'GET',
             url: `${backendUrl}${toolDef._originalPath}`,
             params: args,
-            headers: {
-                Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`
-            },
+            headers,
             httpsAgent: new https.Agent({ rejectUnauthorized: false })
         });
         

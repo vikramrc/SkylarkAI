@@ -9,19 +9,21 @@ dotenv.config();
  * Fetches the MCP capability contract from PhoenixCloudBE
  * and maps it to the standard format required by @modelcontextprotocol/sdk.
  */
-export async function syncCapabilities() {
-    const backendUrl = process.env.PHOENIX_CLOUD_BE_URL || 'https://localhost:3000';
-    // We send a dummy string or standard org ID to get the capabilities.
-    // The capabilities endpoint might require an org ID. Let's use Halcyon's org ID from earlier or just a dummy one.
-    const orgId = process.env.PHOENIX_CLOUD_ORGANIZATION_ID || '67eedd60c1ceddb21d80ad45';
+export async function syncCapabilities(orgId?: string) {
+    const backendUrl = process.env.PHOENIX_CLOUD_URL || 'https://localhost:3000';
+    
+    // Use passed orgId or fallback to environment (no hardcoded fallback)
+    const currentOrgId = orgId || process.env.PHOENIX_CLOUD_ORGANIZATION_ID;
     
     try {
+        const params: any = {};
+        if (currentOrgId) {
+            params.organizationID = currentOrgId;
+        }
+
         // Warning: Localhost with self-signed certs might fail in Node.js, we should allow unauthorized if needed.
         const response = await axios.get(`${backendUrl}/api/mcp/capabilities`, {
-            params: { organizationID: orgId },
-            headers: {
-                Authorization: `Bearer ${process.env.PHOENIX_CLOUD_PROXY_TOKEN}`
-            },
+            params,
             httpsAgent: new https.Agent({ rejectUnauthorized: false })
         });
         

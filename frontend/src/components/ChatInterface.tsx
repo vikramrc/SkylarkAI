@@ -100,7 +100,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onNewConversation, onConv
 
     if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; }
 
-    const es = apiService.createEventSource(`/phoenix-openai/query/stream?userQuery=${encodeURIComponent(query.trim())}`);
+    const es = apiService.createEventSource(`/phoenix/query/stream?userQuery=${encodeURIComponent(query.trim())}`);
     eventSourceRef.current = es;
 
     let done = false;

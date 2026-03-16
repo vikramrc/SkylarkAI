@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import axios from 'axios';
+import https from 'https';
 import { setupMcpRoutes } from './mcp/server.js';
 import {
     createPhoenixOpenAiResponseRouter,
@@ -86,8 +88,8 @@ function logStartupConfig(port: number): void {
         endpoints: {
             MCP_STREAMABLE: `${baseUrl}/mcp`,
             MCP_SSE_LEGACY: `${baseUrl}/mcp/sse`,
-            PHOENIX_API: `${baseUrl}/api/phoenix-openai`,
-            PHOENIX_QUERY_STREAM: `${baseUrl}/api/phoenix-openai/query/stream`,
+            PHOENIX_API: `${baseUrl}/api/phoenix`,
+            PHOENIX_QUERY_STREAM: `${baseUrl}/api/phoenix/query/stream`,
         },
     };
 
@@ -151,11 +153,48 @@ app.use((req, _res, next) => {
     next();
 });
 
+// Core Auth Proxy Pass-through to PhoenixCloudBE
+app.use('/api/auth', async (req, res) => {
+    try {
+        const backendUrl = process.env.PHOENIX_CLOUD_URL || 'https://localhost:3000';
+        let targetUrl = `${backendUrl}/api/auth${req.url}`;
+
+        // Custom Alias Translations
+        if (req.url === '/check') {
+            targetUrl = `${backendUrl}/api/auth/check-auth`;
+        } else if (req.url === '/login') {
+            const orgId = process.env.PHOENIX_CLOUD_ORGANIZATION_ID || '67eedd60c1ceddb21d80ad45';
+            targetUrl = `${backendUrl}/api/users/${orgId}/login`;
+        } else if (req.url === '/captcha/generate' || req.url === '/captcha/refresh') {
+            targetUrl = `${backendUrl}/api/users${req.url}`;
+        }
+
+        const response = await axios({
+            method: req.method,
+            url: targetUrl,
+            data: req.method !== 'GET' ? req.body : undefined,
+            params: req.method === 'GET' ? req.query : undefined,
+            headers: {
+                ...req.headers as any,
+                host: undefined
+            },
+            httpsAgent: new https.Agent({ rejectUnauthorized: false })
+        });
+        
+        if (response.headers['set-cookie']) {
+            res.set('set-cookie', response.headers['set-cookie']);
+        }
+        res.status(response.status).json(response.data);
+    } catch (error: any) {
+        res.status(error.response?.status || 500).json(error.response?.data || { message: error.message });
+    }
+});
+
 // Mount MCP routes
 setupMcpRoutes(app);
 
 // Mount Phoenix one-shot runtime routes
-app.use('/api/phoenix-openai', createPhoenixOpenAiResponseRouter(serviceBackedPhoenixRuntimeEngine));
+app.use('/api/phoenix', createPhoenixOpenAiResponseRouter(serviceBackedPhoenixRuntimeEngine));
 
 // Mount Mastra workflow routes
 app.use('/api/mastra', createMastraWorkflowRouter());
@@ -166,7 +205,7 @@ app.listen(PORT, () => {
     logStartupConfig(PORT);
     console.log(`📍 MCP Streamable Endpoint: http://localhost:${PORT}/mcp`);
     console.log(`📍 MCP Legacy SSE Endpoint: http://localhost:${PORT}/mcp/sse`);
-    console.log(`📍 Phoenix API Endpoint: http://localhost:${PORT}/api/phoenix-openai`);
-    console.log(`📍 Phoenix Query Stream: http://localhost:${PORT}/api/phoenix-openai/query/stream`);
+    console.log(`📍 Phoenix API Endpoint: http://localhost:${PORT}/api/phoenix`);
+    console.log(`📍 Phoenix Query Stream: http://localhost:${PORT}/api/phoenix/query/stream`);
     console.log(`============================================\n`);
 });

@@ -20,8 +20,18 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/api/auth': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api/phoenix': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        secure: false,
+      },
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'https://localhost:3000',
         changeOrigin: true,
         secure: false,
       },
