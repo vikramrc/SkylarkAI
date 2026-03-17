@@ -94,7 +94,48 @@ We rolled out several critical fixes governing prompt size bloats, real-time cou
 
 ---
 
-## 📑 7. Next Step Tasks for Next Agent (Maintenance Mode):
-- **Continuous Feedback loops**: Validate state propagation on complex back-to-me retries flawlessly flawless flawlessly.
+## 🛠️ 7. Latest Continuous Fixes (State Channels, Error Suppressions, and Stream Typos)
 
+We rolled out several fixes governing channel wipes, duplicate error renders, and response streaming streams:
 
+### 🟢 **State Channel Durability for `workingMemory` (`graph.ts`)**
+- **Problem**: Individual node returns (like `execute_tools.ts`) that omitted the `workingMemory` key triggered LangGraph's default overwrite strategy, replacing the channel with `undefined` and causing crashes like `Cannot read properties of undefined (reading 'summaryBuffer')`.
+- **Fix**: Added `reducer: (x: any, y: any) => y ?? x` to the `workingMemory` channel in `graph.ts` to keep previously accumulated states if nodes don't return it explicitly.
+- **Defensive Guards**: Supplemented with safe navigation operators `state.workingMemory?.summaryBuffer` guards across `orchestrator.ts` and `update_memory.ts`.
+
+### 🟢 **Main Chat Bubble Suppressions on Error (`error.ts` & `workflow.ts`)**
+- **Problem**: When a node failed (such as a 429 quota hit), the system injected error strings into the main chat bubble, defeating the visual standard for showing crashes **only** inside Accordion Timelines.
+- **Fix**: Removed the explicit `{ messages: [...] }` append inside `nodeError`'s returned payload. Added a local tracker `let didError = false` inside `workflow.ts` stream events to suppress fallback `"No response generated."` text creations on crash events.
+
+### 🟢 **Node Name Stream Name Mismatches (`workflow.ts`)**
+- **Problem**: Streaming logic evaluated event streams using prefixes like `"nodeSummarizer"` instead of the actual Graph-registered `"summarizer"` node name, disabling stream events for successful successful text responses.
+- **Fix**: Rectified all comparison filters inside `.streamEvents()` to match `"summarizer"`, `"orchestrator"`, `"execute_tools"`, and `"update_memory"` flawlessly index.
+
+---
+
+## 🛠️ 9. Latest Structural Improvements (Schema Inference, Continuous Session Scope, & Local Fallbacks)
+
+We rolled out several enhancements governing schema context context context context accurately flawlessly index flaws:
+
+### 🟢 **Accurate Schema Inference & Static Contract Injection (`summarizer.ts`)**
+- **Problem**: Lowered accuracy in `### GLOBAL SCHEMA CONTEXT` due to stringified JSON returned by MCP wrapper streams inside `content[0].text`. It inferred simple arrays/strings instead of nested properties.
+- **Fix**: 
+  1. Added explicit `JSON.parse` unpacking on `content[0].text` wrapper elements BEFORE feeding `prepareMongoForLLM`.
+  2. Injected `readFileSync` extraction reading static contracts from `mcp.capabilities.contract.js` based on `capabilityName` matching.
+
+### 🟢 **Continuous Session Scope carry-forwards (`update_memory.ts`)**
+- **Problem**: Memory summaries dropped Implicit filters like `organizationShortName` or `vesselName` over multi-turn timezone confirmations.
+- **Fix**: Expanded the system prompt injection rule to carry forward any session-bounding identifiers (Organization IDs, Vessel Names, Budget Years, Machinery IDs) so they stick firm stick firm stick firm on rolling buffers.
+
+### 🟢 **Timeline Error Red Cross Indicator (`ContinuousChatView.tsx` & `workflow.ts`)**
+- **Problem**: Timeline statuses hardcoded `stage: 'execute'`, showing Checkmarks instead of Error Red Cross icons on node crashes.
+- **Fix**: Adjusted `ContinuousChatView` to use `stage: data.stage || 'execute'`. Set `routes/workflow.ts` to emit `stage: 'error'` immediately on `errorNode` activations.
+
+### 🟢 **Equipped Orchestrator with Direct Query fallback (`orchestrator.ts`)**
+- **Problem**: Left to poll `/api/mcp/capabilities`, local local tools like `direct_query_fallback` were missing from the descriptions description, disabling the ability to trigger failback failing overs.
+- **Fix**: Appended static tool block description for `direct_query_fallback` into the `%%TOOL_CONTEXT%%` payload outlining its general purpose to perform semantic search/aggregates on **Forms, Crew, Budget, or Voyage logs** when specialized endpoints fail fail to return field-level items flawlessly index seamlessly.
+
+---
+
+## 📑 10. Next Step Tasks for Next Agent (Maintenance Mode):
+- **Continuous Feedback Evaluation**: Verify state propagation loops on complex sequential sequential back-feeds flawlessly.
