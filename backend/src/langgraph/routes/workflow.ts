@@ -43,6 +43,7 @@ export function createLangGraphWorkflowRouter() {
                 });
 
                 let assistantResponse = "";
+                let didError = false; // 🟢 Track if any node triggered error triggers flaws!
 
                 for await (const event of eventStream) {
                     // 🟢 A. Status Updates for Nodes
@@ -50,11 +51,14 @@ export function createLangGraphWorkflowRouter() {
                         const nodeName = event.metadata.langgraph_node;
                         let statusMessage = "Processing...";
                         
-                        if (nodeName === "nodeOrchestrator") statusMessage = "Orchestrating tools... 🔍";
-                        if (nodeName === "nodeExecuteTools") statusMessage = "Executing Parallel Tools... 🛠️";
-                        if (nodeName === "nodeUpdateMemory") statusMessage = "Updating Observational Memory... 🧠";
-                        if (nodeName === "nodeSummarizer") statusMessage = "Finalizing Analysis... 📝";
-                        if (nodeName === "errorNode") statusMessage = "Explaining Error... 🚨";
+                        if (nodeName === "orchestrator") statusMessage = "Orchestrating tools... 🔍";
+                        if (nodeName === "execute_tools") statusMessage = "Executing Parallel Tools... 🛠️";
+                        if (nodeName === "update_memory") statusMessage = "Updating Observational Memory... 🧠";
+                        if (nodeName === "summarizer") statusMessage = "Finalizing Analysis... 📝";
+                        if (nodeName === "errorNode") {
+                            statusMessage = "Explaining Error... 🚨";
+                            didError = true; 
+                        }
 
                         res.write(`event: status_update\ndata: ${JSON.stringify({ message: statusMessage })}\n\n`);
                     }
@@ -67,7 +71,7 @@ export function createLangGraphWorkflowRouter() {
 
                     // 🟢 B. Word-by-Word Streaming from Summarizer OR Error Node LLMs
                     if (event.event === "on_chat_model_stream" && 
-                        (event.metadata?.langgraph_node === "nodeSummarizer" || event.metadata?.langgraph_node === "errorNode")) {
+                        (event.metadata?.langgraph_node === "summarizer" || event.metadata?.langgraph_node === "errorNode")) {
                         const chunk = event.data.chunk;
                         if (chunk && chunk.content) {
                             const text = String(chunk.content);
@@ -83,7 +87,9 @@ export function createLangGraphWorkflowRouter() {
                     const finalMessages = finalState.values?.messages || [];
                     const lastMsg = finalMessages[finalMessages.length - 1];
 
-                    if (!assistantResponse && lastMsg && lastMsg.content) {
+                    const isAiMessage = (lastMsg as any)._getType && (lastMsg as any)._getType() === "ai";
+
+                    if (!assistantResponse && lastMsg && lastMsg.content && isAiMessage) {
                         assistantResponse = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
                     }
                 } catch (stateErr) {
@@ -91,7 +97,7 @@ export function createLangGraphWorkflowRouter() {
                 }
 
                 if (!assistantResponse) {
-                    assistantResponse = "No response generated.";
+                    assistantResponse = didError ? "" : "No response generated.";
                 }
 
                 res.write(`event: result\ndata: ${JSON.stringify({

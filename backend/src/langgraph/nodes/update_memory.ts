@@ -36,7 +36,7 @@ Your output will form the entire rolling Observational Memory buffer for subsequ
 
     const promptMessages = [
         { role: "system", content: systemPrompt } as any,
-        { role: "user", content: `[Previous Memory]:\n${state.workingMemory.summaryBuffer || "None"}\n\n[Latest Tool Results]:\n${resultsStr}` }
+        { role: "user", content: `[Previous Memory]:\n${state.workingMemory?.summaryBuffer || "None"}\n\n[Latest Tool Results]:\n${resultsStr}` }
     ];
 
     console.log(`[LangGraph UpdateMemory] --- PROMPT SENT TO LLM ---`);
@@ -47,10 +47,10 @@ Your output will form the entire rolling Observational Memory buffer for subsequ
 
         console.log(`[LangGraph UpdateMemory Output]`, response.content);
 
-        const updatedBuffer = response.content ? String(response.content) : state.workingMemory.summaryBuffer;
+        const updatedBuffer = response.content ? String(response.content) : state.workingMemory?.summaryBuffer;
         
         const updatedMemory = {
-            ...state.workingMemory,
+            ...(state.workingMemory || { activeTopics: [], extractedEntities: {} }),
             summaryBuffer: updatedBuffer
         };
 

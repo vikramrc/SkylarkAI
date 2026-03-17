@@ -9,7 +9,7 @@ export async function nodeError(state: SkylarkState): Promise<Partial<SkylarkSta
     const errorMessage = state.error || "An unknown error occurred.";
     
     return {
-        messages: [{ role: "assistant", content: `⚠️ **System Error**: ${errorMessage}` } as any],
+        // 🟢 Suppressed messages append so it doesn't pollute the dialogue bubble flawless!
         error: undefined // Clear error flag so it completes flawlessly flawless.
     };
 }

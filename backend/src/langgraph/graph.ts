@@ -19,6 +19,7 @@ const workflow = new StateGraph<SkylarkState>({
       default: () => [],
     },
     workingMemory: {
+        reducer: (x: any, y: any) => y ?? x, // 🟢 Keep old memory if a node doesn't return it
         default: () => ({ activeTopics: [], extractedEntities: {}, summaryBuffer: "" }),
     },
     toolCalls: { default: () => [] },

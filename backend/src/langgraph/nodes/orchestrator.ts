@@ -27,7 +27,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         modelName: process.env.MASTRA_ORCHESTRATOR_MODEL || "gpt-5-mini",
     }).withStructuredOutput(orchestratorSchema);
 
-    const memoryContext = state.workingMemory.summaryBuffer 
+    const memoryContext = state.workingMemory?.summaryBuffer 
         ? `\n[Context from Previous Moves]: ${state.workingMemory.summaryBuffer}` 
         : "";
 
@@ -105,7 +105,13 @@ You are currently on a follow-up turn investigating further based on previous to
     promptMessages.push(...state.messages);
 
     console.log(`[LangGraph Orchestrator] --- PROMPT SENT TO LLM ---`);
-    console.log(JSON.stringify(promptMessages, null, 2));
+    const promptJson = JSON.stringify(promptMessages, null, 2);
+    const coloredLogs = promptJson
+        .replace(/"### OBSERVATIONAL MEMORY CONTEXT\\n"/g, `"\x1b[35m### OBSERVATIONAL MEMORY CONTEXT\x1b[0m\\n"`)
+        .replace(/\\n\[Context from Previous Moves\]:/g, `\\n\x1b[36m[Context from Previous Moves]\x1b[0m:`)
+        .replace(/### 🔄 SEQUENTIAL INVESTIGATION/g, `\x1b[35m### 🔄 SEQUENTIAL INVESTIGATION\x1b[0m`);
+    
+    console.log(coloredLogs);
 
     let response: any;
     try {
