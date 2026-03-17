@@ -15,7 +15,7 @@ import { nodeError } from "./nodes/error.js";
 const workflow = new StateGraph<SkylarkState>({
   channels: {
     messages: {
-      reducer: (x: any[], y: any[]) => x.concat(y), // Standard LangChain append
+      reducer: (x: any[], y: any[]) => x.concat(y).slice(-6), // 🟢 Keep last 6 items (3 full turns)
       default: () => [],
     },
     workingMemory: {

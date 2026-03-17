@@ -37,15 +37,6 @@ export function createLangGraphWorkflowRouter() {
                 // 2. Stream LangGraph Events
                 const eventStream = (skylarkGraph as any).streamEvents({
                     messages: [new HumanMessage(userQuery)],
-                    workingMemory: { 
-                        activeTopics: [], 
-                        extractedEntities: {}, 
-                        summaryBuffer: "" 
-                    },
-                    toolCalls: [],
-                    toolResults: {},
-                    feedBackVerdict: 'SUMMARIZE',
-                    iterationCount: 0
                 }, {
                     version: "v2",
                     configurable: { thread_id: currentRunId }

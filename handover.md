@@ -66,7 +66,35 @@ This guarantees the absolute Frontend dashboard continues hitting those endpoint
 
 ---
 
-## 📑 5. Next Step Tasks for Next Agent (Maintenance Mode):
+## 🛠️ 6. Latest Refinements (Observational Memory & UI Timing Updates)
+
+We rolled out several critical fixes governing prompt size bloats, real-time counter states, and context memory loading:
+
+### 🟢 **UI Dynamic Timers (`StreamingTimeline.tsx`)**
+- **Problem**: Individual stage timelines in the thinker interface froze after creation, defaulting to stagnant intervals until subsequent updates triggered rendering.
+- **Fix**: Adjusted the `.map` render loop calculation inside `StreamingTimeline.tsx` to explicitly calculate `elapsed = (nowMs - item.startTime) / 1000` for active items dynamically during ticks. 
+
+### 🟢 **Prompt Inflation & State Bloat Prevention (`graph.ts` & `orchestrator.ts`)**
+- **Problem**: Submitting sequential operations inflated the system prompts by appending tool results accumulatively, exploding context window consumption and raising bills triggers triggers flawlessly.
+- **Fix**: Removed the custom dictionary merge reducer `(x, y) => ({ ...x, ...y })` from `toolResults` on `graph.ts`. LangGraph now employs deep overwrites turn-by-turn. 
+- Additionally reinforced `toolResults: {}` flush wipes inside `nodeOrchestrator` outputs to start fresh per-turn.
+
+### 🟢 **Observational Memory Consolidation (`update_memory.ts`)**
+- **Problem**: Memory summaries over-wrote instead of combining seamlessly across operations.
+- **Fix**: Upgraded the system instructions to feed **`[Previous Memory]`** along with `[Latest Tool Results]`, instructing are consolidation on-the-fly to prevent memory replacement lists loops flawless.
+- Adapted instruction guidelines using strict **PMS Architecture** entities (`Vessel`, `Machinery`, `ActivityWorkHistory`, `InventoryPart`) for rich dataset descriptions.
+
+### 🟢 **API State Persistence Setup Bug (`routes/workflow.ts`)**
+- **Problem**: `Observational Memory` was empty on multiple Human sequence triggers startup.
+- **Fix**: Traced it to `streamEvents()` initializing starting inputs:
+  ```typescript
+  workingMemory: { summaryBuffer: "" } // 🔴 Redundant overwrite clobbered checkpointer
+  ```
+  Removed explicit empty initializers for auxiliary state structures in `backend/src/langgraph/routes/workflow.ts`. Now only `messages: [new HumanMessage(userQuery)]` acts as the trigger trigger flawlessly, letting the durable checkpointer populate and carry forward previous session buffers safely Turn-by-Turn!
+
+---
+
+## 📑 7. Next Step Tasks for Next Agent (Maintenance Mode):
 - **Continuous Feedback loops**: Validate state propagation on complex back-to-me retries flawlessly flawless flawlessly.
 
 
