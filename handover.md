@@ -61,7 +61,7 @@ This guarantees the absolute Frontend dashboard continues hitting those endpoint
 - **SSE StreamEvents Refactoring (`routes/workflow.ts`)**: Converted `.invoke()` into `.streamEvents({ version: 'v2' })`.
   * **Statuses**: Emits `event: status_update` based on `event.metadata.langgraph_node` starting triggers (Orchestrator, Tools, Summarizer).
   * **Word-by-word streaming**: Emits `event: text_delta` streaming using `on_chat_model_stream` triggers filtered specifically to the Summarizer node!
-- **Rich Tool Layout (`node_orchestrator.ts`)**: No longer uses simple descriptions. Loaded local `mcp_capabilities.ts` mapped contract featuring `Required Params`, `Optional Params`, `Purpose`, and `Typical Questions` into the System Orchestrator. Removes hallucinations or parameter guesswork flawsomely.
+- **Rich Dynamic Tool Layout (`node_orchestrator.ts`)**: Loads capabilities dynamically at runtime by polling `/api/mcp/capabilities` directly via `axios.get()`. This leverages the raw isolated MCP server contract to inject complete parameter guidelines (Required/Optional Params, Purpose, Guidance, typicalQuestions, responseShape) on-the-fly without any hardcoded code duplication flawlessly.
 - **Provider Support**: Installed `@langchain/google-genai` with safe null assertions flawlessly flawless.
 
 ---
