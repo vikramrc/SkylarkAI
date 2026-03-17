@@ -283,6 +283,9 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
             const textHasError = (it.messageKey && (it.messageKey.toLowerCase().includes('error') || it.messageKey === 'status.cancelled')) || /^error[:\s]/i.test(it.message || '');
             const iconIsError = forcedError || textHasError;
             const isActive = !iconIsError && isLast && status.stage !== 'done';
+            const elapsed = isActive 
+              ? Math.max(it.elapsedSeconds, Math.floor((nowMs - it.timestamp) / 1000)) 
+              : it.elapsedSeconds;
 
             return (
               <div key={it.id} className="relative">
@@ -318,7 +321,7 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
                   </div>
 
                   <span className="text-xs text-gray-400 tabular-nums flex-shrink-0">
-                    {it.elapsedSeconds}s
+                    {elapsed}s
                   </span>
                 </div>
               </div>

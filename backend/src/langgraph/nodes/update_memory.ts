@@ -28,12 +28,15 @@ export async function nodeUpdateMemory(state: SkylarkState): Promise<Partial<Sky
     }
 
     const resultsStr = JSON.stringify(state.toolResults, null, 2);
-    const systemPrompt = `You are the Skylark Memory Controller. 
-Based on the latest tool results below, provide a short 1-2 sentence context summary (active entities, vessel triggers) to append to our Observational Memory context. Do not hallucinate.`;
+    const systemPrompt = `You are the Skylark PMS (Planned Maintenance System) Observational Memory Controller.
+Based on the Previous Memory and the Latest Tool Results, provide a single consolidated, cumulative context summary (e.g., active vessels, equipment inspected, or list counts) for the investigation trail.
+Reference canonical PMS entities where applicable: Vessel, Machinery, Component, ActivityWorkHistory (Work History), InventoryPart (Spares/Parts), Procurement (PurchaseOrder), or Forms.
+
+Your output will form the entire rolling Observational Memory buffer for subsequent tool triggers. Keep it extremely concise (5-6 sentences or 6-7 bullet points max) to avoid inflating context token sizes. Do not hallucinate data that wasn't in the tool responses.`;
 
     const promptMessages = [
         { role: "system", content: systemPrompt } as any,
-        { role: "user", content: `Latest Tool Results:\n${resultsStr}` }
+        { role: "user", content: `[Previous Memory]:\n${state.workingMemory.summaryBuffer || "None"}\n\n[Latest Tool Results]:\n${resultsStr}` }
     ];
 
     console.log(`[LangGraph UpdateMemory] --- PROMPT SENT TO LLM ---`);
