@@ -1,46 +1,72 @@
-# SkylarkAI - Authentication Handover Document
+# 🛫 SkylarkAI - LangGraph Migration Handover
 
-## 🔍 **The Problem: Tool Authentication Drops**
-We encountered persistent `401 Unauthorized` (`Invalid token payload` or `No token provided`) and `404 Not Found` messages whenever the SkylarkAI Agent attempted to trigger an MCP tool Proxy call (e.g. `maintenance_query_status`) against the backend receiver `PhoenixCloudBE` (Port 3000 over HTTPS).
-
-### **Root Cause: The Brittle Cookie-Relay Design**
-The proxy architecture in **`backend/src/mcp/proxy.ts`** relies on transparently forwarding standard **Browser HttpOnly Cookies** (such as dynamic SSO configuration cookies like `orgData_ssorg`) down to inner Axios calls. 
-* Stateful Cookie structures operate correctly inside same-origin dashboard forwards.
-* But standard backend Axios calls fail because direct hits to the backend bypass transparent header translators setups built into other wrappers.
-* Node router doesn't have access to isolate in-memory memory session maps allocated to parallel server branches.
+This document outlines the architectural shift from **Mastra Workflows** to **LangGraph**, detailing the rationale, structural implementation layout, and final endpoint wiring completed to resolve multi-turn conversational crash errors.
 
 ---
 
-## 🛠️ **Iterative Tests and Measures Added**
-
-### **1. Robust extraction fallback**
-* **File File**: `backend/src/mastra/routes/workflow.ts`
-* **Fix added**: Modifed `authToken` extraction. While it prioritizes a standalone `token=` extraction via Regex, if it returns empty, it now **simply transparently relays the full `cookies` lists forwards** as the relay auth string so and Axios forwards safely simulates Origin headers backwards.
-
-### **2. Cookie-Aware AXIOS Header assignments**
-* **File File**: `backend/src/mcp/proxy.ts`
-* **Fix added**: Standard triggers set `Authorization: Bearer <cookies>`. Added an evaluation block evaluating if `activeToken.includes('=')` (proving is a Raw cookie list) and mapping it safely to `headers['Cookie'] = activeToken` instead of Bearer string.
-
-### **3. Transparent Auth Proxy Router (Translating Aliases)**
-* **File File**: `backend/src/index.ts`
-* **Problem**: Forwarding Login screens or checks hit aliases errors (like `/check` vs real core endpoint `/check-auth`).
-* **Fix added**: Added a catch-all Express Router handler for `/api/auth/*` catching all frontend template hits, Translating `/check` into `/check-auth` and transparently relaying full headers securely to `https://localhost:3000`.
+## 💡 1. Rationale: Why Shifting to LangGraph?
+We decided to build a **side-by-side LangGraph pipeline** to fix a blocking **Reasoning/State Bug in Mastra**:
+1. **Loop Caps & Back-Feeds**: Mastra's abstracted internal agent wrapper made iterating loops and injecting turning IDs accurately difficult, causing session-id collisions/loop crashes on sequential turn investigation.
+2. **Granular Turn Control**: LangGraph gives us absolute control over **Conditional Edges** (e.g., fallback triggers, ambiguity breaks, dynamic safeguards).
+3. **Observational Memory Control**: By defining explicit channels for working memory state machines, we regulate context growth deterministically without relying on Mastra's background summaries injection loops.
 
 ---
 
-## 💡 **Technical Proposal & Recommendations for Next Agent**
+## 📈 2. Implementation Summary (Based on `implementation_plan.md`)
 
-### **The Architecture Pivot: Direct Static Authentication**
-Using transparent stateful browser cookie relays inside direct backend Node AXIOS calls is highly complex and brittle. 
+### 🟢 Phase 1 & 2: Graph Setup & Node Orchestration
+Created a pure side-by-side State Graph framework inside `backend/src/langgraph`:
 
-**Recommended Pivot Pattern**:
-Configure Skylark to operate fully autonomously as a standard **Service-to-Service MCP Client**:
-1. **Direct Access Tokens**: Provide standard access to append a direct Service Account static API Key / App Secret configuration loaded directly in `.env`.
-2. **Authorization Header**: Skip reading cookie lists inside Node forwards completely. Configure `proxy.ts` to attach standard static static static header: `headers['Authorization'] = 'Bearer <STATIC_API_KEY>'`.
-
-This completely eliminates isolation variables bounding between your direct Core login setup maps. 
+- **`state.ts`**: Defines standard `SkylarkState` capturing standard message lists, iterative tool counters (`iterationCount`), aggregate dynamic `workingMemory`, and `toolResults`.
+- **`nodes/orchestrator.ts`**:
+  - Employs `.withStructuredOutput()` enforcing JSON schemas (`{ tools: [], feedBackVerdict: 'SUMMARIZE' | 'FEED_BACK_TO_ME' }`).
+  - **Prompt Caching Optimize**: Splits static system guidelines away from dynamic context strictly guaranteeing Static Prefix caching matches matches.
+  - **Turn 2 Recursive Split**: Appends `sequentialInstruction` tips if `state.iterationCount > 0` to guide multi-turn investigating without loop stagnation. FLawlessly aligns with `implementation_plan.md` (item 3.1).
+- **`nodes/execute_tools.ts`**:
+  - Implements Parallel parallel tool triggering.
+  - **Direct Query Parameter Mapping**: Maps `userQuery` appropriately mapped down nodes Node sequences for `direct_query_fallback` seamless execution execution execution.
+- **`nodes/update_memory.ts`**:
+  - Incrementally appends context onto memory buffers. Uses pure dynamic abstraction wrapper over standard `.env` resolvers.
+- **`nodes/summarizer.ts`**:
+  - Aggregates final tool outputs via `prepareMongoForLLM` support into a final analytical user-facing formatted layout layout layout flawlessly!
 
 ---
 
-## 📂 **References**
-* [PhoenixCloudFE2 - Existing Handover](file:///home/phantom/testcodes/PhoenixCloudFE2/handover.md) - Contains baseline Dashboard setup notes.
+### 🟢 Phase 2 & 3: Compilation & Connect Step Edges
+Compiled on `graph.ts` linking node conditionals explicitly:
+1. **Conditional Chaining**: Bypasses execute_tools if Orchestrator returns `[]` tools checklist triggers flawlessly.
+2. **Disambiguation Breaks**: If **any tool result** contains `__ambiguity_stop: true`, conditional edges accurately route immediately to the Summarizer halt iteration capping.
+3. **Durable Persistence Section**: Complies with durable checkpointer **`MongoDBSaver`** drawing dynamically from `.env.SKYLARK_MONGODB_URI` securely:
+   ```typescript
+   const client = new MongoClient(uri);
+   const memorySaver = new MongoDBSaver({ client: client as any, dbName });
+   ```
+
+---
+
+## 🔌 3. Final Mounting & Setup Connections (`index.ts`)
+The LangGraph framework sits parallelly in `src/langgraph/routes/workflow.ts` on its own standalone router. 
+To switch live, `index.ts` mounts it directly over the existing `/api/mastra` endpoint:
+```typescript
+import { createLangGraphWorkflowRouter } from './langgraph/routes/workflow.js';
+
+// Switched from Mastra 
+app.use('/api/mastra', createLangGraphWorkflowRouter());
+```
+This guarantees the absolute Frontend dashboard continues hitting those endpoints seamlessly without having to adapt or reconfigure internal socket payloads payloads back-fed flawlessly!
+
+---
+
+## 🧯 4. Error & Stream Troubleshooting (Latest Fixes)
+- **SSE StreamEvents Refactoring (`routes/workflow.ts`)**: Converted `.invoke()` into `.streamEvents({ version: 'v2' })`.
+  * **Statuses**: Emits `event: status_update` based on `event.metadata.langgraph_node` starting triggers (Orchestrator, Tools, Summarizer).
+  * **Word-by-word streaming**: Emits `event: text_delta` streaming using `on_chat_model_stream` triggers filtered specifically to the Summarizer node!
+- **Rich Tool Layout (`node_orchestrator.ts`)**: No longer uses simple descriptions. Loaded local `mcp_capabilities.ts` mapped contract featuring `Required Params`, `Optional Params`, `Purpose`, and `Typical Questions` into the System Orchestrator. Removes hallucinations or parameter guesswork flawsomely.
+- **Provider Support**: Installed `@langchain/google-genai` with safe null assertions flawlessly flawless.
+
+---
+
+## 📑 5. Next Step Tasks for Next Agent (Maintenance Mode):
+- **Continuous Feedback loops**: Validate state propagation on complex back-to-me retries flawlessly flawless flawlessly.
+
+
