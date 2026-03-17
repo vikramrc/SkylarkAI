@@ -10,16 +10,16 @@ import apiService from '@/services/api.service';
 
 interface NewChatLayoutV2Props {
   onToggleUI: () => void;
+  userEmail?: string | null;
 }
 
-const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI }) => {
+const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail }) => {
   const { t, i18n } = useTranslation();
   const [conversations, setConversations] = useState<any[]>([]);
   const [currentConversation, setCurrentConversation] = useState<any | null>(null);
   const [chatInstanceKey, setChatInstanceKey] = useState<number>(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const [langOpen, setLangOpen] = useState(false);
   const handleSelectLanguage = (lng: 'en' | 'ja' | 'zh' | 'ko') => {
@@ -32,27 +32,6 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI }) => {
 
   useEffect(() => {
     loadConversations();
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const fetchRemaining = async () => {
-      try {
-        const r = await authService.check();
-        if (!mounted) return;
-        if (r?.authenticated) {
-          if (r?.user?.email) setUserEmail(r.user.email);
-        }
-      } catch (e) {
-        // ignore
-      }
-    };
-    fetchRemaining();
-    const id = setInterval(fetchRemaining, 60 * 1000);
-    return () => {
-      mounted = false;
-      clearInterval(id);
-    };
   }, []);
 
   const loadConversations = async () => {
@@ -150,7 +129,7 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI }) => {
           onTogglePin={() => {}}
           onDelete={() => {}}
           loading={loading}
-          userEmail={userEmail}
+          userEmail={userEmail ?? null}
         />
         <div className="flex-1">
             <ContinuousChatView

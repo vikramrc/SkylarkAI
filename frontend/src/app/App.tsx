@@ -172,6 +172,7 @@ const App: React.FC = () => {
         </div>
         <NewChatLayoutV2
           onToggleUI={() => setUseNewUI(false)}
+          userEmail={userEmail}
         />
       </>
     );

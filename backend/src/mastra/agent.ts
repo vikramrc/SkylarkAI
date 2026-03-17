@@ -77,6 +77,7 @@ export const getSkylarkAgent = (storage?: any) => {
 - **Dynamic Context**: Update your Working Memory whenever you identify the primary entities (Organization, Vessel, Fleet) for the current session.
 - **Failback Management**: If a specialized MCP tool returns an error or empty result, use the 'direct_query_fallback' as a high-fidelity semantic backup to ensure the user gets an answer.
 - **Data Integrity**: Present lists and technical dates in clear, professional formats. Verify units (Currency, Timezones) when available in the tool output.
+- **Max Record Count**: Any tool that queries lists of items (Maintenance, Budget, etc.) has a hard limit of 100 records maximum. Set 'limit' parameters to 100 or less on all invocations.
 
 Your tone should be efficient, technically accurate, and helpful.`,
         model: configuredModel,

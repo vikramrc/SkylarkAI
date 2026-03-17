@@ -93,6 +93,14 @@ export function buildCapabilityDescription(capability: any) {
     parts.push(`When to use: ${capability.whenToUse}`);
   }
 
+  if (capability.whenNotToUse) {
+    parts.push(`DO NOT use: ${capability.whenNotToUse}`);
+  }
+
+  if (capability.typicalQuestions && capability.typicalQuestions.length > 0) {
+    parts.push(`Typical questions: ${capability.typicalQuestions.map((q: string) => `"${q}"`).join(", ")}`);
+  }
+
   const identifierGuidance = getIdentifierGuidance(capability);
   if (identifierGuidance) {
     parts.push(identifierGuidance);

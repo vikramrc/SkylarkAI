@@ -12,12 +12,12 @@ export class AuthService {
   private client = axios.create({ baseURL: API_BASE_URL, withCredentials: true });
 
   async generateCaptcha() {
-    const { data } = await this.client.get(`/auth/captcha/generate`);
+    const { data } = await this.client.get(`/users/captcha/generate`);
     return data as { sessionId: string; svg: string; expiresIn: number };
   }
 
   async refreshCaptcha(sessionId: string) {
-    const { data } = await this.client.post(`/auth/captcha/refresh`, { sessionId });
+    const { data } = await this.client.post(`/users/captcha/refresh`, { sessionId });
     return data as { sessionId: string; svg: string; expiresIn: number };
   }
 

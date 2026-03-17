@@ -6,6 +6,7 @@ import { getSummarizerModel } from '../agent.js';
 import { getCachedResponseId, saveCachedResponseId, saveStaticCachedResponseId } from '../../phoenixai/persistence/prompt-cache.js';
 import { calculatePromptHash, calculateCacheKey, extractResponseId, extractUsage, prepareMongoForLLM, logUsageBreakdown } from '../../phoenixai/runtime/executor.js';
 import { ambiguityStore, getAmbiguity } from '../ambiguity-store.js';
+import { skylarkTools } from '../tools.js';
 
 
 const chatInputSchema = z.object({
@@ -86,6 +87,10 @@ const chatStep = createStep({
             
             IMPORTANT: If you have executed tools and have the results, keep your final response extremely brief. The final user-facing summary will be handled separately.`;
 
+            // Prompt debugging request
+            const toolDescriptions = Object.entries(skylarkTools).map(([id, t]: any) => `- **${id}**: ${t.description}`).join('\n');
+            console.log(`\x1b[33m\n=== [Orchestrator Instructions] ===\n${orchestrationInstructions}\n\n=== [Available Tools & Descriptions] ===\n${toolDescriptions}\n\n=== [User Prompt] ===\n${userQuery}\n===================================\n\x1b[0m`);
+
             // Static Provider Cache Key for Orchestrator turns
             // Using a static key ensures that the LLM provider (OpenAI/Gemini)
             // caches the massive instructions + tool definitions across ALL users.
@@ -96,8 +101,10 @@ const chatStep = createStep({
 
             let result: any;
             try {
-                const streamResult = await agent.stream(userQuery, {
+                // Use generate instead of stream for Orchestrator to avoid stream assembly 400 errors with reasoning models (e.g. gpt-5-mini/o-series)
+                result = await agent.generate(userQuery, {
                     instructions: orchestrationInstructions,
+                    maxSteps: 1, // Stop after first LLM output step to decouple the autonomous loop
                     memory: {
                         thread: runId,
                         resource: 'console-user',
@@ -105,27 +112,18 @@ const chatStep = createStep({
                     requestContext,
                     providerOptions: {
                         openai: {
-                            promptCacheKey: orchestratorCacheKey,
-                            promptCacheRetention: '24h',
+                            // Trimmed down options to test if cache wrapper is causing stripping
                         }
                     }
                 });
 
-                // Stream word deltas into callback immediately if it exists
-                if (streamResult.textStream) {
-                    for await (const chunk of streamResult.textStream) {
-                        if (inputData?.onChunk) {
-                            inputData.onChunk(chunk);
-                        }
-                    }
-                }
-
-                // Await full buffered output structure for downstream compatibility
-                result = await streamResult.getFullOutput();
+                // Manually execute tool calls because maxSteps: 1 was used and AI-SDK automatic loops crash on reasoning models
+                // With maxSteps: 1, Mastra executes tools internally after step 1 but halts before step 2 back-feeding, solving the 400 crash.
+                const toolResults = (result as any).toolResults || {};
                 
                 logUsageBreakdown('orchestrator', (result as any).usage, '[Orchestrator-phx-usage]');
                 console.log(`\x1b[33m[Workflow DEBUG] Orchestrator Text:\x1b[0m`, (result as any).text?.slice(0, 100) + '...');
-                console.log(`\x1b[33m[Workflow DEBUG] Tool Results (keys):\x1b[0m`, Object.keys((result as any).toolResults || []).join(', '));
+                console.log(`\x1b[33m[Workflow DEBUG] Tool Results (keys):\x1b[0m`, Object.keys(toolResults || []).join(', '));
             } catch (error: any) {
                 // Only genuine unexpected errors should bubble up.
                 // Ambiguity is now returned as a sentinel value from the tool
@@ -152,6 +150,10 @@ const chatStep = createStep({
                 const toolResultKeys = Object.keys(toolResults);
                 if (toolResultKeys.length > 0) {
                     console.log(`[Workflow] Tool result keys: ${toolResultKeys.join(', ')}`);
+                    for (const [k, v] of Object.entries(toolResults)) {
+                        const resString = JSON.stringify((v as any)?.result ?? v);
+                        console.log(`\x1b[36m[Workflow Tool Result] ${k}\x1b[0m: ${resString.slice(0, 101)}...`);
+                    }
                 }
 
                 for (const toolRes of Object.values(toolResults) as any[]) {
@@ -328,6 +330,8 @@ const chatStep = createStep({
                            - **NO REFUSALS**: You are strictly forbidden from telling the user "it is too much information" or asking them to narrow the search. 
                         5. **Professional Tone**: Maintain a precise, executive tone.
                         `;
+
+                        console.log(`\x1b[35m=== [Summarizer Prompt] ===\x1b[0m\n${summarizationPrompt}\n===========================`);
 
                     try {
                         const summaryStream = await summarizerAgent.stream(summarizationPrompt);
