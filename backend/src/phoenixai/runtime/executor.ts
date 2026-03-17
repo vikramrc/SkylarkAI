@@ -1245,8 +1245,18 @@ export function prepareMongoForLLM(data: any[]) {
                 return [fullPath, ...extractKeys(value, fullPath)];
             }
             
+            if (Array.isArray(value)) {
+                const innerKeys = value.flatMap((item: any) => {
+                    if (item && typeof item === 'object') {
+                        return extractKeys(item, fullPath);
+                    }
+                    return [];
+                });
+                return [`${fullPath}:Array`, ...innerKeys];
+            }
+            
             // Add basic type hint
-            const type = value === null ? 'null' : Array.isArray(value) ? 'Array' : typeof value;
+            const type = value === null ? 'null' : typeof value;
             return [`${fullPath}:${type}`];
         });
     };

@@ -1,5 +1,6 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { RequestContext } from '@mastra/core/request-context';
+import fs from 'fs';
 import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
 import { getSummarizerModel } from '../agent.js';
@@ -117,7 +118,6 @@ const chatStep = createStep({
                     }
                 });
 
-                // Manually execute tool calls because maxSteps: 1 was used and AI-SDK automatic loops crash on reasoning models
                 // With maxSteps: 1, Mastra executes tools internally after step 1 but halts before step 2 back-feeding, solving the 400 crash.
                 const toolResults = (result as any).toolResults || {};
                 
@@ -266,23 +266,48 @@ const chatStep = createStep({
                     // We extract the 'results' array from each successful tool call.
                     const allData: any[] = [];
                     Object.values(rawResults).forEach((res: any) => {
-                        if (!res?.isError && res?.content?.[0]?.text) {
+                        let data = res?.payload?.result ?? res?.result ?? res;
+                        
+                        // 1. Handle MCP Wrapper: content[0].text containing stringified JSON
+                        if (data?.content?.[0]?.text) {
                             try {
-                                const parsed = JSON.parse(res.content[0].text);
-                                if (Array.isArray(parsed)) {
-                                    allData.push(...parsed);
-                                } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.results)) {
-                                    allData.push(...parsed.results);
-                                } else if (parsed) {
-                                    allData.push(parsed);
-                                }
+                                const parsed = JSON.parse(data.content[0].text);
+                                if (parsed) data = parsed;
                             } catch (e) {
-                                // Not JSON or unparseable, skip flattening
+                                console.warn(`[Workflow] Failed to parse content[0].text JSON`, e);
+                            }
+                        }
+
+                        if (data) {
+                            // Preserve the full contract envelope shape (do not flatten .items or .results into flat array maps)
+                            if (Array.isArray(data)) {
+                                allData.push(...data);
+                            } else {
+                                allData.push(data);
                             }
                         }
                     });
 
-                    const { schemaHint, jsonlData } = prepareMongoForLLM(allData);
+                    let { schemaHint, jsonlData } = prepareMongoForLLM(allData);
+
+                    // --- INJECT STATIC CONTRACT SHAPE ---
+                    const firstItem = allData[0];
+                    const capabilityName = firstItem?.capability;
+                    if (capabilityName) {
+                        try {
+                            const contractStr = fs.readFileSync('/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js', 'utf-8');
+                            // Match the capability block and its responseShape
+                            const blockRegex = new RegExp(`name:\\s*"${capabilityName}"[\\s\\S]*?responseShape:\\s*(\\[[\\s\\S]*?\\])`);
+                            const match = contractStr.match(blockRegex);
+                            if (match && match[1]) {
+                                const staticShape = match[1].replace(/\s+/g, ' ');
+                                schemaHint = `Contract Keys: ${staticShape}\nUnique Keys: ${schemaHint}`;
+                            }
+                        } catch (e) {
+                            console.warn(`[Workflow] Failed to read static contract shape for ${capabilityName}`, e);
+                        }
+                    }
+                    // -------------------------------------
 
                     // Create a lightweight agent just for summarization
                     const summarizerAgent = new Agent({
