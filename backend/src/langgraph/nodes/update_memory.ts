@@ -32,6 +32,8 @@ export async function nodeUpdateMemory(state: SkylarkState): Promise<Partial<Sky
 Based on the Previous Memory and the Latest Tool Results, provide a single consolidated, cumulative context summary (e.g., active vessels, equipment inspected, or list counts) for the investigation trail.
 Reference canonical PMS entities where applicable: Vessel, Machinery, Component, ActivityWorkHistory (Work History), InventoryPart (Spares/Parts), Procurement (PurchaseOrder), or Forms.
 
+- **Continuous Session Scope (Critical)**: Always explicitly carry forward and preserve any filtering criteria or bounding context currently driving the session scope (e.g., Organization Name/IDs, specific Vessel Name/IDs, Machinery IDs, Budget Year, or timeframe offsets). Unless explicitly overridden by the user, these remain the implicitly controlling session filters for any subsequent tool calls.
+
 Your output will form the entire rolling Observational Memory buffer for subsequent tool triggers. Keep it extremely concise (5-6 sentences or 6-7 bullet points max) to avoid inflating context token sizes. Do not hallucinate data that wasn't in the tool responses.`;
 
     const promptMessages = [
