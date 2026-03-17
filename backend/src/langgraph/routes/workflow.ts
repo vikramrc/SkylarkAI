@@ -58,6 +58,8 @@ export function createLangGraphWorkflowRouter() {
                         if (nodeName === "errorNode") {
                             statusMessage = "Explaining Error... 🚨";
                             didError = true; 
+                            res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: statusMessage })}\n\n`);
+                            continue;
                         }
 
                         res.write(`event: status_update\ndata: ${JSON.stringify({ message: statusMessage })}\n\n`);

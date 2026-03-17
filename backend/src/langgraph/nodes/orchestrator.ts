@@ -128,7 +128,8 @@ You are currently on a follow-up turn investigating further based on previous to
         toolCalls: response.tools,
         feedBackVerdict: response.feedBackVerdict,
         iterationCount: (state.iterationCount || 0) + 1,
-        hitl_required: undefined // 🟢 Clear previous checkpoints flags breakouts!
+        hitl_required: undefined, // 🟢 Clear previous checkpoints flags breakouts!
+        error: undefined // 🟢 Clear previous turn errors carry over flawless flawlessly index flaws!
     };
 
     // If there is a clarifying question, append it to messages so the Summarizer can look at it

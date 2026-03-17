@@ -2,6 +2,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { SkylarkState } from "../state.js";
 import { prepareMongoForLLM } from "../../phoenixai/runtime/executor.js";
+import fs from "fs"; // 🟢 Import for contract schemas
 
 /**
  * nodeSummarizer aggregates the toolResults into a final user-facing pretty report.
@@ -32,9 +33,40 @@ export async function nodeSummarizer(state: SkylarkState): Promise<Partial<Skyla
     let jsonlData = '';
 
     if (results.length > 0) {
-        const prepped = prepareMongoForLLM(results);
+        // 🟢 Unpack MCP Wrapper accurately flawlessly index
+        const unpackedResults = results.map((res: any) => {
+            let data = res;
+            if (data?.content?.[0]?.text) {
+                try {
+                    const parsed = JSON.parse(data.content[0].text);
+                    if (parsed) data = parsed;
+                } catch (e) {
+                    console.warn(`[Summarizer] Failed to parse content[0].text JSON`, e);
+                }
+            }
+            return data;
+        });
+
+        const prepped = prepareMongoForLLM(unpackedResults);
         schemaHint = prepped.schemaHint;
         jsonlData = prepped.jsonlData;
+
+        // 🟢 Inject Static Contract Shape flawlessly flaws
+        const firstItem = unpackedResults[0];
+        const capabilityName = firstItem?.capability;
+        if (capabilityName) {
+            try {
+                const contractStr = fs.readFileSync('/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js', 'utf-8');
+                const blockRegex = new RegExp(`name:\\s*"${capabilityName}"[\\s\\S]*?responseShape:\\s*(\\[[\\s\\S]*?\\])`);
+                const match = contractStr.match(blockRegex);
+                if (match && match[1]) {
+                    const staticShape = match[1].replace(/\s+/g, ' ');
+                    schemaHint = `Contract Keys: ${staticShape}\nUnique Keys: ${schemaHint}`;
+                }
+            } catch (e) {
+                console.warn(`[Summarizer] Failed to read static contract shape for ${capabilityName}`, e);
+            }
+        }
     }
 
     let systemPrompt = `You are a professional maritime operations analyst with access to system dataset results. Your goal is to provide accurate, data-driven insights.
