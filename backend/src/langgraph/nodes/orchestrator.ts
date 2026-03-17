@@ -121,7 +121,8 @@ You are currently on a follow-up turn investigating further based on previous to
     const updates: Partial<SkylarkState> = {
         toolCalls: response.tools,
         feedBackVerdict: response.feedBackVerdict,
-        iterationCount: (state.iterationCount || 0) + 1
+        iterationCount: (state.iterationCount || 0) + 1,
+        hitl_required: undefined // 🟢 Clear previous checkpoints flags breakouts!
     };
 
     // If there is a clarifying question, append it to messages so the Summarizer can look at it
@@ -129,6 +130,7 @@ You are currently on a follow-up turn investigating further based on previous to
         updates.messages = [new AIMessage(response.clarifyingQuestion)];
         // Force verdict to SUMMARIZE if we are asking a question to break execution loop
         updates.feedBackVerdict = 'SUMMARIZE';
+        updates.hitl_required = true; // 🟢 MARK HITL REQUIRED execution pauses breakouts flawless!
         updates.toolCalls = []; // empty tools so conditional edge jumps to summarizer
     }
 

@@ -86,6 +86,19 @@ export function createLangGraphWorkflowRouter() {
                     }
                 }
 
+                // 🟢 Fallback to last message in state if streaming data was bypassed (e.g., HITL directly ending nodeOrchestrator flawlessly)
+                try {
+                    const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
+                    const finalMessages = finalState.values?.messages || [];
+                    const lastMsg = finalMessages[finalMessages.length - 1];
+
+                    if (!assistantResponse && lastMsg && lastMsg.content) {
+                        assistantResponse = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
+                    }
+                } catch (stateErr) {
+                    console.error(`[Workflow Result] Failed to fetch final state:`, stateErr);
+                }
+
                 if (!assistantResponse) {
                     assistantResponse = "No response generated.";
                 }

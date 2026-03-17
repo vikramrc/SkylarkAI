@@ -44,7 +44,7 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                     };
 
                     const result = await tool.execute(inputArgs, contextMock); 
-                    
+                    console.log(`[LangGraph Execute] ${sanitizedName} Result Preview: ${JSON.stringify(result).slice(0, 251)}...`);
                     // Breakout if payload carries error: true (Validation failures proxy layer responses flawless)
                     if (result && (result.error === true || result.status === 'error' || result.success === false)) {
                         nodeError = `[Execute Tool ${sanitizedName} Failure]: ${result.message || JSON.stringify(result)}`;

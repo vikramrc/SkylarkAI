@@ -35,4 +35,5 @@ export interface SkylarkState {
 
   // 5. Graceful Error Handling
   error: string | undefined; // Descriptive explanation for breakouts flawless!
+  hitl_required: boolean | undefined; // 🟢 MARK HITL REQUIRED execution pauses breakouts flawless!
 }

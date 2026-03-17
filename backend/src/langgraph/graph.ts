@@ -29,6 +29,7 @@ const workflow = new StateGraph<SkylarkState>({
     feedBackVerdict: { default: () => "SUMMARIZE" },
     iterationCount: { default: () => 0 },
     error: { default: () => undefined }, // Optional error string
+    hitl_required: { default: () => undefined }, // 🟢 Add this to preserve state update mechanics flawless!
   } as any 
 });
 
@@ -47,6 +48,7 @@ workflow.addConditionalEdges(
   "orchestrator" as any,
   ((state: SkylarkState) => {
       if (state.error) return "errorNode";
+      if (state.hitl_required) return "__end__"; // 🟢 Skip Summarizer for clarifying question breakouts flawlessly!
       if (!state.toolCalls || state.toolCalls.length === 0) {
           return "summarizer";
       }
@@ -56,6 +58,7 @@ workflow.addConditionalEdges(
       execute_tools: "execute_tools" as any,
       summarizer: "summarizer" as any,
       errorNode: "errorNode" as any,
+      __end__: "__end__" as any // 🟢 Add this!
   } as any
 );
 
