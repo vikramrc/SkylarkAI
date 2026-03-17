@@ -89,7 +89,18 @@ You are currently on a follow-up turn investigating further based on previous to
   * Response Shape: [${c.responseShape?.join(", ") || ""}]
   * Guidance: ${c.interpretationGuidance || "None"}`;
     }).join("\n\n");
-    const formattedInstruction = systemInstruction.replace("%%TOOL_CONTEXT%%", toolDetails);
+
+    // 🟢 Append local direct_query_fallback tool flawlessly flaws
+    const finalToolDetails = `${toolDetails}\n\n- **direct_query_fallback**
+  * Purpose: Use this tool for general queries, complex aggregations, or when no other specific MCP tool covers the request (e.g., details on Forms, Crew, Budget, Voyage, or machinery logs). Performs a direct semantic search and MongoQL query against the database.
+  * Required Params:
+    userQuery: The user's original query or a refined version for database searching.
+  * Optional Params:
+    None
+  * Response Shape: [success, source, data]
+  * Guidance: If specialized filtering endpoints do not match target granularity or fail to return field-level items, call this as high-fidelity failback seamlessly flawlessly.`;
+
+    const formattedInstruction = systemInstruction.replace("%%TOOL_CONTEXT%%", finalToolDetails);
 
     const promptMessages = [
         { role: "system", content: formattedInstruction } as any, 
