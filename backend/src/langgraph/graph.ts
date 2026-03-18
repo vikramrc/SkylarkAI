@@ -70,10 +70,14 @@ workflow.addConditionalEdges(
       const results = Object.values(state.toolResults || {});
       const standsAmbiguous = results.some((r: any) => r && r.__ambiguity_stop === true);
 
+      if (standsAmbiguous) {
+          return "__end__"; // 🟢 Direct end for ambiguity breakout flawlessly!
+      }
+
       // 🟢 Parallelization Optimization: 
       // If we are summarizing, run BOTH update_memory and summarizer in parallel branches concurrently.
-      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 2;
-
+      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || (state.iterationCount || 0) >= 2;
+      
       if (isSummarizing) {
           return ["update_memory", "summarizer"];
       }
@@ -84,6 +88,7 @@ workflow.addConditionalEdges(
       update_memory: "update_memory" as any,
       summarizer: "summarizer" as any,
       errorNode: "errorNode" as any,
+      __end__: "__end__" as any, // 🟢 Allowed breakout!
   } as any
 );
 

@@ -46,7 +46,9 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                     const result = await tool.execute(inputArgs, contextMock); 
                     console.log(`[LangGraph Execute] ${sanitizedName} Result Preview: ${JSON.stringify(result).slice(0, 251)}...`);
                     // Breakout if payload carries error: true (Validation failures proxy layer responses flawless)
-                    if (result && (result.error === true || result.status === 'error' || result.success === false)) {
+                    if (result && result.__ambiguity_stop === true) {
+                        outputs[name] = result; // 🟢 Pass ambiguity sentinel unharmed breakouts breakouts flawlessly!
+                    } else if (result && (result.error === true || result.status === 'error' || result.success === false)) {
                         nodeError = `[Execute Tool ${sanitizedName} Failure]: ${result.message || JSON.stringify(result)}`;
                     } else {
                         outputs[name] = result;
@@ -62,6 +64,31 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
 
     if (nodeError) {
         return { error: nodeError };
+    }
+
+    // 🟢 Format Ambiguity Response for UI Bubble Display
+    let finalMessageContent = "";
+    Object.values(outputs).forEach((r: any) => {
+        if (r && r.__ambiguity_stop === true) {
+            const cq = r.data?.clarifyingQuestions || [];
+            const sugg = r.data?.assumptions || [];
+            
+            finalMessageContent = `### ❓ Clarifying Questions Needed\n\n`;
+            cq.forEach((q: string) => finalMessageContent += `- ${q}\n`);
+            
+            if (sugg.length > 0) {
+                finalMessageContent += `\n### 💡 Suggested Search Templates\n\n`;
+                sugg.forEach((s: string) => finalMessageContent += `- *${s}*\n`);
+            }
+        }
+    });
+
+    if (finalMessageContent) {
+        const { AIMessage } = await import("@langchain/core/messages");
+        return { 
+            toolResults: outputs,
+            messages: [...state.messages, new AIMessage({ content: finalMessageContent })]
+        } as any;
     }
 
     return { toolResults: outputs };
