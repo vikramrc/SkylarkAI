@@ -61,14 +61,28 @@ workflow.addConditionalEdges(
 );
 
 // Conditional Edge from Execute Tools
+// Conditional Edge from Execute Tools
 workflow.addConditionalEdges(
   "execute_tools" as any,
   ((state: SkylarkState) => {
       if (state.error) return "errorNode";
+
+      const results = Object.values(state.toolResults || {});
+      const standsAmbiguous = results.some((r: any) => r && r.__ambiguity_stop === true);
+
+      // 🟢 Parallelization Optimization: 
+      // If we are summarizing, run BOTH update_memory and summarizer in parallel branches concurrently.
+      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 2;
+
+      if (isSummarizing) {
+          return ["update_memory", "summarizer"];
+      }
+
       return "update_memory";
   }) as any,
   {
       update_memory: "update_memory" as any,
+      summarizer: "summarizer" as any,
       errorNode: "errorNode" as any,
   } as any
 );
@@ -78,14 +92,15 @@ workflow.addConditionalEdges(
   "update_memory" as any,
   ((state: SkylarkState) => {
       if (state.error) return "errorNode";
-      if (state.iterationCount >= 2) {
-          return "summarizer"; 
-      }
 
       const results = Object.values(state.toolResults || {});
       const standsAmbiguous = results.some((r: any) => r && r.__ambiguity_stop === true);
-      if (standsAmbiguous) {
-          return "summarizer";
+
+      // 🟢 Parallelization Guard:
+      // If we were already summarizing (parallel branches), just END this node's branch to prevent double triggers on summarizer.
+      const wasSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 2;
+      if (wasSummarizing) {
+          return "__end__"; 
       }
 
       return state.feedBackVerdict === "FEED_BACK_TO_ME" ? "orchestrator" : "summarizer";
@@ -94,6 +109,7 @@ workflow.addConditionalEdges(
       orchestrator: "orchestrator" as any,
       summarizer: "summarizer" as any,
       errorNode: "errorNode" as any,
+      __end__: "__end__" as any,
   } as any
 );
 

@@ -4,11 +4,28 @@ import type { SkylarkState } from "../state.js";
 import { prepareMongoForLLM } from "../../phoenixai/runtime/executor.js";
 import fs from "fs"; // 🟢 Import for contract schemas
 
+// 🟢 Pre-load Capabilities Contract once at startup to optimize node performance
+const CONTRACT_PATH = '/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js';
+let contractStrCache = "";
+
+try {
+    if (fs.existsSync(CONTRACT_PATH)) {
+        contractStrCache = fs.readFileSync(CONTRACT_PATH, 'utf-8');
+        console.log(`\x1b[36m[Startup] 📄 Preloaded capabilities contract into memory cache\x1b[0m`);
+    } else {
+        console.warn(`\x1b[33m[Startup] ⚠️ Contract path not found: ${CONTRACT_PATH}\x1b[0m`);
+    }
+} catch (e: any) {
+    console.error(`[Summarizer] Failed to preload capabilities contract`, e.message || e);
+}
+
+
 /**
  * nodeSummarizer aggregates the toolResults into a final user-facing pretty report.
  */
 export async function nodeSummarizer(state: SkylarkState): Promise<Partial<SkylarkState>> {
-    console.log(`[LangGraph] 📝 Summarizer Node invoked`);
+    const ts = () => `[${new Date().toISOString().substring(11, 19)}]`;
+    console.log(`\x1b[36m${ts()} [LangGraph] 📝 Summarizer Node invoked\x1b[0m`);
     const provider = process.env.MASTRA_SUMMARIZER_PROVIDER || 'openai';
     const modelName = process.env.MASTRA_SUMMARIZER_MODEL || 'gpt-5-mini';
 
@@ -54,11 +71,10 @@ export async function nodeSummarizer(state: SkylarkState): Promise<Partial<Skyla
         // 🟢 Inject Static Contract Shape flawlessly flaws
         const firstItem = unpackedResults[0];
         const capabilityName = firstItem?.capability;
-        if (capabilityName) {
+        if (capabilityName && contractStrCache) {
             try {
-                const contractStr = fs.readFileSync('/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js', 'utf-8');
                 const blockRegex = new RegExp(`name:\\s*"${capabilityName}"[\\s\\S]*?responseShape:\\s*(\\[[\\s\\S]*?\\])`);
-                const match = contractStr.match(blockRegex);
+                const match = contractStrCache.match(blockRegex);
                 if (match && match[1]) {
                     const staticShape = match[1].replace(/\s+/g, ' ');
                     schemaHint = `Contract Keys: ${staticShape}\nUnique Keys: ${schemaHint}`;
@@ -93,7 +109,7 @@ Please formulate a polite, efficient response back to the user based on the conv
         ...state.messages 
     ];
 
-    console.log(`[LangGraph Summarizer] --- PROMPT SENT TO LLM ---`);
+    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] --- PROMPT SENT TO LLM ---\x1b[0m`);
     console.log(JSON.stringify(promptMessages, null, 2));
 
     try {

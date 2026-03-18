@@ -7,7 +7,8 @@ import type { SkylarkState } from "../state.js";
  * Configured using dynamic providers mapping from `.env` setups.
  */
 export async function nodeUpdateMemory(state: SkylarkState): Promise<Partial<SkylarkState>> {
-    console.log(`[LangGraph] 🧠 Updating Memory Node invoked`);
+    const ts = () => `[${new Date().toISOString().substring(11, 19)}]`;
+    console.log(`\x1b[33m${ts()} [LangGraph] 🧠 Updating Memory Node invoked\x1b[0m`);
     const provider = process.env.MASTRA_SUMMARIZER_PROVIDER || 'openai';
     const modelName = process.env.MASTRA_SUMMARIZER_MODEL || 'gpt-5-mini';
 
@@ -41,7 +42,7 @@ Your output will form the entire rolling Observational Memory buffer for subsequ
         { role: "user", content: `[Previous Memory]:\n${state.workingMemory?.summaryBuffer || "None"}\n\n[Latest Tool Results]:\n${resultsStr}` }
     ];
 
-    console.log(`[LangGraph UpdateMemory] --- PROMPT SENT TO LLM ---`);
+    console.log(`\x1b[33m${ts()} [LangGraph UpdateMemory] --- PROMPT SENT TO LLM ---\x1b[0m`);
     console.log(JSON.stringify(promptMessages, null, 2));
 
     try {
