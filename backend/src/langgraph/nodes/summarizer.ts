@@ -92,10 +92,6 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
 
 ### GLOBAL SCHEMA CONTEXT
 ${schemaHint}
-
-### INPUT DATA
-- Data (JSONL):
-${jsonlData}
 `;
 
     if (results.length === 0) {
@@ -106,7 +102,8 @@ Please formulate a polite, efficient response back to the user based on the conv
 
     const promptMessages = [
         { role: "system", content: systemPrompt } as any,
-        ...state.messages 
+        ...state.messages,
+        { role: "user", content: `### INPUT DATA\n- Data (JSONL):\n${jsonlData}` } as any
     ];
 
     console.log(`\x1b[36m${ts()} [LangGraph Summarizer] --- PROMPT SENT TO LLM ---\x1b[0m`);
@@ -114,6 +111,10 @@ Please formulate a polite, efficient response back to the user based on the conv
 
     try {
         const response = await model.invoke(promptMessages);
+
+        // 🟢 Log Token Caching Savings
+        const { logTokenSavings } = await import("../utils/logger.js");
+        logTokenSavings("Summarizer", response);
 
         console.log(`[LangGraph Summarizer Output]`, response.content);
 

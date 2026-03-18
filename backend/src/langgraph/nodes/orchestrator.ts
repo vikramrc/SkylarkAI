@@ -25,7 +25,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     
     const model = new ChatOpenAI({
         modelName: process.env.MASTRA_ORCHESTRATOR_MODEL || "gpt-5-mini",
-    }).withStructuredOutput(orchestratorSchema);
+    }).withStructuredOutput(orchestratorSchema, { includeRaw: true } as any);
 
     const memoryContext = state.workingMemory?.summaryBuffer 
         ? `\n[Context from Previous Moves]: ${state.workingMemory.summaryBuffer}` 
@@ -69,7 +69,8 @@ You are currently on a follow-up turn investigating further based on previous to
             params,
             httpsAgent: new https.Agent({ rejectUnauthorized: false })
         });
-        baseCapabilitiesContract = response.data.capabilities || [];
+        baseCapabilitiesContract = (response.data.capabilities || [])
+            .sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
     } catch (error: any) {
         console.error("[LangGraph Orchestrator] Failed to fetch raw capabilities:", error.message);
     }
@@ -125,8 +126,14 @@ You are currently on a follow-up turn investigating further based on previous to
     console.log(coloredLogs);
 
     let response: any;
+    let result: any;
     try {
-        response = await model.invoke(promptMessages);
+        result = await model.invoke(promptMessages);
+        response = result.parsed;
+
+        // 🟢 Log Token Caching Savings
+        const { logTokenSavings } = await import("../utils/logger.js");
+        logTokenSavings("Orchestrator", result);
     } catch (error: any) {
         console.error(`[LangGraph Orchestrator] LLM Invoke crashed:`, error.message);
         return { error: `Orchestrator Node crashed: ${error.message}` };

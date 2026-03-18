@@ -48,6 +48,10 @@ Your output will form the entire rolling Observational Memory buffer for subsequ
     try {
         const response = await model.invoke(promptMessages);
 
+        // 🟢 Log Token Caching Savings
+        const { logTokenSavings } = await import("../utils/logger.js");
+        logTokenSavings("UpdateMemory", response);
+
         console.log(`[LangGraph UpdateMemory Output]`, response.content);
 
         const updatedBuffer = response.content ? String(response.content) : state.workingMemory?.summaryBuffer;
