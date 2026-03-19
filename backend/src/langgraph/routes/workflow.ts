@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { skylarkGraph, client, dbName } from '../graph.js';
+import { skylarkGraph } from '../graph.js';
+import { ConversationModel } from '../models/Conversation.js';
 import { HumanMessage } from "@langchain/core/messages";
 import { registerStream, unregisterStream, abortStream } from '../utils/stream_manager.js';
 
@@ -10,10 +11,14 @@ import { registerStream, unregisterStream, abortStream } from '../utils/stream_m
 export function createLangGraphWorkflowRouter() {
     const router = Router();
 
+    // 🟢 Ensure indexes setup on startup flawlessly trigger flaws flawless triggers
+    ConversationModel.ensureIndexes();
+
     router.get('/workflow/chat', async (req, res, next) => {
+        const { ObjectId } = await import('mongodb');
         const userQuery = req.query.userQuery as string;
         const runId = req.query.runId as string;
-        const currentRunId = runId || randomUUID();
+        const currentRunId = runId && ObjectId.isValid(runId) ? runId : new ObjectId().toHexString();
 
         try {
             if (!userQuery) {
@@ -107,15 +112,10 @@ export function createLangGraphWorkflowRouter() {
                     assistantResponse = didError ? "" : "No response generated.";
                 }
 
-                // 🟢 Save message pair to raw MongoDB flawless triggers trigger
+                // 🟢 Save message pair using Model flawless trigger flawlessly
                 try {
-                    const db = client.db(dbName);
-                    await db.collection("conversation_messages").insertOne({
-                        runId: currentRunId,
-                        userQuery,
-                        assistantResponse,
-                        timestamp: new Date()
-                    });
+                    await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse);
+                    await ConversationModel.upsertShell(currentRunId, userQuery);
                 } catch (dbErr) {
                     console.error(`[Workflow Route] Failed to save conversation message:`, dbErr);
                 }
@@ -169,12 +169,22 @@ export function createLangGraphWorkflowRouter() {
             return res.status(400).json({ message: 'runId is required' });
         }
         try {
-            const db = client.db(dbName);
-            const messages = await db.collection("conversation_messages")
-                .find({ runId })
-                .sort({ timestamp: 1 })
-                .toArray();
+            const messages = await ConversationModel.getMessages(runId);
             res.json({ messages });
+        } catch (err: any) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // 🟢 ADD Search Timeline Endpoint triggers flawless
+    router.get('/workflow/search', async (req, res) => {
+        const query = req.query.q as string;
+        if (!query) {
+            return res.status(400).json({ message: 'q query is required' });
+        }
+        try {
+            const matchedRunIds = await ConversationModel.searchTimeline(query);
+            res.json({ matchedRunIds });
         } catch (err: any) {
             res.status(500).json({ error: err.message });
         }

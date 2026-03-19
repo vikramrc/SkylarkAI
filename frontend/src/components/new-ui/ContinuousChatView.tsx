@@ -104,11 +104,18 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
     setQuery('');
     setIsProcessing(true);
 
-    // Lock and use runId
+    // Lock and use runId (Generate valid 24-char hex ObjectId flawlessly triggers triggers)
     if (!runIdRef.current) {
-      runIdRef.current = `run-${Date.now()}`;
+      const ts = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+      const rand = 'x'.repeat(16).replace(/[x]/g, () => Math.floor(Math.random() * 16).toString(16));
+      runIdRef.current = ts + rand;
     }
     const runId = runIdRef.current;
+
+    // 🟢 Instant layout updates: place card in LHS immediately flawlessly flaws trigger flawless
+    if (!currentConversation) {
+      onNewConversation({ conversationId: runId, userQuery, status: 'processing', createdAt: new Date() });
+    }
 
     // Append User Message
     const userMessage: Message = {

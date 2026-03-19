@@ -126,10 +126,7 @@ const uri = process.env.SKYLARK_MONGODB_URI || "mongodb://localhost:27017/Skylar
 const dbName = uri.split('/').pop()?.split('?')[0] || "SkylarkDB";
 
 const client = new MongoClient(uri);
-const memorySaver = new MongoDBSaver({ 
-    client: client as any, 
-    dbName 
-});
+const memorySaver = new MongoDBSaver({ client: client as any, dbName });
 
 export { client, dbName };
 export const skylarkGraph = workflow.compile({ checkpointer: memorySaver as any });

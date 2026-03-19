@@ -185,6 +185,24 @@ We rolled out a reliable continuous AI interruption layer paired with robust Mar
 
 ---
 
+## 🛠️ 14. Simple Conversation Storage Rehydration
+
+We introduced raw MongoDB query archiving storing user queries and assistant responses for continuous layout rehydrations:
+
+### 🟢 **Stream Event archiving (`workflow.ts`)**
+- **Fix**: Uses `ConversationModel.addMessage(runId, userQuery, assistantResponse)` and `ConversationModel.upsertShell(runId, userQuery)` inside result triggers flawlessly.
+- **Support Endpoint**: Uses `ConversationModel.getMessages(runId)` delivering historical message list listing seamlessly.
+
+### 🟢 **Model Encapsulation (`Conversation.ts`)**
+- **Design**: Created `backend/src/langgraph/models/Conversation.ts` encapsulating all message pair inserts, sidebar upserts, and text index automation setup securely flawless trigger flawless.
+
+### 🟢 **Continuous rehydration loader (`ContinuousChatView.tsx`)**
+- **Fix**: Upgraded layout `useEffect` watching Continuous conversation ID switches on sidebar loaded models loaded.
+- **Flow**: Executes asynchronous load pulling historical pair coordinates flawlessly flawless mapping back into standard visual chat frames flawlessly trigger flawless.
+- **Card Cleanup**: Stripped outdated `results` count or `Status` badges from sidebar item cards layouts flawlessly flawlessly triggers.
+
+---
+
 ## 🛠️ 12. Latest Ambiguity handling & UI Displays (`execute_tools.ts` & `graph.ts`)
 
 We rolled out fixes to properly display ambiguity clarifying prompts as beautiful Assistant bubbles instead of crashing the turn loops:

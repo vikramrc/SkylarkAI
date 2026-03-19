@@ -31,6 +31,26 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
   const [conversationToDelete, setConversationToDelete] = useState<string | null>(null);
+  const [matchedRunIds, setMatchedRunIds] = useState<string[] | null>(null);
+
+  // 🟢 Debounce backend-driven search flawless flaws trigger flawlessly flawless trigger
+  React.useEffect(() => {
+    if (!searchQuery.trim()) {
+      setMatchedRunIds(null);
+      return;
+    }
+    const fetchMatches = async () => {
+      try {
+        const axios = (await import('axios')).default;
+        const res = await axios.get(`/api/mastra/workflow/search?q=${encodeURIComponent(searchQuery)}`);
+        setMatchedRunIds(res.data.matchedRunIds || []);
+      } catch (err) {
+        console.error('Failed to search conversation messages:', err);
+      }
+    };
+    const timer = setTimeout(fetchMatches, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Filter conversations based on search query
   const filteredConversations = useMemo(() => {
@@ -40,13 +60,17 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
       const userQuery = (conv.userQuery || '').toLowerCase();
       const resolvedQuery = (conv.resolvedQuery || '').toLowerCase();
       const normalizedRequest = (conv.normalizedRequest || '').toLowerCase();
-      return (
-        userQuery.includes(query) ||
-        resolvedQuery.includes(query) ||
-        normalizedRequest.includes(query)
-      );
+      
+      const localMatch = userQuery.includes(query) ||
+             resolvedQuery.includes(query) ||
+             normalizedRequest.includes(query);
+
+      const convId = conv.conversationId || conv.id;
+      const backendMatch = matchedRunIds ? matchedRunIds.includes(convId) : false;
+
+      return localMatch || backendMatch;
     });
-  }, [conversations, searchQuery]);
+  }, [conversations, searchQuery, matchedRunIds]);
 
   const pinnedConversations = filteredConversations.filter((conv) => conv.isPinned);
   const recentConversations = filteredConversations.filter((conv) => !conv.isPinned);
@@ -240,7 +264,7 @@ function ConversationItem({ conversation, isActive, onSelect, onTogglePin, onDel
     <div
       className={`p-3 rounded-xl border transition-all duration-200 group relative ${
         isActive
-          ? 'bg-white border-primary-100 shadow-md shadow-primary-500/5'
+          ? 'bg-blue-50/90 border-blue-200 shadow-none'
           : 'bg-transparent border-transparent hover:bg-white/60 hover:border-gray-100 hover:shadow-sm'
       }`}
       onClick={() => onSelect(conversation)}
