@@ -277,30 +277,6 @@ function ConversationItem({ conversation, isActive, onSelect, onTogglePin, onDel
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-            conversation.status === 'completed'
-              ? 'bg-green-100 text-green-700'
-              : conversation.status === 'error'
-              ? 'bg-red-100 text-red-700'
-              : conversation.status === 'ambiguous' || conversation.status === 'disambiguating'
-              ? 'bg-yellow-100 text-yellow-700'
-              : 'bg-gray-100 text-gray-700'
-          }`}
-        >
-          {conversation.status === 'completed'
-            ? t('status.completed')
-            : conversation.status === 'error'
-            ? t('status.error')
-            : conversation.status === 'ambiguous' || conversation.status === 'disambiguating'
-            ? t('status.hitl_disambiguation')
-            : t('status.processing')}
-        </span>
-        <span className="text-xs text-gray-500">
-          {resultsCount} {t('app.results_label')}
-        </span>
-      </div>
     </div>
   );
 }
