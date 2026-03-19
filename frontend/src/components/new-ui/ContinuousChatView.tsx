@@ -396,17 +396,16 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                   placeholder={isProcessing ? "Processing response..." : (t('chat.placeholder') as string)}
                   disabled={isProcessing}
                   rows={4}
-                  className="w-full px-5 py-4 pr-24 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-400 text-base rounded-xl"
+                  className="w-full px-5 py-4 pr-14 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-400 text-base rounded-xl"
                 />
                 
                 {isProcessing ? (
                   <button
                     type="button"
                     onClick={handleStop}
-                    className="absolute right-3 bottom-3 flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-sm transition-all animate-pulse text-sm font-medium"
+                    className="absolute right-3 bottom-3 p-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-sm transition-all animate-pulse"
                   >
-                    <Square className="w-4 h-4 fill-current" />
-                    <span>Stop</span>
+                    <Square className="w-5 h-5" />
                   </button>
                 ) : (
                   <button
