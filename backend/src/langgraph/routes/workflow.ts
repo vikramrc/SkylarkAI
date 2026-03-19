@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { skylarkGraph } from '../graph.js';
 import { HumanMessage } from "@langchain/core/messages";
+import { registerStream, unregisterStream, abortStream } from '../utils/stream_manager.js';
 
 /**
  * createLangGraphWorkflowRouter routes standard SSE triggers to the side-by-side LangGraph framework.
@@ -34,12 +35,16 @@ export function createLangGraphWorkflowRouter() {
             }, 10000);
 
             try {
-                // 2. Stream LangGraph Events
+                // 2. Register stream with abort controller controller controllers
+                const controller = registerStream(currentRunId);
+
+                // 3. Stream LangGraph Events
                 const eventStream = (skylarkGraph as any).streamEvents({
                     messages: [new HumanMessage(userQuery)],
                 }, {
                     version: "v2",
-                    configurable: { thread_id: currentRunId }
+                    configurable: { thread_id: currentRunId },
+                    signal: controller.signal // 🟢 Pass abort signal to stream streamEvents triggers flaws flawlessly flawless trigger flawless
                 });
 
                 let assistantResponse = "";
@@ -109,7 +114,16 @@ export function createLangGraphWorkflowRouter() {
                 })}\n\n`);
                 res.end();
 
+            } catch (err: any) {
+                if (err.name === 'AbortError') {
+                    console.log(`[LangGraph Route] Stream aborted by user: ${currentRunId}`);
+                    res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: "Stream interrupted 🛑" })}\n\n`);
+                    res.end();
+                } else {
+                    throw err; // propagates to outer catch catch catch catch layout flaws setup trigger trigger flawlessly flaws
+                }
             } finally {
+                unregisterStream(currentRunId);
                 clearInterval(heartbeat);
             }
 
@@ -122,6 +136,17 @@ export function createLangGraphWorkflowRouter() {
             })}\n\n`);
             res.end();
         }
+    });
+
+    // 🟢 ADD Stop Endpoint Endpoint Cancel streams cancel
+    router.get('/workflow/stop', async (req, res) => {
+        const runId = req.query.runId as string;
+        if (!runId) {
+            return res.status(400).json({ message: 'runId is required' });
+        }
+        const aborted = abortStream(runId);
+        console.log(`[LangGraph Route] Stop triggered for runId: ${runId}. Success: ${aborted}`);
+        res.json({ aborted });
     });
 
     return router;

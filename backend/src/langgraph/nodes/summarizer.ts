@@ -3,6 +3,7 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { SkylarkState } from "../state.js";
 import { prepareMongoForLLM } from "../../phoenixai/runtime/executor.js";
 import fs from "fs"; // 🟢 Import for contract schemas
+import { activeStreams } from "../utils/stream_manager.js"; // 🟢 Import active streams for cancellation
 
 // 🟢 Pre-load Capabilities Contract once at startup to optimize node performance
 const CONTRACT_PATH = '/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js';
@@ -23,7 +24,7 @@ try {
 /**
  * nodeSummarizer aggregates the toolResults into a final user-facing pretty report.
  */
-export async function nodeSummarizer(state: SkylarkState): Promise<Partial<SkylarkState>> {
+export async function nodeSummarizer(state: SkylarkState, config?: any): Promise<Partial<SkylarkState>> {
     const ts = () => `[${new Date().toISOString().substring(11, 19)}]`;
     console.log(`\x1b[36m${ts()} [LangGraph] 📝 Summarizer Node invoked\x1b[0m`);
     const provider = process.env.MASTRA_SUMMARIZER_PROVIDER || 'openai';
@@ -90,6 +91,12 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
 
 - **Completion Directive (Critical)**: If the INPUT DATA below contains actual queried payload records (e.g., loaded form submissions, full documents, formData, titles, or item IDs), YOU MUST summarize and PRESENT those findings directly to the user clearly (e.g., using lists, pairs, or tables) instead of repeating clarifying questions. Do not ask for permissions about thresholding data if the answers are already listed in your input variables.
 
+- **Data Presentation (Critical)**: When presenting lists of items or tabular datasets (e.g., forms, items, history), ALWAYS use **Standard Markdown Tables** format:
+  \`| Header 1 | Header 2 |\`
+  \`|---|---|\`
+  \`| Row 1 | Row 2 |\`
+  NEVER prefix table rows with numbers (e.g., \`87) \`) or list bullets, as it breaks rendering structures.
+
 ### GLOBAL SCHEMA CONTEXT
 ${schemaHint}
 `;
@@ -110,7 +117,10 @@ Please formulate a polite, efficient response back to the user based on the conv
     console.log(JSON.stringify(promptMessages, null, 2));
 
     try {
-        const response = await model.invoke(promptMessages);
+        const threadId = config?.configurable?.thread_id;
+        const abortCtrl = threadId ? activeStreams.get(threadId) : null;
+        
+        const response = await model.invoke(promptMessages, { signal: abortCtrl?.signal });
 
         // 🟢 Log Token Caching Savings
         const { logTokenSavings } = await import("../utils/logger.js");

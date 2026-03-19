@@ -35,6 +35,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
 
   // Preserve runId acrosssubmissions for continuous context turn memory
   const runIdRef = useRef<string | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null); // 🟢 Track EventSource for cancellation triggers triggers
   const [timelineStatuses, setTimelineStatuses] = useState<Record<string, any>>({});
 
   const sampleQueries = (t('chat.sample_queries', { returnObjects: true }) as unknown as string[]) || [];
@@ -111,6 +112,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
     try {
       const sseUrl = `/api/mastra/workflow/chat?userQuery=${encodeURIComponent(userQuery)}&runId=${encodeURIComponent(runId)}`;
       const eventSource = new EventSource(sseUrl);
+      eventSourceRef.current = eventSource; // 🟢 Save ref triggers cancel trigger flaws flaws triggers flaws triggers flaws flawless
       
       let fullAiText = '';
       const aiMessageId = `ai-${Date.now()}`;
@@ -179,6 +181,8 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                onNewConversation({ conversationId: runId, userQuery, status: 'completed', createdAt: new Date() });
              }
              eventSource.close();
+             eventSourceRef.current = null; // 🟢 Clear ref setup trigger flawless trigger flaws trigger flawless
+             setIsProcessing(false); 
          } catch {}
        });
 
@@ -196,11 +200,26 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
              }
          } catch {}
          eventSource.close();
+         eventSourceRef.current = null;
+         setIsProcessing(false);
       });
+
+      // 🟢 Add standard EventSource onerror handler triggers triggers flaws flaws
+      eventSource.onerror = (e: any) => {
+         console.error('SSE connection error:', e);
+         setTimelineStatuses((prev) => ({
+             ...prev,
+             [tlId]: { ...(prev[tlId] || {}), stage: 'error', message: 'Stream connection failed or timed out 🛑' }
+         }));
+         setIsProcessing(false);
+         eventSource.close();
+         eventSourceRef.current = null;
+      };
 
       // Timeout safety loop closure
       return () => {
          eventSource.close();
+         eventSourceRef.current = null;
       };
 
     } catch (error: any) {
@@ -218,9 +237,29 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
           ...prev,
           [tlId]: { ...(prev[tlId] || {}), stage: 'error', message: error.message || 'Workflow Request Failed' }
       }));
-    } finally {
       setIsProcessing(false);
+    } finally {
+      // 🟢 isProcessing set handled by SSE listeners listeners trigger flaws flawlessly flawless triggers
     }
+  };
+
+  const handleStop = async () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    try {
+      // Import axios if missing, but ContinuousChatView loads load axios easily flawlessly flaws trigger flawlessly triggers
+      const axios = (await import('axios')).default;
+      await axios.get(`/api/mastra/workflow/stop?runId=${runIdRef.current}`);
+    } catch (err) {
+      console.error('Failed to notify backend about stream stop:', err);
+    }
+    setTimelineStatuses((prev) => ({
+      ...prev,
+      [Object.keys(prev).pop() || ""]: { ...(prev[Object.keys(prev).pop() || ""] || {}), stage: 'error', message: 'Stream interrupted 🛑' }
+    }));
+    setIsProcessing(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -357,19 +396,31 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                   placeholder={isProcessing ? "Processing response..." : (t('chat.placeholder') as string)}
                   disabled={isProcessing}
                   rows={4}
-                  className="w-full px-5 py-4 pr-14 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-400 text-base rounded-xl"
+                  className="w-full px-5 py-4 pr-24 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-400 text-base rounded-xl"
                 />
-                <button
-                  type="submit"
-                  disabled={isProcessing || !query.trim()}
-                  className={`absolute right-3 bottom-3 p-2.5 rounded-xl transition-all ${
-                    isProcessing || !query.trim()
-                      ? 'bg-gray-50 text-gray-400'
-                      : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
-                  }`}
-                >
-                  <Send className="w-5 h-5" />
-                </button>
+                
+                {isProcessing ? (
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    className="absolute right-3 bottom-3 flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-sm transition-all animate-pulse text-sm font-medium"
+                  >
+                    <Square className="w-4 h-4 fill-current" />
+                    <span>Stop</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={!query.trim()}
+                    className={`absolute right-3 bottom-3 p-2.5 rounded-xl transition-all ${
+                      !query.trim()
+                        ? 'bg-gray-50 text-gray-400'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
+                    }`}
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                )}
               </div>
             </form>
           </div>

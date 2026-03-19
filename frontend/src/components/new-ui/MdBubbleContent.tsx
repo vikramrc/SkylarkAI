@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import InlineChart, { type ChartData } from './InlineChart';
-import { BarChart2, Table as TableIcon } from 'lucide-react';
+import { BarChart2, Table as TableIcon, Copy, Download, Check } from 'lucide-react';
 
 interface MdBubbleContentProps {
   content: string;
@@ -9,6 +9,7 @@ interface MdBubbleContentProps {
 const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
   const [showChartMap, setShowChartMap] = useState<Record<number, boolean>>({});
   const [chartTypeMap, setChartTypeMap] = useState<Record<number, 'bar' | 'pie'>>({});
+  const [copiedMap, setCopiedMap] = useState<Record<number, boolean>>({});
 
   if (!content) return null;
 
@@ -23,21 +24,58 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
     setChartTypeMap((prev) => ({ ...prev, [index]: type }));
   };
 
+  const handleCopyTable = (index: number, headers: string[], rows: string[][]) => {
+    const tsvContent = [headers.join('\t'), ...rows.map(r => r.join('\t'))].join('\n');
+    navigator.clipboard.writeText(tsvContent);
+    setCopiedMap((prev) => ({ ...prev, [index]: true }));
+    setTimeout(() => setCopiedMap((prev) => ({ ...prev, [index]: false })), 2000);
+  };
+
+  const handleExportCSV = (headers: string[], rows: string[][]) => {
+    // Escape quotes for CSV
+    const escapeContent = (str: string) => `"${str.replace(/"/g, '""')}"`;
+    const csvContent = [
+      headers.map(escapeContent).join(','), 
+      ...rows.map(r => r.map(escapeContent).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'table_data.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-4 text-base text-gray-800 leading-relaxed">
       {blocks.map((block, bIdx) => {
+        const lines = block.split('\n');
+        const hasPipeSeparator = lines.some(l => l.includes('|') && l.includes('---'));
+
         // Detect table
-        if (block.includes('|') && block.split('\n').some(line => line.trim().startsWith('|'))) {
-          const lines = block.split('\n').filter(l => l.trim().startsWith('|'));
-          if (lines.length < 2) return <p key={bIdx} className="whitespace-pre-wrap">{block}</p>;
+        if (hasPipeSeparator) {
+          const tableLines = lines.filter(l => l.includes('|'));
+          if (tableLines.length < 2) return <p key={bIdx} className="whitespace-pre-wrap">{block}</p>;
 
           // Extract headers and rows
-          const headerLine = lines[0];
-          const headers = headerLine.split('|').map(h => h.trim()).filter(Boolean);
+          const headerLine = tableLines[0];
+          // Support tables with or without leading/trailing pipes accurately triggers flawlessly trigger flawless flawless
+          const headers = headerLine.split('|').map(h => h.trim());
+          if (headers[0] === '') headers.shift();
+          if (headers[headers.length - 1] === '') headers.pop();
           
           // Skip the separator line (usually contains dashes ---)
-          const dataLines = lines.slice(1).filter(l => !l.includes('---'));
-          const rows = dataLines.map(line => line.split('|').map(c => c.trim()).filter(Boolean));
+          const dataLines = tableLines.slice(1).filter(l => !l.includes('---'));
+          const rows = dataLines.map(line => {
+             const cells = line.split('|').map(c => c.trim());
+             if (cells[0] === '') cells.shift();
+             if (cells[cells.length - 1] === '') cells.pop();
+             return cells;
+          });
 
           // Identify chartable numbers (rows should have a label and a number)
           const chartData: ChartData[] = [];
@@ -57,24 +95,27 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
           const isChartable = chartData.length > 0;
           const isShowingChart = showChartMap[bIdx] || false;
           const activeChartType = chartTypeMap[bIdx] || 'bar';
+          const isCopied = copiedMap[bIdx] || false;
 
           return (
             <div key={bIdx} className="my-4 relative">
-              {isChartable && (
-                <div className="flex items-center gap-2 mb-2">
-                  <button
-                    onClick={() => toggleChart(bIdx)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-200 ${
-                      isShowingChart 
-                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' 
-                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    {isShowingChart ? <TableIcon className="w-3.5 h-3.5" /> : <BarChart2 className="w-3.5 h-3.5" />}
-                    {isShowingChart ? 'Show Table' : 'Show Chart'}
-                  </button>
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  {isChartable && (
+                    <button
+                      onClick={() => toggleChart(bIdx)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-200 ${
+                        isShowingChart 
+                          ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' 
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {isShowingChart ? <TableIcon className="w-3.5 h-3.5" /> : <BarChart2 className="w-3.5 h-3.5" />}
+                      {isShowingChart ? 'Show Table' : 'Show Chart'}
+                    </button>
+                  )}
 
-                  {isShowingChart && (
+                  {isShowingChart && isChartable && (
                     <div className="flex p-0.5 bg-gray-100 rounded-lg border border-gray-200">
                       <button 
                         onClick={() => switchChartType(bIdx, 'bar')}
@@ -91,7 +132,27 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
                     </div>
                   )}
                 </div>
-              )}
+
+                {/* 🟢 Copy and Export Tool Bar flawless triggers flaws */}
+                <div className="flex items-center gap-1.5 ml-auto">
+                    <button
+                      onClick={() => handleCopyTable(bIdx, headers, rows)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200 shadow-xs"
+                      title="Copy as TSV"
+                    >
+                      {isCopied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      {isCopied ? 'Copied!' : 'Copy'}
+                    </button>
+                    <button
+                      onClick={() => handleExportCSV(headers, rows)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200 shadow-xs"
+                      title="Export CSV"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Export
+                    </button>
+                </div>
+              </div>
 
               {isShowingChart && isChartable ? (
                 <InlineChart type={activeChartType} data={chartData} title={headers[0]} />
