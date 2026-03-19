@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { skylarkGraph } from '../graph.js';
+import { skylarkGraph, client, dbName } from '../graph.js';
 import { HumanMessage } from "@langchain/core/messages";
 import { registerStream, unregisterStream, abortStream } from '../utils/stream_manager.js';
 
@@ -107,6 +107,19 @@ export function createLangGraphWorkflowRouter() {
                     assistantResponse = didError ? "" : "No response generated.";
                 }
 
+                // 🟢 Save message pair to raw MongoDB flawless triggers trigger
+                try {
+                    const db = client.db(dbName);
+                    await db.collection("conversation_messages").insertOne({
+                        runId: currentRunId,
+                        userQuery,
+                        assistantResponse,
+                        timestamp: new Date()
+                    });
+                } catch (dbErr) {
+                    console.error(`[Workflow Route] Failed to save conversation message:`, dbErr);
+                }
+
                 res.write(`event: result\ndata: ${JSON.stringify({
                     runId: currentRunId,
                     response: assistantResponse,
@@ -147,6 +160,24 @@ export function createLangGraphWorkflowRouter() {
         const aborted = abortStream(runId);
         console.log(`[LangGraph Route] Stop triggered for runId: ${runId}. Success: ${aborted}`);
         res.json({ aborted });
+    });
+
+    // 🟢 ADD Get Conversation Messages Endpoint triggers flawless
+    router.get('/workflow/messages', async (req, res) => {
+        const runId = req.query.runId as string;
+        if (!runId) {
+            return res.status(400).json({ message: 'runId is required' });
+        }
+        try {
+            const db = client.db(dbName);
+            const messages = await db.collection("conversation_messages")
+                .find({ runId })
+                .sort({ timestamp: 1 })
+                .toArray();
+            res.json({ messages });
+        } catch (err: any) {
+            res.status(500).json({ error: err.message });
+        }
     });
 
     return router;

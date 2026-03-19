@@ -131,4 +131,5 @@ const memorySaver = new MongoDBSaver({
     dbName 
 });
 
+export { client, dbName };
 export const skylarkGraph = workflow.compile({ checkpointer: memorySaver as any });

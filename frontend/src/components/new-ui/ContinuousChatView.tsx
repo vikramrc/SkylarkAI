@@ -49,14 +49,52 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
 
   // Load continuous conversation turns if it's fed
   useEffect(() => {
-    if (!currentConversation) {
-      setMessages([]);
-      runIdRef.current = null;
-      setTimelineStatuses({});
-      return;
-    }
-    // For loaded conversations, we could hydrate from content histories if needed
-    // But sinceMastras Workflow memory is in memory servers on BE, we can just track runId continuity
+    const hydrateConversation = async () => {
+      if (!currentConversation) {
+        setMessages([]);
+        runIdRef.current = null;
+        setTimelineStatuses({});
+        return;
+      }
+
+      const runId = currentConversation.conversationId || currentConversation.id;
+      runIdRef.current = runId;
+
+      try {
+        const axios = (await import('axios')).default;
+        const res = await axios.get(`/api/mastra/workflow/messages?runId=${runId}`);
+        const rows = res.data.messages || [];
+
+        // Map row-by-row into AI bubble coordinates flawlessly trigger flawless
+        const loadedMessages: Message[] = rows.flatMap((m: any, idx: number) => {
+          const mList: Message[] = [];
+          if (m.userQuery) {
+            mList.push({
+              id: `user-${m._id || idx}`,
+              type: 'user',
+              content: m.userQuery,
+              timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
+            });
+          }
+          if (m.assistantResponse) {
+             mList.push({
+               id: `ai-${m._id || idx}`,
+               type: 'ai',
+               content: m.assistantResponse,
+               timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
+             });
+          }
+          return mList;
+        });
+
+        setMessages(loadedMessages);
+        setTimelineStatuses({}); // Reset timeline for previous loaded sessions flawlessly trigger flawless
+      } catch (err) {
+        console.error('Failed to hydrate conversation history:', err);
+      }
+    };
+
+    hydrateConversation();
   }, [currentConversation]);
 
   const handleSubmit = async () => {

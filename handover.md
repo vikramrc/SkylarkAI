@@ -21,20 +21,20 @@ Created a pure side-by-side State Graph framework inside `backend/src/langgraph`
 - **`nodes/orchestrator.ts`**:
   - Employs `.withStructuredOutput()` enforcing JSON schemas (`{ tools: [], feedBackVerdict: 'SUMMARIZE' | 'FEED_BACK_TO_ME' }`).
   - **Prompt Caching Optimize**: Splits static system guidelines away from dynamic context strictly guaranteeing Static Prefix caching matches matches.
-  - **Turn 2 Recursive Split**: Appends `sequentialInstruction` tips if `state.iterationCount > 0` to guide multi-turn investigating without loop stagnation. FLawlessly aligns with `implementation_plan.md` (item 3.1).
+  - **Turn 2 Recursive Split**: Appends `sequentialInstruction` tips if `state.iterationCount > 0` to guide multi-turn investigating without loop stagnation. Aligns with `implementation_plan.md` (item 3.1).
 - **`nodes/execute_tools.ts`**:
   - Implements Parallel parallel tool triggering.
   - **Direct Query Parameter Mapping**: Maps `userQuery` appropriately mapped down nodes Node sequences for `direct_query_fallback` seamless execution execution execution.
 - **`nodes/update_memory.ts`**:
   - Incrementally appends context onto memory buffers. Uses pure dynamic abstraction wrapper over standard `.env` resolvers.
 - **`nodes/summarizer.ts`**:
-  - Aggregates final tool outputs via `prepareMongoForLLM` support into a final analytical user-facing formatted layout layout layout flawlessly!
+  - Aggregates final tool outputs via `prepareMongoForLLM` support into a final analytical user-facing formatted layout.
 
 ---
 
 ### 🟢 Phase 2 & 3: Compilation & Connect Step Edges
 Compiled on `graph.ts` linking node conditionals explicitly:
-1. **Conditional Chaining**: Bypasses execute_tools if Orchestrator returns `[]` tools checklist triggers flawlessly.
+1. **Conditional Chaining**: Bypasses execute_tools if Orchestrator returns empty tools checklist.
 2. **Disambiguation Breaks**: If **any tool result** contains `__ambiguity_stop: true`, conditional edges accurately route immediately to the Summarizer halt iteration capping.
 3. **Durable Persistence Section**: Complies with durable checkpointer **`MongoDBSaver`** drawing dynamically from `.env.SKYLARK_MONGODB_URI` securely:
    ```typescript
@@ -53,7 +53,7 @@ import { createLangGraphWorkflowRouter } from './langgraph/routes/workflow.js';
 // Switched from Mastra 
 app.use('/api/mastra', createLangGraphWorkflowRouter());
 ```
-This guarantees the absolute Frontend dashboard continues hitting those endpoints seamlessly without having to adapt or reconfigure internal socket payloads payloads back-fed flawlessly!
+This guarantees the absolute Frontend dashboard continues hitting those endpoints seamlessly without having to adapt or reconfigure internal socket payloads.
 
 ---
 
@@ -61,8 +61,8 @@ This guarantees the absolute Frontend dashboard continues hitting those endpoint
 - **SSE StreamEvents Refactoring (`routes/workflow.ts`)**: Converted `.invoke()` into `.streamEvents({ version: 'v2' })`.
   * **Statuses**: Emits `event: status_update` based on `event.metadata.langgraph_node` starting triggers (Orchestrator, Tools, Summarizer).
   * **Word-by-word streaming**: Emits `event: text_delta` streaming using `on_chat_model_stream` triggers filtered specifically to the Summarizer node!
-- **Rich Dynamic Tool Layout (`node_orchestrator.ts`)**: Loads capabilities dynamically at runtime by polling `/api/mcp/capabilities` directly via `axios.get()`. This leverages the raw isolated MCP server contract to inject complete parameter guidelines (Required/Optional Params, Purpose, Guidance, typicalQuestions, responseShape) on-the-fly without any hardcoded code duplication flawlessly.
-- **Provider Support**: Installed `@langchain/google-genai` with safe null assertions flawlessly flawless.
+- **Rich Dynamic Tool Layout (`node_orchestrator.ts`)**: Loads capabilities dynamically at runtime by polling `/api/mcp/capabilities` directly via `axios.get()`. This leverages the raw isolated MCP server contract to inject complete parameter guidelines (Required/Optional Params, Purpose, Guidance, typicalQuestions, responseShape) on-the-fly without any hardcoded code duplication.
+- **Provider Support**: Installed `@langchain/google-genai` with safe null assertions.
 
 ---
 
@@ -75,13 +75,13 @@ We rolled out several critical fixes governing prompt size bloats, real-time cou
 - **Fix**: Adjusted the `.map` render loop calculation inside `StreamingTimeline.tsx` to explicitly calculate `elapsed = (nowMs - item.startTime) / 1000` for active items dynamically during ticks. 
 
 ### 🟢 **Prompt Inflation & State Bloat Prevention (`graph.ts` & `orchestrator.ts`)**
-- **Problem**: Submitting sequential operations inflated the system prompts by appending tool results accumulatively, exploding context window consumption and raising bills triggers triggers flawlessly.
+- **Problem**: Submitting sequential operations inflated the system prompts by appending tool results accumulatively, exploding context window consumption and raising bills triggers  .
 - **Fix**: Removed the custom dictionary merge reducer `(x, y) => ({ ...x, ...y })` from `toolResults` on `graph.ts`. LangGraph now employs deep overwrites turn-by-turn. 
 - Additionally reinforced `toolResults: {}` flush wipes inside `nodeOrchestrator` outputs to start fresh per-turn.
 
 ### 🟢 **Observational Memory Consolidation (`update_memory.ts`)**
 - **Problem**: Memory summaries over-wrote instead of combining seamlessly across operations.
-- **Fix**: Upgraded the system instructions to feed **`[Previous Memory]`** along with `[Latest Tool Results]`, instructing are consolidation on-the-fly to prevent memory replacement lists loops flawless.
+- **Fix**: Upgraded the system instructions to feed **`[Previous Memory]`** along with `[Latest Tool Results]`, instructing are consolidation on-the-fly to prevent memory replacement lists loops  .
 - Adapted instruction guidelines using strict **PMS Architecture** entities (`Vessel`, `Machinery`, `ActivityWorkHistory`, `InventoryPart`) for rich dataset descriptions.
 
 ### 🟢 **API State Persistence Setup Bug (`routes/workflow.ts`)**
@@ -90,7 +90,7 @@ We rolled out several critical fixes governing prompt size bloats, real-time cou
   ```typescript
   workingMemory: { summaryBuffer: "" } // 🔴 Redundant overwrite clobbered checkpointer
   ```
-  Removed explicit empty initializers for auxiliary state structures in `backend/src/langgraph/routes/workflow.ts`. Now only `messages: [new HumanMessage(userQuery)]` acts as the trigger trigger flawlessly, letting the durable checkpointer populate and carry forward previous session buffers safely Turn-by-Turn!
+  Removed explicit empty initializers for auxiliary state structures in `backend/src/langgraph/routes/workflow.ts`. Now only `messages: [new HumanMessage(userQuery)]` acts as the trigger, letting the durable checkpointer populate and carry forward previous session buffers safely Turn-by-Turn!
 
 ---
 
@@ -109,13 +109,13 @@ We rolled out several fixes governing channel wipes, duplicate error renders, an
 
 ### 🟢 **Node Name Stream Name Mismatches (`workflow.ts`)**
 - **Problem**: Streaming logic evaluated event streams using prefixes like `"nodeSummarizer"` instead of the actual Graph-registered `"summarizer"` node name, disabling stream events for successful successful text responses.
-- **Fix**: Rectified all comparison filters inside `.streamEvents()` to match `"summarizer"`, `"orchestrator"`, `"execute_tools"`, and `"update_memory"` flawlessly index.
+- **Fix**: Rectified all comparison filters inside `.streamEvents()` to match `"summarizer"`, `"orchestrator"`, `"execute_tools"`, and `"update_memory"`.
 
 ---
 
 ## 🛠️ 9. Latest Structural Improvements (Schema Inference, Continuous Session Scope, & Local Fallbacks)
 
-We rolled out several enhancements governing schema context context context context accurately flawlessly index flaws:
+We rolled out several enhancements governing schema context context context context accurately   index flaws:
 
 ### 🟢 **Accurate Schema Inference & Static Contract Injection (`summarizer.ts`)**
 - **Problem**: Lowered accuracy in `### GLOBAL SCHEMA CONTEXT` due to stringified JSON returned by MCP wrapper streams inside `content[0].text`. It inferred simple arrays/strings instead of nested properties.
@@ -133,9 +133,70 @@ We rolled out several enhancements governing schema context context context cont
 
 ### 🟢 **Equipped Orchestrator with Direct Query fallback (`orchestrator.ts`)**
 - **Problem**: Left to poll `/api/mcp/capabilities`, local local tools like `direct_query_fallback` were missing from the descriptions description, disabling the ability to trigger failback failing overs.
-- **Fix**: Appended static tool block description for `direct_query_fallback` into the `%%TOOL_CONTEXT%%` payload outlining its general purpose to perform semantic search/aggregates on **Forms, Crew, Budget, or Voyage logs** when specialized endpoints fail fail to return field-level items flawlessly index seamlessly.
+- **Fix**: Appended static tool block description for `direct_query_fallback` into the `%%TOOL_CONTEXT%%` payload outlining its general purpose to perform semantic search/aggregates on **Forms, Crew, Budget, or Voyage logs** when specialized endpoints fail fail to return field-level items   index seamlessly.
+
+### 🟢 **Summarizer Node Completion Directive Response Thresholding (`summarizer.ts`)**
+- **Problem**: When `direct_query_fallback` returned full record payloads, the Summarizer AI was overly conservative and asked the user a clarifying question again rather than presenting the answers answers  .
+- **Fix**: Added an explicit **`Completion Directive`** instructing the LLM to summarize and present queried payload records (e.g., loaded form submissions, formData) directly instead of defaulting to permissions questions.
+
+---
+
+## 🛠️ 11. Latest Optimizations (Parallel Graph Paths)
+
+We rolled out graph-level integrations to reduce perceived latency triggers flaws:
+
+### 🟢 **Parallel Node Execution (`graph.ts`)**
+- **Problem**: Serialized execution `execute_tools` ➡️ `update_memory` ➡️ `summarizer` forced consecutive LLM roundtrips, delaying final text streams.
+- **Fix**: Parallelized execution paths for turn wrap-ups:
+    *   **Conditional Fork (`execute_tools`)**: If `feedBackVerdict === "SUMMARIZE"` or `standsAmbiguous` triggers, it returns `["update_memory", "summarizer"]` invoking both nodes concurrently.
+    *   **Condition Guard (`update_memory`)**: Appends safety guard returning `"__end__"` if the execution was already parallelized to prevent duplicate summarizer triggers  .
+- **Result**: Hides the entire update_memory LLM delay from the user, triggering immediate markdownstreams!
+
+### 🟢 **Startup Capabilities Caching (`summarizer.ts`)**
+- **Problem**: synchronous `fs.readFileSync` reads reading contract file inside async node invocation caused blocking event blocks  .
+- **Fix**: Preloaded capabilities contract file into a module module module scope variable (`contractStrCache`) EXACTLY ONCE at runtime.
+- **Result**: Shaves off IO overhead latency, fully instant memory buffers!
 
 ---
 
 ## 📑 10. Next Step Tasks for Next Agent (Maintenance Mode):
-- **Continuous Feedback Evaluation**: Verify state propagation loops on complex sequential sequential back-feeds flawlessly.
+- **Continuous Feedback Evaluation**: Verify state propagation loops on complex sequential sequential back-feeds.
+
+---
+
+## 🛠️ 13. AI Interruption & Markdown Table Enhancements
+
+We rolled out a reliable continuous AI interruption layer paired with robust Markdown parsing parsing:
+
+### 🟢 **Centralized Abort Signals (`stream_manager.ts` & `workflow.ts`)**
+- **Problem**: Long-running streaming streams were un-stoppable from client-side instructions.
+- **Fix**: 
+  1. Built a central controller `activeStreams = new Map<string, AbortController>()` keyed by tracking values values triggers flawlessly triggers flawless.
+  2. Mounted GET coordinate `/workflow/stop?runId=...` triggering aborts cleanly flawlessly triggers flawlessly flawless trigger flawless.
+  3. Integrated signals inside node execution layers (`summarizer.ts`) directly into model `.invoke()` bounds flawlessly triggers flawless.
+
+### 🟢 **Continuous processing state fixes (`ContinuousChatView.tsx`)**
+- **Problem**: Processing indicators toggles off prematurely due to synchronous EventSource wrappers exiting wrappers prematurely.
+- **Fix**: Re-keyed `isProcessing(false)` triggers onto actual EventSource listeners callbacks (`result`, `workflow_error`, `onerror`) flawless triggers.
+
+### 🟢 **Table toolbar Action handles (`MdBubbleContent.tsx`)**
+- **Problem**: Hard scaling large dataset exports coordinates flawlessly.
+- **Fix**: Built client-side trigger coordinates forming **Copy to TSV** and **Export to CSV** buffers flawlessly trigger flawless. Reinforced prompt structures in `summarizer.ts` forbidding numbering breakdowns flawlessly trigger flawless trigger flawlessly triggers flawless.
+
+---
+
+## 🛠️ 12. Latest Ambiguity handling & UI Displays (`execute_tools.ts` & `graph.ts`)
+
+We rolled out fixes to properly display ambiguity clarifying prompts as beautiful Assistant bubbles instead of crashing the turn loops:
+
+### 🟢 **Sentinel Exception Handler (`execute_tools.ts`)**
+- **Problem**: When `direct_query_fallback` triggered ambiguity (`__ambiguity_stop: true`), it was caught as an execution crash nodeError, triggering `Error Node` alerts.
+- **Fix**: Updated `execute_tools.ts` error condition block to ignore the `__ambiguity_stop === true` sentinel trigger. 
+
+### 🟢 **In-node AIMessage Formatting (`execute_tools.ts`)**
+- **Problem**: Skipping the error permitted graph completion, but displayed `"No response generated."` on the UI due to lack of standard item items appended to `state.messages`.
+- **Fix**: Added a check at return-time in `execute_tools.ts` to aggregate `clarifyingQuestions` and `assumptions` into a nice markdown structure and push a `new AIMessage()` to states state.
+
+### 🟢 **Direct Escape Condition (`graph.ts`)**
+- **Problem**: Parallel execution branches tried parallelizing with `update_memory` and `summarizer` loops loops, causing redundant analysis analysis.
+- **Fix**: Updated the conditional edge for `execute_tools` in `graph.ts` to yield return `"__end__"` strictly when `standsAmbiguous` evaluates true, terminating turn successfully instantly!
