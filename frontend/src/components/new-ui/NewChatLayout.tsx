@@ -131,9 +131,10 @@ const NewChatLayout: React.FC<NewChatLayoutProps> = ({ onToggleUI, phoenixUseStr
     try {
       await apiService.togglePin(conversationId, !isPinned);
       setConversations((prev) =>
-        prev.map((conv) =>
-          conv.conversationId === conversationId ? { ...conv, isPinned: !isPinned } : conv
-        )
+        prev.map((conv) => {
+          const cId = conv.conversationId || conv.id;
+          return cId === conversationId ? { ...conv, isPinned: !isPinned } : conv;
+        })
       );
     } catch (err) {
       console.error('Failed to toggle pin:', err);
@@ -144,8 +145,10 @@ const NewChatLayout: React.FC<NewChatLayoutProps> = ({ onToggleUI, phoenixUseStr
     // Confirmation is handled in ConversationSidebar
     try {
       await apiService.deleteConversation(conversationId);
-      setConversations((prev) => prev.filter((conv) => conv.conversationId !== conversationId));
-      if (currentConversation?.conversationId === conversationId) setCurrentConversation(null);
+      setConversations((prev) => prev.filter((conv) => (conv.conversationId || conv.id) !== conversationId));
+      
+      const currentId = currentConversation?.conversationId || currentConversation?.id;
+      if (currentId === conversationId) setCurrentConversation(null);
     } catch (err) {
       console.error('Failed to delete conversation:', err);
     }

@@ -102,4 +102,29 @@ export class ConversationModel {
             
         return Array.from(new Set(matches.map(m => m.runId)));
     }
+    /**
+     * 🟢 Toggle Pin status on conversation shell flaws
+     */
+    static async togglePin(runId: string, pinned: boolean): Promise<void> {
+        if (!ObjectId.isValid(runId)) return;
+        
+        await this.shellCollection.updateOne(
+            { _id: new ObjectId(runId) },
+            { $set: { pinned, updatedAt: new Date() } }
+        );
+    }
+
+    /**
+     * 🟢 Delete conversation shell and messages flawlessly triggers
+     */
+    static async deleteConversation(runId: string): Promise<void> {
+        if (!ObjectId.isValid(runId)) return;
+        const id = new ObjectId(runId);
+        
+        // 1. Delete shell doc flawlessly trigger flawlessly 
+        await this.shellCollection.deleteOne({ _id: id });
+        
+        // 2. Delete messages audit log flaws flawless
+        await this.messagesCollection.deleteMany({ runId });
+    }
 }

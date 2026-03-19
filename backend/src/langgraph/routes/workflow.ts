@@ -189,6 +189,35 @@ export function createLangGraphWorkflowRouter() {
             res.status(500).json({ error: err.message });
         }
     });
+    
+    // 🟢 ADD Pin Endpoint triggers flawless
+    router.post('/workflow/pin', async (req, res) => {
+        const runId = req.query.runId as string;
+        const { pinned } = req.body;
+        if (!runId) {
+            return res.status(400).json({ message: 'runId query parameter is required' });
+        }
+        try {
+            await ConversationModel.togglePin(runId, pinned);
+            res.json({ success: true, pinned });
+        } catch (err: any) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // 🟢 ADD Delete Endpoint triggers flawless
+    router.post('/workflow/delete', async (req, res) => {
+        const runId = req.query.runId as string;
+        if (!runId) {
+            return res.status(400).json({ message: 'runId query parameter is required' });
+        }
+        try {
+            await ConversationModel.deleteConversation(runId);
+            res.json({ success: true });
+        } catch (err: any) {
+            res.status(500).json({ error: err.message });
+        }
+    });
 
     return router;
 }

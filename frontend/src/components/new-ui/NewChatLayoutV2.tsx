@@ -65,6 +65,31 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
     setChatInstanceKey((k) => k + 1);
   };
 
+  const handleTogglePin = async (conversationId: string, isPinned: boolean) => {
+    try {
+      await apiService.togglePin(conversationId, !isPinned);
+      setConversations((prev) =>
+        prev.map((conv) => {
+          const cId = conv.conversationId || conv.id;
+          return cId === conversationId ? { ...conv, isPinned: !isPinned } : conv;
+        })
+      );
+    } catch (err) {
+      console.error('Failed to toggle pin:', err);
+    }
+  };
+
+  const handleDeleteConversation = async (conversationId: string) => {
+    try {
+      await apiService.deleteConversation(conversationId);
+      setConversations((prev) => prev.filter((conv) => (conv.conversationId || conv.id) !== conversationId));
+      const currentId = currentConversation?.conversationId || currentConversation?.id;
+      if (currentId === conversationId) setCurrentConversation(null);
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50/40">
       {/* Header */}
@@ -126,8 +151,8 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
           onSelectConversation={handleSelectConversation}
           onNewChat={handleNewChat}
-          onTogglePin={() => {}}
-          onDelete={() => {}}
+          onTogglePin={handleTogglePin}
+          onDelete={handleDeleteConversation}
           loading={loading}
           userEmail={userEmail ?? null}
         />

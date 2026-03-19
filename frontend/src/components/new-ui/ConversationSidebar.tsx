@@ -160,9 +160,9 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
                 <div className="space-y-2">
                   {pinnedConversations.map((conversation) => (
                     <ConversationItem
-                      key={conversation.conversationId}
+                      key={conversation.conversationId || conversation.id}
                       conversation={conversation}
-                      isActive={currentConversation?.conversationId === conversation.conversationId}
+                      isActive={(currentConversation?.conversationId || currentConversation?.id) === (conversation.conversationId || conversation.id)}
                       onSelect={onSelectConversation}
                       onTogglePin={onTogglePin}
                       onDelete={(id: string) => setConversationToDelete(id)}
@@ -181,9 +181,9 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
                 <div className="space-y-2">
                   {recentConversations.map((conversation) => (
                     <ConversationItem
-                      key={conversation.conversationId}
+                      key={conversation.conversationId || conversation.id}
                       conversation={conversation}
-                      isActive={currentConversation?.conversationId === conversation.conversationId}
+                      isActive={(currentConversation?.conversationId || currentConversation?.id) === (conversation.conversationId || conversation.id)}
                       onSelect={onSelectConversation}
                       onTogglePin={onTogglePin}
                       onDelete={(id: string) => setConversationToDelete(id)}
@@ -281,7 +281,8 @@ function ConversationItem({ conversation, isActive, onSelect, onTogglePin, onDel
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onTogglePin(conversation.conversationId, conversation.isPinned);
+              const convId = conversation.conversationId || conversation.id;
+              onTogglePin(convId, conversation.isPinned);
             }}
             className={`p-1 rounded hover:bg-gray-200 transition-colors ${
               conversation.isPinned ? 'text-primary-600' : 'text-gray-400'
@@ -292,7 +293,8 @@ function ConversationItem({ conversation, isActive, onSelect, onTogglePin, onDel
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onDelete(conversation.conversationId);
+              const convId = conversation.conversationId || conversation.id;
+              onDelete(convId);
             }}
             className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-colors"
           >
