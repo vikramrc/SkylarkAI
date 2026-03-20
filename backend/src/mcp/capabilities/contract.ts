@@ -52,6 +52,16 @@ export function getParameterDescription(param: string, requiredFields: string[])
       return `${requiredLabel} friendly vessel identifier within the resolved organization. Alternative to vesselID.`;
     case "vesselID":
       return `${requiredLabel} canonical raw vessel identifier. Not needed when vesselName is already provided.`;
+    case "listPTWForms":
+      return `${requiredLabel} flag. Set to true to list forms submitted using a PTW design template type. DO NOT use this to search filled answer values. Use 'fieldNames' instead.`;
+    case "listGlobalForms":
+      return `${requiredLabel} flag. Set to true to filter for forms submitted using a system/global template layout.`;
+    case "listNCForms":
+      return `${requiredLabel} flag. Set to true to filter for forms submitted using a Non-Conformity response layout.`;
+    case "listMandatoryIfOverdueForms":
+      return `${requiredLabel} flag. Set to true to filter for forms tied to mandatory-upon-overdue schedules.`;
+    case "fieldNames":
+      return `${requiredLabel} parameter: accepts an array or set (e.g., comma-separated) of field names/labels to scan inside populated form answers. Use this to find forms where specific contents have been filled out and selected.`;
     case "costCenterID":
     case "machineryID":
     case "scheduleID":
@@ -164,7 +174,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "limit"],
     purpose: "Returns overdue, upcoming, and recently completed maintenance work.",
     whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses.",
     whenNotToUse: "Do NOT use for historical failure analysis (use reliability) or deep execution comments (use execution_history).",
@@ -181,7 +191,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/execution-history",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "workHistoryID", "tagName", "tagNames", "taggedOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "limit"],
     purpose: "Returns recent maintenance execution events / Activity Work History (AWH), including completion status, costs, and comments.",
     whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution. Use this for all Activity Work History (AWH) queries.",
     typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated.", "Show me the latest committed AWH."],
@@ -320,7 +330,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/forms/status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "templateID", "status", "limit"],
+    optionalQuery: ["vesselID", "templateID", "status", "listGlobalForms", "listPTWForms", "listNCForms", "listMandatoryIfOverdueForms", "limit"],
     purpose: "Returns due, overdue, submitted, and committed forms.",
     whenToUse: "Tracking formal checklist/form submissions required for compliance or operations.",
     typicalQuestions: ["Are there missing checklists for departure?", "Show me rejected safety forms."],
@@ -331,10 +341,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/forms/contents",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["formId", "templateName", "activityWorkHistoryID", "status", "isSystemTemplate", "isPTW", "isNonConformity", "isMandatoryIfOverdue", "fieldLabelContains", "limit"],
+    optionalQuery: ["formId", "templateName", "activityWorkHistoryID", "status", "listGlobalForms", "listPTWForms", "listNCForms", "listMandatoryIfOverdueForms", "fieldNames", "limit"],
     purpose: "Returns full form submission answers with resolved question labels, field values, attachment filenames, and DMS document references.",
-    whenToUse: "Use when the user wants to read what was actually submitted in a form — the question-answer pairs, uploaded file names, or linked DMS documents. Accepts either a direct formId, templateName, or activityWorkHistoryID. If templateName is provided, the tool resolves all matching submissions automatically. If activityWorkHistoryID is provided, it returns all forms filled out for that specific work history task. Use fieldLabelContains to filter templates that contain a specific field label (e.g., fieldLabelContains='PTW' finds forms with a field labelled 'PTW Checklist'). For all forms returned, it also enriches with full Activity Work History summary details if available.",
-    whenNotToUse: "Do NOT use for high-level listing or counting form submissions (use forms.query_status instead).",
+    whenToUse: "Use when the user wants to read what was actually submitted in a form — the question-answer pairs, uploaded file names, or linked DMS documents. Accepts either a direct formId, templateName, or activityWorkHistoryID. If templateName is provided, the tool resolves all matching submissions automatically. If activityWorkHistoryID is provided, it returns all forms filled out for that specific work history task. Use fieldNames to filter templates that contain specific field labels (e.g., fieldNames='PTW' finds forms with a field labelled 'PTW Checklist'). Supports array or comma-separated lists of names. DO NOT use listPTWForms or listNCForms to search inside filled contents; they are purely template metadata filters. For all forms returned, it also enriches with full Activity Work History summary details if available.",
+    whenNotToUse: "Do NOT use for high-level listing or counting form submissions (use forms.query_status instead). **Do NOT use when the user primarily wants to inspect full Activity Work History execution events, man-hours, or maintenance comments alone (use `maintenance.query_execution_history` instead)**.",
     typicalQuestions: ["What did they say in the Risk Form?", "Show me attached files for form 123", "What answers were logged for task 456?"],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
