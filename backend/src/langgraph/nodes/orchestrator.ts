@@ -20,6 +20,36 @@ export const orchestratorSchema = z.object({
     reasoning: z.string().describe("Quick thought process supporting the tool picks.")
 });
 
+// 🟢 Global Module-Level Cache for multitenant startup-once speedups
+let capabilitiesCache: any[] = [];
+let capabilitiesLoadPromise: Promise<any[]> | null = null;
+
+async function getCapabilitiesCached(backendUrl: string, params: any): Promise<any[]> {
+    if (capabilitiesCache.length > 0) return capabilitiesCache;
+    if (capabilitiesLoadPromise) return capabilitiesLoadPromise;
+
+    console.log(`\x1b[36m[Orchestrator] 📄 Loading capabilities cache for the first time...\x1b[0m`);
+    capabilitiesLoadPromise = (async () => {
+        try {
+            const https = await import('https');
+            const axios = (await import('axios')).default;
+            const response = await axios.get(`${backendUrl}/api/mcp/capabilities`, {
+                params,
+                httpsAgent: new https.Agent({ rejectUnauthorized: false })
+            });
+            capabilitiesCache = (response.data.capabilities || [])
+                .sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
+            console.log(`\x1b[32m[Orchestrator] ✅ Loaded ${capabilitiesCache.length} capabilities into global cache\x1b[0m`);
+        } catch (error: any) {
+            console.error("[LangGraph Orchestrator] Failed to fetch raw capabilities:", error.message);
+            capabilitiesLoadPromise = null; // 🟢 Clear promise lock so next requests can retry
+        }
+        return capabilitiesCache;
+    })();
+
+    return capabilitiesLoadPromise;
+}
+
 export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<SkylarkState>> {
     console.log(`[LangGraph] ▶ Orchestrator Node invoked (Iteration: ${state.iterationCount || 0})`);
     
@@ -59,21 +89,13 @@ You are currently on a follow-up turn investigating further based on previous to
 2. DO NOT repeat the exact same tool calls with the same parameters if they returned empty/complete results.
 3. If no further tool calls can help, set 'feedBackVerdict' to 'SUMMARIZE' to wrap up.`
         : "";
-    // 🟢 Fetch raw capabilities directly from the backend to preserve ALL keys (Guidance, Shapes, Options)
+        
     const backendUrl = process.env.PHOENIX_CLOUD_URL || 'https://localhost:3000';
     const params = { organizationID: process.env.PHOENIX_CLOUD_ORGANIZATION_ID || "" };
     
-    let baseCapabilitiesContract: any[] = [];
-    try {
-        const response = await axios.get(`${backendUrl}/api/mcp/capabilities`, {
-            params,
-            httpsAgent: new https.Agent({ rejectUnauthorized: false })
-        });
-        baseCapabilitiesContract = (response.data.capabilities || [])
-            .sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
-    } catch (error: any) {
-        console.error("[LangGraph Orchestrator] Failed to fetch raw capabilities:", error.message);
-    }
+    // 🟢 Use Global Cache flawlessly triggers
+    const baseCapabilitiesContract = await getCapabilitiesCached(backendUrl, params);
+
 
     const toolDetails = baseCapabilitiesContract.map((c: any) => {
         // Fetch canonical required/optional queries before normalization just to render detail

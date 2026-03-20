@@ -39,7 +39,13 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
     try {
       setLoading(true);
       const response = await apiService.getConversations({ page: 1, pageSize });
-      setConversations(response?.conversations || []);
+      const items = response?.conversations || [];
+      const map = new Map();
+      for (const c of items) {
+          const id = c.conversationId || c.id;
+          if (id && !map.has(id)) map.set(id, c);
+      }
+      setConversations(Array.from(map.values()));
     } catch (err) {
       console.error('Failed to load conversations:', err);
     } finally {
@@ -49,11 +55,20 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
 
   const handleNewConversation = (conversation: any) => {
     setCurrentConversation(conversation);
-    setConversations((prev) => [conversation, ...prev]);
+    setConversations((prev) => {
+        const id = conversation.conversationId || conversation.id;
+        if (prev.some(c => (c.conversationId || c.id) === id)) return prev;
+        return [conversation, ...prev];
+    });
   };
 
   const handleConversationUpdate = (updatedConversation: any) => {
     setCurrentConversation(updatedConversation);
+    setConversations((prev) => prev.map(conv => {
+        const cId = conv.conversationId || conv.id;
+        const uId = updatedConversation.conversationId || updatedConversation.id;
+        return cId === uId ? updatedConversation : conv;
+    }));
   };
 
   const handleSelectConversation = async (conversation: any) => {

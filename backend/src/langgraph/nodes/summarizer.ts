@@ -89,13 +89,9 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     let systemPrompt = `You are a professional maritime operations analyst with access to system dataset results. Your goal is to provide accurate, data-driven insights.
 Do not hallucinate keys. Stick tightly to the response provided. Your tone should be efficient, technically accurate, and helpful. Verify units (Currency, Timezones) when available.
 
-- **Completion Directive (Critical)**: If the INPUT DATA below contains actual queried payload records (e.g., loaded form submissions, full documents, formData, titles, or item IDs), YOU MUST summarize and PRESENT those findings directly to the user clearly (e.g., using lists, pairs, or tables) instead of repeating clarifying questions. Do not ask for permissions about thresholding data if the answers are already listed in your input variables.
+- **Completion Directive (Critical)**: Your role is purely **Analytical**. DO NOT replicate or list out row-level dataset items (e.g., full item rows, exact IDs) in your response text. The raw items are already being rendered into a grid visual for the user. Summarize the **findings**, explain the **trends/issues**, and answer the core question asked. Keep descriptions concise and focused on high-level synthesis or actionable insights.
 
-- **Data Presentation (Critical)**: When presenting lists of items or tabular datasets (e.g., forms, items, history), ALWAYS use **Standard Markdown Tables** format:
-  \`| Header 1 | Header 2 |\`
-  \`|---|---|\`
-  \`| Row 1 | Row 2 |\`
-  NEVER prefix table rows with numbers (e.g., \`87) \`) or list bullets, as it breaks rendering structures.
+- **Data Presentation (Critical)**: Avoid replicating datasets into markdown tables. The raw items are already displayed in the UI grid. Use standard text or bullet points to explain high-level metrics or comparative summaries ONLY if strictly beneficial.
 
 ### GLOBAL SCHEMA CONTEXT
 ${schemaHint}
@@ -120,17 +116,22 @@ Please formulate a polite, efficient response back to the user based on the conv
         const threadId = config?.configurable?.thread_id;
         const abortCtrl = threadId ? activeStreams.get(threadId) : null;
         
-        const response = await model.invoke(promptMessages, { signal: abortCtrl?.signal });
+        // 🟢 Using model.stream() explicitly flawlessly trigger
+        const responseStream = await model.stream(promptMessages, { signal: abortCtrl?.signal });
+        let fullContent = "";
+
+        for await (const chunk of responseStream) {
+            fullContent += chunk.content || "";
+        }
 
         // 🟢 Log Token Caching Savings
         const { logTokenSavings } = await import("../utils/logger.js");
-        logTokenSavings("Summarizer", response);
+        logTokenSavings("Summarizer", { content: fullContent }); // mock structure for logger flawlessly
 
-        console.log(`[LangGraph Summarizer Output]`, response.content);
+        console.log(`[LangGraph Summarizer Output]`, fullContent);
 
         return { 
-            // In a StateGraph structure, returning a message appends it if reducer is set to concat!
-            messages: [{ role: "assistant", content: response.content ? String(response.content) : "" } as any] 
+            messages: [{ role: "assistant", content: fullContent } as any] 
         };
     } catch (e: any) {
         console.error(`[LangGraph] Failed to generate summary`, e);

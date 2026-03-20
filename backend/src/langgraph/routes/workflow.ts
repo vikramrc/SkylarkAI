@@ -46,6 +46,7 @@ export function createLangGraphWorkflowRouter() {
                 // 3. Stream LangGraph Events
                 const eventStream = (skylarkGraph as any).streamEvents({
                     messages: [new HumanMessage(userQuery)],
+                    iterationCount: 0, // 🟢 Reset each turn to enable autonomous loops flawless!
                 }, {
                     version: "v2",
                     configurable: { thread_id: currentRunId },
@@ -81,6 +82,14 @@ export function createLangGraphWorkflowRouter() {
                         res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: errorMsg })}\n\n`);
                     }
 
+                    // 🟢 D. Emit Raw Tool Results immediately after execution finishes triggers
+                    if (event.event === "on_chain_end" && event.metadata?.langgraph_node === "execute_tools") {
+                        const output = event.data.output;
+                        if (output && output.toolResults) {
+                            res.write(`event: tool_results\ndata: ${JSON.stringify({ results: output.toolResults })}\n\n`);
+                        }
+                    }
+
                     // 🟢 B. Word-by-Word Streaming from Summarizer OR Error Node LLMs
                     if (event.event === "on_chat_model_stream" && 
                         (event.metadata?.langgraph_node === "summarizer" || event.metadata?.langgraph_node === "errorNode")) {
@@ -114,7 +123,10 @@ export function createLangGraphWorkflowRouter() {
 
                 // 🟢 Save message pair using Model flawless trigger flawlessly
                 try {
-                    await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse);
+                    const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
+                    const toolResults = finalState.values?.toolResults;
+                    
+                    await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse, toolResults);
                     await ConversationModel.upsertShell(currentRunId, userQuery);
                 } catch (dbErr) {
                     console.error(`[Workflow Route] Failed to save conversation message:`, dbErr);

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import MdBubbleContent from './MdBubbleContent';
 import StreamingTimeline from './StreamingTimeline';
 import InlineDisambiguation from './InlineDisambiguation';
+import ResultTable from './ResultTable';
 
 interface ContinuousChatViewProps {
   currentConversation: any | null;
@@ -13,7 +14,7 @@ interface ContinuousChatViewProps {
 
 interface Message {
   id: string;
-  type: 'user' | 'ai' | 'disambiguation' | 'timeline';
+  type: 'user' | 'ai' | 'disambiguation' | 'timeline' | 'table';
   content: any;
   timestamp: Date;
 }
@@ -58,6 +59,13 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
       }
 
       const runId = currentConversation.conversationId || currentConversation.id;
+
+      // 🟢 GUARD: Skip re-hydration/wiping for active live stream turns flawlessly flawlessly
+      if (runId && runId === runIdRef.current) {
+          console.log(`[Hydrate] Same conversation detected (${runId}). Skipping re-hydration to preserve memory buffers.`);
+          return;
+      }
+
       runIdRef.current = runId;
 
       try {
@@ -75,6 +83,14 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
               content: m.userQuery,
               timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
             });
+          }
+          if (m.toolResults && Object.keys(m.toolResults).length > 0) {
+             mList.push({
+               id: `tool-${m._id || idx}-hist`,
+               type: 'table',
+               content: m.toolResults,
+               timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
+             });
           }
           if (m.assistantResponse) {
              mList.push({
@@ -127,7 +143,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
     setMessages((prev) => [...prev, userMessage]);
 
     // Timeline trigger (Simulate progression since HTTP Post is single response)
-    const tlId = `tl-${Date.now()}`;
+    const tlId = `tl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     setTimelineStatuses((prev) => ({
       ...prev,
       [tlId]: {
@@ -160,7 +176,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
       eventSourceRef.current = eventSource; // 🟢 Save ref triggers cancel trigger flaws flaws triggers flaws triggers flaws flawless
       
       let fullAiText = '';
-      const aiMessageId = `ai-${Date.now()}`;
+      const aiMessageId = `ai-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       let aiMessageMounted = false;
 
       // EventSource doesn't support headers natively for Cookie support, but works natively for transparent domains.
@@ -199,6 +215,18 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                      ...prev,
                      [tlId]: { ...(prev[tlId] || {}), stage: data.stage || 'execute', message: data.message }
                  }));
+             }
+         } catch {}
+      });
+
+      eventSource.addEventListener('tool_results', (e: any) => {
+         try {
+             const data = JSON.parse(e.data);
+             if (data.results) {
+                 setMessages((prev) => [
+                     ...prev,
+                     { id: `tool-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, type: 'table', content: data.results, timestamp: new Date() }
+                 ]);
              }
          } catch {}
       });
@@ -272,12 +300,13 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
       setMessages((prev) => [
         ...prev,
         {
-          id: `ai-err-${Date.now()}`,
+          id: `ai-err-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           type: 'ai',
           content: `⚠️ **Error Execution Pipeline**: ${error.message || 'Workflow Request Failed'}`,
           timestamp: new Date(),
         },
       ]);
+
       setTimelineStatuses((prev) => ({
           ...prev,
           [tlId]: { ...(prev[tlId] || {}), stage: 'error', message: error.message || 'Workflow Request Failed' }
@@ -420,8 +449,22 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                     <InlineDisambiguation conversation={message.content} onComplete={() => {}} phoenixUseStream={false} />
                   </div>
                 )}
+                {message.type === 'table' && (
+                  <div className="max-w-4xl mx-auto w-full mb-4 animate-fade-in-up">
+                    <ResultTable results={message.content} />
+                  </div>
+                )}
               </div>
             ))}
+            {/* 🟢 Glowing Orb Loader for Pending Summaries stream layouts */}
+            {isProcessing && messages.length > 0 && messages[messages.length - 1].type !== 'ai' && (
+              <div className="max-w-2xl mx-auto w-full mt-4 flex justify-start animate-fade-in-up">
+                <div className="flex items-center space-x-2 text-indigo-500 text-sm font-medium px-5 py-3 bg-white border border-gray-100 rounded-xl shadow-sm animate-pulse">
+                   <div className="w-2 h-2 bg-indigo-500 rounded-full animate-ping" />
+                   <span className="text-gray-600">Generating analytical synthesis...</span>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
         )}

@@ -76,7 +76,7 @@ workflow.addConditionalEdges(
 
       // 🟢 Parallelization Optimization: 
       // If we are summarizing, run BOTH update_memory and summarizer in parallel branches concurrently.
-      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || (state.iterationCount || 0) >= 2;
+      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || (state.iterationCount || 0) >= 3;
       
       if (isSummarizing) {
           return ["update_memory", "summarizer"];
@@ -103,7 +103,7 @@ workflow.addConditionalEdges(
 
       // 🟢 Parallelization Guard:
       // If we were already summarizing (parallel branches), just END this node's branch to prevent double triggers on summarizer.
-      const wasSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 2;
+      const wasSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 3;
       if (wasSummarizing) {
           return "__end__"; 
       }

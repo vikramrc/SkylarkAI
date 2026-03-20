@@ -12,8 +12,8 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
 
     let nodeError: string | undefined = undefined;
 
-    await Promise.all(
-        calls.map(async (toolCall: any) => {
+    const executedResults = await Promise.all(
+        calls.map(async (toolCall: any, index: number) => {
             const name = typeof toolCall === "string" ? toolCall : toolCall.name;
             const args = toolCall.args || {};
 
@@ -45,19 +45,23 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
 
                     const result = await tool.execute(inputArgs, contextMock); 
                     console.log(`[LangGraph Execute] ${sanitizedName} Result Preview: ${JSON.stringify(result).slice(0, 251)}...`);
+                    
                     // Breakout if payload carries error: true (Validation failures proxy layer responses flawless)
                     if (result && result.__ambiguity_stop === true) {
-                        outputs[name] = result; // 🟢 Pass ambiguity sentinel unharmed breakouts breakouts flawlessly!
+                        return { name, result, index, ambiguity: true };
                     } else if (result && (result.error === true || result.status === 'error' || result.success === false)) {
                         nodeError = `[Execute Tool ${sanitizedName} Failure]: ${result.message || JSON.stringify(result)}`;
+                        return { name, index, result: null };
                     } else {
-                        outputs[name] = result;
+                        return { name, index, result };
                     }
                 } catch (e: any) {
                     nodeError = `[Execute Tool ${sanitizedName} Error]: ${e.message || String(e)}`;
+                    return { name, index, result: null };
                 }
             } else {
                 nodeError = `Tool ${name} (sanitized: ${sanitizedName}) not found in skylarkTools`;
+                return { name, index, result: null };
             }
         })
     );
@@ -65,6 +69,17 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
     if (nodeError) {
         return { error: nodeError };
     }
+
+    // 🟢 Sequentially populate dictionary to avoid race condition overwrite triggers!
+    executedResults.forEach((item: any) => {
+        if (!item || item.result === null) return;
+        const { name, index, result } = item;
+        let key = name;
+        if (outputs[key] !== undefined) {
+            key = `${name}_${index}`; // 🟢 Append suffix index safely sequential flaws trigger flawless
+        }
+        outputs[key] = result;
+    });
 
     // 🟢 Format Ambiguity Response for UI Bubble Display
     let finalMessageContent = "";

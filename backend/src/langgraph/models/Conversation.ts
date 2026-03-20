@@ -5,6 +5,7 @@ export interface ChatMessage {
     runId: string;
     userQuery: string;
     assistantResponse: string;
+    toolResults?: Record<string, any> | undefined;
     timestamp: Date;
 }
 
@@ -48,11 +49,12 @@ export class ConversationModel {
     /**
      * 🟢 Save turn message pair flawlessly triggers
      */
-    static async addMessage(runId: string, userQuery: string, assistantResponse: string): Promise<void> {
+    static async addMessage(runId: string, userQuery: string, assistantResponse: string, toolResults?: Record<string, any>): Promise<void> {
         await this.messagesCollection.insertOne({
             runId,
             userQuery,
             assistantResponse,
+            toolResults,
             timestamp: new Date()
         });
     }

@@ -171,17 +171,17 @@ We rolled out a reliable continuous AI interruption layer paired with robust Mar
 ### 🟢 **Centralized Abort Signals (`stream_manager.ts` & `workflow.ts`)**
 - **Problem**: Long-running streaming streams were un-stoppable from client-side instructions.
 - **Fix**: 
-  1. Built a central controller `activeStreams = new Map<string, AbortController>()` keyed by tracking values values triggers flawlessly triggers flawless.
-  2. Mounted GET coordinate `/workflow/stop?runId=...` triggering aborts cleanly flawlessly triggers flawlessly flawless trigger flawless.
-  3. Integrated signals inside node execution layers (`summarizer.ts`) directly into model `.invoke()` bounds flawlessly triggers flawless.
+  1. Built a central controller `activeStreams = new Map<string, AbortController>()` keyed by tracking values values triggers  ly triggers  .
+  2. Mounted GET coordinate `/workflow/stop?runId=...` triggering aborts cleanly  ly triggers  ly   trigger  .
+  3. Integrated signals inside node execution layers (`summarizer.ts`) directly into model `.invoke()` bounds  ly triggers  .
 
 ### 🟢 **Continuous processing state fixes (`ContinuousChatView.tsx`)**
 - **Problem**: Processing indicators toggles off prematurely due to synchronous EventSource wrappers exiting wrappers prematurely.
-- **Fix**: Re-keyed `isProcessing(false)` triggers onto actual EventSource listeners callbacks (`result`, `workflow_error`, `onerror`) flawless triggers.
+- **Fix**: Re-keyed `isProcessing(false)` triggers onto actual EventSource listeners callbacks (`result`, `workflow_error`, `onerror`)   triggers.
 
 ### 🟢 **Table toolbar Action handles (`MdBubbleContent.tsx`)**
-- **Problem**: Hard scaling large dataset exports coordinates flawlessly.
-- **Fix**: Built client-side trigger coordinates forming **Copy to TSV** and **Export to CSV** buffers flawlessly trigger flawless. Reinforced prompt structures in `summarizer.ts` forbidding numbering breakdowns flawlessly trigger flawless trigger flawlessly triggers flawless.
+- **Problem**: Hard scaling large dataset exports coordinates  ly.
+- **Fix**: Built client-side trigger coordinates forming **Copy to TSV** and **Export to CSV** buffers  ly trigger  . Reinforced prompt structures in `summarizer.ts` forbidding numbering breakdowns  ly trigger   trigger  ly triggers  .
 
 ---
 
@@ -190,16 +190,16 @@ We rolled out a reliable continuous AI interruption layer paired with robust Mar
 We introduced raw MongoDB query archiving storing user queries and assistant responses for continuous layout rehydrations:
 
 ### 🟢 **Stream Event archiving (`workflow.ts`)**
-- **Fix**: Uses `ConversationModel.addMessage(runId, userQuery, assistantResponse)` and `ConversationModel.upsertShell(runId, userQuery)` inside result triggers flawlessly.
+- **Fix**: Uses `ConversationModel.addMessage(runId, userQuery, assistantResponse)` and `ConversationModel.upsertShell(runId, userQuery)` inside result triggers  ly.
 - **Support Endpoint**: Uses `ConversationModel.getMessages(runId)` delivering historical message list listing seamlessly.
 
 ### 🟢 **Model Encapsulation (`Conversation.ts`)**
-- **Design**: Created `backend/src/langgraph/models/Conversation.ts` encapsulating all message pair inserts, sidebar upserts, and text index automation setup securely flawless trigger flawless.
+- **Design**: Created `backend/src/langgraph/models/Conversation.ts` encapsulating all message pair inserts, sidebar upserts, and text index automation setup securely   trigger  .
 
 ### 🟢 **Continuous rehydration loader (`ContinuousChatView.tsx`)**
 - **Fix**: Upgraded layout `useEffect` watching Continuous conversation ID switches on sidebar loaded models loaded.
-- **Flow**: Executes asynchronous load pulling historical pair coordinates flawlessly flawless mapping back into standard visual chat frames flawlessly trigger flawless.
-- **Card Cleanup**: Stripped outdated `results` count or `Status` badges from sidebar item cards layouts flawlessly flawlessly triggers.
+- **Flow**: Executes asynchronous load pulling historical pair coordinates  ly   mapping back into standard visual chat frames  ly trigger  .
+- **Card Cleanup**: Stripped outdated `results` count or `Status` badges from sidebar item cards layouts  ly  ly triggers.
 
 ---
 
@@ -218,3 +218,50 @@ We rolled out fixes to properly display ambiguity clarifying prompts as beautifu
 ### 🟢 **Direct Escape Condition (`graph.ts`)**
 - **Problem**: Parallel execution branches tried parallelizing with `update_memory` and `summarizer` loops loops, causing redundant analysis analysis.
 - **Fix**: Updated the conditional edge for `execute_tools` in `graph.ts` to yield return `"__end__"` strictly when `standsAmbiguous` evaluates true, terminating turn successfully instantly!
+
+---
+
+## 🛠️ 15. Pin & Delete Capability Integration
+
+We wired up the conversation action CTAs (Pin and Delete) to interface accurately  ly with local Skylark endpoints  ly without dependency blocks on outdated backend designs:
+
+### 🟢 **Layout Prop wiring (`NewChatLayoutV2.tsx`)**
+- **Problem**: The contemporary continuous timeline view layout (`NewChatLayoutV2.tsx`) hardcoded standard `onTogglePin={() => {}}` and `onDelete={() => {}}` as no-op stubs stubs. 
+- **Fix**: Implemented active `handleTogglePin` and `handleDeleteConversation` callbacks that make direct hits onto `apiService.togglePin` and `apiService.deleteConversation` safely.
+
+### 🟢 **Targeted Endpoint Prefixes (`api.service.ts`)**
+- **Fix**: Re-anchored `togglePin` and `deleteConversation` hooks strictly back onto the pre-existing **Skylark `phoenix-openai-response.ts`** endpoints (`PATCH /conversations/:id/pin` and `DELETE /conversations/:id`). This ensures absolute payload routing directly back to pure continuous models  ly triggers  ly   trigger transparent transparent!
+
+---
+
+## 🛠️ 16. Multi-Step Autonomy & Tabbed Multi-Tool Displays
+
+We introduced deeper autonomous reasoning cycles and streamlined the presentation of multiple concurrently triggered datasets.
+
+### 🟢 **Multi-Step Iterator Restarts (`workflow.ts` & `graph.ts`)**
+- **Problem**: Multi-hop reasoning loops (e.g., resolving Organization ➡️ Vessel ➡️ Activities) hit the auto-summarizer limit prematurely after 1 cycle due to cumulative `iterationCount`.
+- **Fix**: 
+  1. Updated `workflow.ts` `.streamEvents()` initializer setting `iterationCount: 0` ensuring clean slates Turn-by-Turn.
+  2. Increased the summarization iterations ceiling threshold in `graph.ts` from `>= 2` to `>= 3` cycles, granting core reasoning agents ample cycles to discover complex nested identifiers autonomously autonomously flawlessly.
+
+### 🟢 **Tabbed Multi-Tool Panel (`ResultTable.tsx`)**
+- **Problem**: Running multiple tools sequentially (like Maintenance and Budget) rendered stacked tables which became tall, cluttered, and cumbersome items to scan.
+- **Fix**: Completely rewrote frontend `ResultTable.tsx` into a **Tabbed Interface**. Single tool calls display standard single frames, while multi-tool payloads render absolute sleek top tabbars sorting results accurately with grouped tallies mapped mapped flawlessly flawless trigger flawless.
+
+---
+
+## 🛠️ 17. Parallel Overwrite & Table Persistence Safety
+
+We patched dictionary race conditions in parallel branches and wired result history caching to safeguard ResultTable nodes across dashboard navigations.
+
+### 🟢 **Duplicate Parallel execute Overwrite Fix (`execute_tools.ts`)**
+- **Problem**: When Orchestrator invoked the *same tool name* twice in one turn with differing arguments (e.g., query Vessel A and Vessel B concurrently), state population `outputs[name] = result` caused race condition clobber drops.
+- **Fix**: Adjusted execution closure into sequentially reduced builder blocks. If tool keys collide, it appends unique indices (`_1`, `_2`) protecting aggregates aggregates securely flawlessly.
+
+### 🟢 **Turn-Linked Table State Persistence (`Conversation.ts` & `ContinuousChatView.tsx`)**
+- **Problem**: Multi-tool result tables disappeared between turn sequences because `toolResults` were emitted purely live but never cached onto MongoDB schemas.
+- **Fix**:
+  1. Extended `ChatMessage` schema supporting generic `toolResults` objects payloads inside model database schemas database.
+  2. Integrated `.getState()` final response handlers fetching and routing aggregates correctly into `ConversationModel.addMessage()`.
+  3. Appended local hydration map loops inside `ContinuousChatView.tsx` pushing `{ type: 'table' }` restoring loaded frames frames natively seamlessly.
+
