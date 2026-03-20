@@ -51,7 +51,7 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     let jsonlData = '';
 
     if (results.length > 0) {
-        // 🟢 Unpack MCP Wrapper accurately flawlessly index
+        // 🟢 Unpack MCP Wrapper accurately
         const unpackedResults = results.map((res: any) => {
             let data = res;
             if (data?.content?.[0]?.text) {
@@ -65,11 +65,43 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
             return data;
         });
 
-        const prepped = prepareMongoForLLM(unpackedResults);
+        // 🔴 CRITICAL FIX: extract the actual *items* arrays from each tool result wrapper
+        // Before this fix, prepareMongoForLLM received [{capability, items:[...], summary:{}}]
+        // which flattened the outer wrapper shape instead of the actual 100 data rows.
+        // Now we extract items[] from each result (falling back to the whole object if no items key).
+        const allItems: any[] = [];
+        for (const result of unpackedResults) {
+            const capability = result?.capability ?? 'unknown';
+            const items = Array.isArray(result?.items) ? result.items : [result];
+            // Tag each row with its source tool so the LLM can distinguish multi-tool responses
+            for (const item of items) {
+                allItems.push({ _tool: capability, ...item });
+            }
+        }
+
+        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📐 Flattening ${allItems.length} total rows across ${unpackedResults.length} tool result(s)\x1b[0m`);
+        const beforeSize = JSON.stringify(allItems).length;
+
+        const prepped = prepareMongoForLLM(allItems);
         schemaHint = prepped.schemaHint;
         jsonlData = prepped.jsonlData;
 
-        // 🟢 Inject Static Contract Shape flawlessly flaws
+        const afterSize = jsonlData.length;
+        const savingsPct = beforeSize > 0 ? (((beforeSize - afterSize) / beforeSize) * 100).toFixed(1) : '0';
+        const parsedPayload = JSON.parse(jsonlData) as { headers: string[], rows: any[][] };
+
+        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📊 Payload Compression Report:\x1b[0m`);
+        console.log(`  ➡ Raw items size:    ${beforeSize} chars`);
+        console.log(`  ➡ Flattened size:    ${afterSize} chars  (${savingsPct}% reduction)`);
+        console.log(`  ➡ Header columns:    ${parsedPayload.headers.length}`);
+        console.log(`  ➡ Row count:         ${parsedPayload.rows.length}`);
+        console.log(`  ➡ Headers preview:   ${JSON.stringify(parsedPayload.headers.slice(0, 20))}${parsedPayload.headers.length > 20 ? ` ... (+${parsedPayload.headers.length - 20} more)` : ''}`);
+        // Log first row sample so we can visually verify alignment
+        if (parsedPayload.rows.length > 0) {
+            console.log(`  ➡ Row[0] sample:     ${JSON.stringify((parsedPayload.rows[0] ?? []).slice(0, 10))}...`);
+        }
+
+        // 🟢 Inject Static Contract Shape
         const firstItem = unpackedResults[0];
         const capabilityName = firstItem?.capability;
         if (capabilityName && contractStrCache) {
@@ -79,6 +111,7 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
                 if (match && match[1]) {
                     const staticShape = match[1].replace(/\s+/g, ' ');
                     schemaHint = `Contract Keys: ${staticShape}\nUnique Keys: ${schemaHint}`;
+                    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📄 Injected contract shape for capability: ${capabilityName}\x1b[0m`);
                 }
             } catch (e) {
                 console.warn(`[Summarizer] Failed to read static contract shape for ${capabilityName}`, e);
@@ -106,7 +139,7 @@ Please formulate a polite, efficient response back to the user based on the conv
     const promptMessages = [
         { role: "system", content: systemPrompt } as any,
         ...state.messages,
-        { role: "user", content: `### INPUT DATA\n- Data (JSONL):\n${jsonlData}` } as any
+        { role: "user", content: `### INPUT DATA (Compact Array Format)\nThe dataset is serialized in a token-efficient compact format to reduce latency:\n- "headers": ordered column names for each data field\n- "rows": each row is a value array aligned to the headers (null = missing field)\nArrays and nested objects are JSON-stringified inline within the cell value.\n\n${jsonlData}` } as any
     ];
 
     console.log(`\x1b[36m${ts()} [LangGraph Summarizer] --- PROMPT SENT TO LLM ---\x1b[0m`);

@@ -327,6 +327,18 @@ const baseCapabilitiesContract = [
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
+    name: "forms.query_contents",
+    method: "GET",
+    path: "/api/mcp/forms/contents",
+    requiredQuery: ["organizationID"],
+    optionalQuery: ["formId", "templateName", "activityWorkHistoryID", "status", "isSystemTemplate", "isPTW", "isNonConformity", "isMandatoryIfOverdue", "fieldLabelContains", "limit"],
+    purpose: "Returns full form submission answers with resolved question labels, field values, attachment filenames, and DMS document references.",
+    whenToUse: "Use when the user wants to read what was actually submitted in a form — the question-answer pairs, uploaded file names, or linked DMS documents. Accepts either a direct formId, templateName, or activityWorkHistoryID. If templateName is provided, the tool resolves all matching submissions automatically. If activityWorkHistoryID is provided, it returns all forms filled out for that specific work history task. Use fieldLabelContains to filter templates that contain a specific field label (e.g., fieldLabelContains='PTW' finds forms with a field labelled 'PTW Checklist'). For all forms returned, it also enriches with full Activity Work History summary details if available.",
+    whenNotToUse: "Do NOT use for high-level listing or counting form submissions (use forms.query_status instead).",
+    typicalQuestions: ["What did they say in the Risk Form?", "Show me attached files for form 123", "What answers were logged for task 456?"],
+    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
+  },
+  {
     name: "ptw.query_pipeline",
     method: "GET",
     path: "/api/mcp/ptw/pipeline",

@@ -28,6 +28,10 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                             // Bulletproof Cast: Convert numbers or booleans into strings for strict Mastra tool schema mappings flawless!
                             inputArgs[arg.key] = arg.value !== null && arg.value !== undefined ? String(arg.value) : undefined;
                         });
+                    } else if (typeof toolCall.args === "object" && toolCall.args !== null) {
+                        Object.entries(toolCall.args as Record<string, any>).forEach(([key, value]) => {
+                            inputArgs[key] = value !== null && value !== undefined ? String(value) : undefined;
+                        });
                     }
 
                     console.log(`[LangGraph Execute] Running ${sanitizedName} with args:`, JSON.stringify(inputArgs));
@@ -66,7 +70,10 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
         })
     );
 
-    if (nodeError) {
+    // Check if any tool triggered an ambiguity breakout sentinel to prioritize clarifying bubbles over hallucinatory crashes flawlessly
+    const standsAmbiguous = executedResults.some((item: any) => item && item.ambiguity === true);
+
+    if (nodeError && !standsAmbiguous) {
         return { error: nodeError };
     }
 
