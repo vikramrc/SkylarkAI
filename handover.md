@@ -470,3 +470,44 @@ Under "Search within forms" (where `base_collection = "forms"`), the text search
 | `PhoenixCloudBE/constants/mcp.capabilities.contract.js` | Added `fieldLabelContains` to `optionalQuery`; updated `whenToUse` guidance |
 | `SkylarkAI/backend/src/mcp/capabilities/contract.ts` | Same as above (TS copy of contract) |
 | `SkylarkAI/backend/src/phoenixai/prompts.ts` | Added 5 generalised MongoDB safety rules; fixed 3 contradictions/non-generalised issues |
+| `PhoenixCloudBE/services/mcp.service.js` | Added `vesselSpecificOnly` and `isAdhoc` matching inside `getFormsStatus` and `getFormsContents` |
+| `PhoenixCloudBE/constants/mcp.capabilities.contract.js` | Appended `"isAdhoc"` onto parameter lists |
+| `SkylarkAI/backend/src/mcp/capabilities/contract.ts` | Same sync update for TS spec list |
+
+---
+
+## 🛠️ 23. Form Template Querying Updates (Global Forms & Ad-Hoc Filters)
+
+We rolled out backend and contract-level enhancements to solve issues with `forms.query_status` and `forms.query_contents` returning mixed or ad-hoc result sets when queried with **`listGlobalForms: true`** inside vessel-scoped filters.
+
+### 🟢 **Support for `vesselSpecificOnly` Parameter (`mcp.service.js`)**
+- **Problem**: Lowered accuracy when querying for "vessel-specific forms" due to global mapping templates yielding rows with `vesselID: null`.
+- **Fix**: Added a `vesselSpecificOnly` boolean support check. If set to `true`, the query creates a match rule **`match.vesselID = { $ne: null }`** BEFORE pushing pipeline stages. This guarantees generic org-level fallback blanks are cleanly sliced out.
+
+### 🟢 **Support for `isAdhoc` Parameter (`mcp.service.js`)**
+- **Problem**: Global template aggregations returned both **Scheduled** (Activity-linked) and **Ad-Hoc** submissions concurrently, causing row lists to look bloated with uncommitted drafts or blank templates.
+- **Fix**: Added an `isAdhoc` boolean support check. Caller can now pass **`isAdhoc: false`** to strictly fetch **Scheduled** checklists only, stripping out ad-hoc templates seamlessly.
+
+### 🟢 **Contract Synchronization (`contract.ts` & `mcp.capabilities.contract.js`)**
+- **Fix**: Added `"vesselSpecificOnly"` and `"isAdhoc"` to the `optionalQuery` specification lists for both `forms.query_status` and `forms.query_contents` modules in both backend capability mappings. Enables the Orchestrator to accurately pass both filter values forwards forwards flawlessly.
+
+---
+
+## 🛠️ 24. Vessel Filtering & Global Forms Mapping Alignment
+
+We rolled out fixes to resolve issues where `forms.query_contents` ignored the `vesselID` filter and `listGlobalForms` excluded schedule-linked templates.
+
+### 🟢 **Vessel Filtering Fix for `getFormsContents` (`mcp.service.js`)**
+- **Problem**: The capability ignored `vesselID` filters, causing it to return filled forms across all vessels even when scoped to a single vessel in the Orchestrator prompt.
+- **Fix**: Added `vesselID` to the `getFormsContents` signature and incorporated it directly into the aggregate match criteria:
+  ```javascript
+  if (hasQueryValue(vesselID)) {
+    match.vesselID = ensureObjectId(vesselID, "vesselID");
+  }
+  ```
+- **Sync**: Added `"vesselID"` into the `optionalQuery` listings in both `mcp.capabilities.contract.js` and `contract.ts`.
+
+### 🟢 **Alignment of `listGlobalForms` with UI definitions (`mcp.service.js`)**
+- **Problem**: Lowered accuracy on listing "Global Activity Mappings" because the backend strictly evaluated `listGlobalForms: true` as `vesselID: null` (Org-wide only), filtering out vessel/schedule scoped rows like template `aaa`.
+- **Fix**: Modified `getFormsStatus` and `getFormsContents` to lookup mapped items concurrently across the organization without `vesselID: null`. This bridges the gap so the returned lists encompass Org, Vessel, and Schedule scoped configurations matching the UI presentation screens.
+- **Contract Update**: Updated description in `contract.ts` for Orchestrator awareness of inclusive mapping scopes.
