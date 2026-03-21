@@ -134,12 +134,24 @@ if [ "$CREATE_PACKAGE" = true ]; then
     echo "Copied local .env as .env.production for package"
   fi
 
+  if [ -f "$TEMP_PACKAGE_DIR/.env.production" ]; then
+    echo "" >> "$TEMP_PACKAGE_DIR/.env.production"
+    echo "PHOENIX_CONTRACT_PATH=/home/azureuser/maximapmx/phoenix/constants/mcp.capabilities.contract.js" >> "$TEMP_PACKAGE_DIR/.env.production"
+    echo "PHOENIX_CLOUD_URL=http://localhost:3000" >> "$TEMP_PACKAGE_DIR/.env.production"
+    echo "Injected remote contract path and cloud URL into .env.production"
+  fi
+
   if [ ! -f ".env" ] && [ ! -f ".env.production" ]; then
     echo -e "${YELLOW}Warning: No .env or .env.production file found in backend${NC}"
   fi
 
   if [ -d "scripts" ]; then
     cp -r scripts "$TEMP_PACKAGE_DIR/"
+  fi
+
+  if [ -d "seed" ]; then
+    cp -r seed "$TEMP_PACKAGE_DIR/"
+    echo "Copied seed folder"
   fi
 
   cd "$TEMP_PACKAGE_DIR"
@@ -184,6 +196,16 @@ echo "Installing dependencies..."
 cd "$TEMP_DIR"
 npm install --omit=dev --legacy-peer-deps
 
+echo "Installing pm2-logrotate if missing..."
+if ! pm2 ls | grep -q "pm2-logrotate"; then
+  echo "Installing pm2-logrotate..."
+  pm2 install pm2-logrotate
+  pm2 set pm2-logrotate:max_size 10M
+  pm2 set pm2-logrotate:retain 30
+else
+  echo "pm2-logrotate already installed."
+fi
+
 echo "Deleting existing SkylarkAI process..."
 pm2 delete skylarkai || true
 
@@ -204,8 +226,12 @@ else
   mkdir -p "$APP_DIR/logs"
 fi
 
-echo "Starting SkylarkAI with PM2..."
+echo "Populating Qdrant vector indexes..."
 cd "$APP_DIR"
+npm run index:qdrant:prod
+npm run index:qdrant:collections:prod
+
+echo "Starting SkylarkAI with PM2..."
 # Starts using compiled main: dist/src/index.js
 if pm2 describe skylarkai >/dev/null 2>&1; then
   echo "Restarting with updated environment..."

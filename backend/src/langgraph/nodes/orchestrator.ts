@@ -75,7 +75,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 - **Mandatory Parameter Guard**: If a tool requires a MANDATORY parameter that you do not have in context or working memory, DO NOT invoke the tool.
 - **Organization Identifier Guard**: Most tool endpoints REQUIRE an Organization identifier scope ('organizationShortName', 'organizationName', or 'organizationID'). If you lack ALL of these in memory context, you MUST use 'clarifyingQuestion' to ask the user for it first, instead of invoking tools listed.
 - **Failback Management**: If a specialized MCP tool returns an error or empty result, use the 'direct_query_fallback' as a high-fidelity semantic backup if available.
-- **Max Record Count**: Any tool that queries lists has a hard limit of 100 records maximum. Set 'limit' parameters to 100 or less on all invocations.
+- **Max Record Count**: Any tool that queries lists has a hard limit of 100 records maximum. Set 'limit' parameters according to the user's specific request (e.g., 'top 10' sets limit to 10), but never exceed 100 on any invocation. If unspecified, use a reasonable default.
 
 ### 🛠️ AVAILABLE MCP TOOLS
 %%TOOL_CONTEXT%%

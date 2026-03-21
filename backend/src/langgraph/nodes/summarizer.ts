@@ -6,7 +6,7 @@ import fs from "fs"; // 🟢 Import for contract schemas
 import { activeStreams } from "../utils/stream_manager.js"; // 🟢 Import active streams for cancellation
 
 // 🟢 Pre-load Capabilities Contract once at startup to optimize node performance
-const CONTRACT_PATH = '/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js';
+const CONTRACT_PATH = process.env.PHOENIX_CONTRACT_PATH || '/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js';
 let contractStrCache = "";
 
 try {

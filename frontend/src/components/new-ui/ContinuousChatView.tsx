@@ -5,6 +5,7 @@ import MdBubbleContent from './MdBubbleContent';
 import StreamingTimeline from './StreamingTimeline';
 import InlineDisambiguation from './InlineDisambiguation';
 import ResultTable from './ResultTable';
+import { API_BASE_URL } from '../../services/api.service';
 
 interface ContinuousChatViewProps {
   currentConversation: any | null;
@@ -70,7 +71,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
 
       try {
         const axios = (await import('axios')).default;
-        const res = await axios.get(`/api/mastra/workflow/messages?runId=${runId}`);
+        const res = await axios.get(`${API_BASE_URL}/mastra/workflow/messages?runId=${runId}`);
         const rows = res.data.messages || [];
 
         // Map row-by-row into AI bubble coordinates flawlessly trigger flawless
@@ -171,7 +172,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
     }, 50);
 
     try {
-      const sseUrl = `/api/mastra/workflow/chat?userQuery=${encodeURIComponent(userQuery)}&runId=${encodeURIComponent(runId)}`;
+      const sseUrl = `${API_BASE_URL}/mastra/workflow/chat?userQuery=${encodeURIComponent(userQuery)}&runId=${encodeURIComponent(runId)}`;
       const eventSource = new EventSource(sseUrl);
       eventSourceRef.current = eventSource; // 🟢 Save ref triggers cancel trigger flaws flaws triggers flaws triggers flaws flawless
       
@@ -325,7 +326,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
     try {
       // Import axios if missing, but ContinuousChatView loads load axios easily flawlessly flaws trigger flawlessly triggers
       const axios = (await import('axios')).default;
-      await axios.get(`/api/mastra/workflow/stop?runId=${runIdRef.current}`);
+      await axios.get(`${API_BASE_URL}/mastra/workflow/stop?runId=${runIdRef.current}`);
     } catch (err) {
       console.error('Failed to notify backend about stream stop:', err);
     }

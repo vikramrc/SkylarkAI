@@ -295,7 +295,8 @@ const chatStep = createStep({
                     const capabilityName = firstItem?.capability;
                     if (capabilityName) {
                         try {
-                            const contractStr = fs.readFileSync('/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js', 'utf-8');
+                            const contractPath = process.env.PHOENIX_CONTRACT_PATH || '/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js';
+                            const contractStr = fs.readFileSync(contractPath, 'utf-8');
                             // Match the capability block and its responseShape
                             const blockRegex = new RegExp(`name:\\s*"${capabilityName}"[\\s\\S]*?responseShape:\\s*(\\[[\\s\\S]*?\\])`);
                             const match = contractStr.match(blockRegex);

@@ -114,7 +114,8 @@ app.use(helmet({
             connectSrc: ["'self'", "https:", "wss:", "http://localhost:*", "https://localhost:*", "data:"],
             imgSrc: ["'self'", "data:", "https:"],
             scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-            styleSrc: ["'self'", "'unsafe-inline'"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         },
     },
     crossOriginEmbedderPolicy: false,
@@ -156,19 +157,19 @@ app.use((req, _res, next) => {
 });
 
 // Core Auth Proxy Pass-through to PhoenixCloudBE
-app.use('/api/auth', async (req, res) => {
+app.use(['/api/auth', '/api/users'], async (req, res) => {
     try {
         const backendUrl = process.env.PHOENIX_CLOUD_URL || 'https://localhost:3000';
-        let targetUrl = `${backendUrl}/api/auth${req.url}`;
+        let targetUrl = `${backendUrl}${req.baseUrl}${req.url}`;
 
         // Custom Alias Translations
-        if (req.url === '/check') {
-            targetUrl = `${backendUrl}/api/auth/check-auth`;
-        } else if (req.url === '/login') {
-            const orgId = process.env.PHOENIX_CLOUD_ORGANIZATION_ID || '67eedd60c1ceddb21d80ad45';
-            targetUrl = `${backendUrl}/api/users/${orgId}/login`;
-        } else if (req.url === '/captcha/generate' || req.url === '/captcha/refresh') {
-            targetUrl = `${backendUrl}/api/users${req.url}`;
+        if (req.baseUrl === '/api/auth') {
+            if (req.url === '/check') {
+                targetUrl = `${backendUrl}/api/auth/check-auth`;
+            } else if (req.url === '/login') {
+                const orgId = process.env.PHOENIX_CLOUD_ORGANIZATION_ID || '67eedd60c1ceddb21d80ad45';
+                targetUrl = `${backendUrl}/api/users/${orgId}/login`;
+            }
         }
 
         const response = await axios({
@@ -177,8 +178,7 @@ app.use('/api/auth', async (req, res) => {
             data: req.method !== 'GET' ? req.body : undefined,
             params: req.method === 'GET' ? req.query : undefined,
             headers: {
-                ...req.headers as any,
-                host: undefined
+                ...req.headers as any
             },
             httpsAgent: new https.Agent({ rejectUnauthorized: false })
         });
@@ -188,6 +188,7 @@ app.use('/api/auth', async (req, res) => {
         }
         res.status(response.status).json(response.data);
     } catch (error: any) {
+        console.error(`[Proxy Error] ${req.method} ${req.url} -> ${error.message}`, error.response?.data);
         res.status(error.response?.status || 500).json(error.response?.data || { message: error.message });
     }
 });

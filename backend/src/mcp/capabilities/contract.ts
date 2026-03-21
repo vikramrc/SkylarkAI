@@ -179,7 +179,7 @@ const baseCapabilitiesContract = [
     optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "limit"],
     purpose: "Returns overdue, upcoming, and recently completed maintenance work.",
     whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses.",
-    whenNotToUse: "Do NOT use for historical failure analysis (use reliability) or deep execution comments (use execution_history).",
+    whenNotToUse: "Do NOT use for historical failure analysis (use reliability), deep execution comments, or dedicated Activity Work History (AWH) queries (use execution_history instead).",
     typicalQuestions: [
       "Which activities are overdue?", 
       "What maintenance is due in the next 7 days?", 

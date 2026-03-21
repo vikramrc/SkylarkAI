@@ -3,6 +3,8 @@ import { ChevronLeft, ChevronRight, Plus, Search, Pin, Trash2, History, User } f
 import { useTranslation } from 'react-i18next';
 import ConfirmationModal from './ConfirmationModal';
 
+import { API_BASE_URL } from '../../services/api.service';
+
 interface ConversationSidebarProps {
   conversations: any[];
   currentConversation: any | null;
@@ -42,7 +44,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
     const fetchMatches = async () => {
       try {
         const axios = (await import('axios')).default;
-        const res = await axios.get(`/api/mastra/workflow/search?q=${encodeURIComponent(searchQuery)}`);
+        const res = await axios.get(`${API_BASE_URL}/mastra/workflow/search?q=${encodeURIComponent(searchQuery)}`);
         setMatchedRunIds(res.data.matchedRunIds || []);
       } catch (err) {
         console.error('Failed to search conversation messages:', err);

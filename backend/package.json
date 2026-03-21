@@ -14,7 +14,9 @@
     "test:mastra:console": "tsx src/mastra/console.ts",
     "test:phoenix:api": "node scripts/phoenixai/query-smoke.mjs",
     "index:qdrant": "tsx scripts/phoenixai/indexer_qdrant.ts",
-    "index:qdrant:collections": "tsx scripts/phoenixai/indexer_collections_qdrant.ts"
+    "index:qdrant:collections": "tsx scripts/phoenixai/indexer_collections_qdrant.ts",
+    "index:qdrant:prod": "NODE_ENV=production node dist/scripts/phoenixai/indexer_qdrant.js",
+    "index:qdrant:collections:prod": "NODE_ENV=production node dist/scripts/phoenixai/indexer_collections_qdrant.js"
   },
   "keywords": [],
   "author": "",

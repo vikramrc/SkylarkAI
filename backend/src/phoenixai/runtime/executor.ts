@@ -1706,7 +1706,8 @@ let schemaCache: Promise<PhoenixCollectionSchemaEntry[]> | null = null;
 
 export async function loadPmsCollectionsVectorSchema(): Promise<PhoenixCollectionSchemaEntry[]> {
     if (!schemaCache) {
-        schemaCache = readFile(new URL('../../../seed/pms_collections_vector_schema.json', import.meta.url), 'utf8')
+        const schemaPath = `${process.cwd()}/seed/pms_collections_vector_schema.json`;
+        schemaCache = readFile(schemaPath, 'utf8')
             .then((content) => JSON.parse(content) as unknown)
             .then((value) => {
                 if (!Array.isArray(value)) return [];

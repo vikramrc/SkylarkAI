@@ -542,3 +542,25 @@ We rolled out updates to resolve conversational turns returning blank payloads o
 ### 🟢 **Descriptive ID Name Lookup guidelines (`orchestrator.ts`)**
 - **Problem**: When users demanded "details OR names" about high-level frames (like Vessels) using IDs directly, Orchestrator frequently ignored looking up names assuming joined joins inside execution loops.
 - **Fix**: Appended directive **`4. Descriptive Name Resolution`** instructing it to issue parallel descriptive queries (e.g. `fleet.query_overview`) when users demands non-scalar labels, ensuring readable synthesis frames natively flawlessly.
+
+---
+
+## 🛠️ 26. Deployment & Reverse Proxy (Sub-path) Alignment
+
+We rolled out several configuration and codebase adjustments to enable smooth deployment on an Azure VM under reverse proxy Mount subpaths (e.g., `/skylark/` or `/phoenixai/`).
+
+### 🟢 **Dynamic API Base Mapping (`ContinuousChatView.tsx` & `ConversationSidebar.tsx`)**
+- **Problem**: 404 absolute routing failures on stream EventSource triggering. Paths like `/api/mastra/workflow/chat` carried root-relative slashes `/` leading the browser to bypass Nginx context guards.
+- **Fix**: Updated relative fetch routings to use dynamic **`${API_BASE_URL}`** instead (e.g., `${API_BASE_URL}/mastra/workflow/chat`). Forces strict compliance with the deployment mounted mount sub-path subpath.
+
+### 🟢 **Relative Asset Base Routing (`vite.config.ts`)**
+- **Problem**: 404s loading `.js` and `.css` files because root-absolute paths (`/assets/`) didn't carry reverse proxy mount offsets offsets.
+- **Fix**: Appended `base: './'` to configuration properties creating fully relative bundle loads natively natively flawlessly.
+
+### 🟢 **Cookie Domain and Host Headers Pass-through (`backend/src/index.ts`)**
+- **Problem**: 401 Unauthorized crashes on authentication sub-proxies. External Axios hits to authenticating backends failed due to missing `Host` headers clobbering cookie domains.
+- **Fix**: Updated Axois setup passes on `/api/auth` forwarding explicit **`Host` headers** verbatim alongside authorization layers to accommodate cross-mounted origin setups flawlessly.
+
+### 🟢 **Static Seed Document Absolute Anchors (`executor.ts`)**
+- **Problem**: `direct_query_fallback` crashes on absolute setups due to relative calculations mapping inside `/dist/seed/` artifacts artifacts.
+- **Fix**: Re-anchored reading statements to absolute string-literals using **`${process.cwd()}/seed/pms_collections_vector_schema.json`** preventing bundle-ordering discrepancies flawlessly.

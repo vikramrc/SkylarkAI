@@ -1,7 +1,9 @@
 import { createRequire } from 'node:module';
+import fs from 'fs';
+import path from 'path';
 
-const require = createRequire(import.meta.url);
-const pmsCollectionsVectorSchema = require('../../seed/pms_collections_vector_schema.json');
+const schemaPath = path.join(process.cwd(), 'seed', 'pms_collections_vector_schema.json');
+const pmsCollectionsVectorSchema = JSON.parse(fs.readFileSync(schemaPath, 'utf-8'));
 
 // Centralized prompt strings for PhoenixAI
 // Keep these strictly static to maximize provider-side prompt cache hits.

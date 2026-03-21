@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 import { OpenAIEmbeddings } from "@langchain/openai";
 import { QdrantClient } from "@qdrant/js-client-rest";
 
-dotenv.config();
+dotenv.config({ path: process.env.NODE_ENV === 'production' ? '.env.production' : '.env' });
 
 type Document = {
   pageContent: string;
