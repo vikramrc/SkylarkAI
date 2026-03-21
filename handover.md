@@ -564,3 +564,30 @@ We rolled out several configuration and codebase adjustments to enable smooth de
 ### 🟢 **Static Seed Document Absolute Anchors (`executor.ts`)**
 - **Problem**: `direct_query_fallback` crashes on absolute setups due to relative calculations mapping inside `/dist/seed/` artifacts artifacts.
 - **Fix**: Re-anchored reading statements to absolute string-literals using **`${process.cwd()}/seed/pms_collections_vector_schema.json`** preventing bundle-ordering discrepancies flawlessly.
+
+---
+
+## 🛠️ 27. Tool Limit Override & Capability Contract Tightening
+
+We addressed an issue where the Orchestrator overrode explicit user-specified limits (e.g., "top 10") with `limit: 100`, and clarified contracts to prevent ambiguity between general status lists and execution history (AWH).
+
+### 🟢 **Tool Limit Prompt Guidance Adjustment (`orchestrator.ts`)**
+- **Problem**: Lowered accuracy when users requested "top 10" because a guideline rule said: *"- Max Record Count: Any tool that queries lists has a hard limit of 100 records maximum. Set 'limit' parameters to 100 or less on all invocations."* This instruct the AI to default to 100.
+- **Fix**: Updated line 78 in `SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts` to:
+  ```typescript
+  - **Max Record Count**: Any tool that queries lists has a hard limit of 100 records maximum. Set 'limit' parameters according to the user's specific request (e.g., 'top 10' sets limit to 10), but never exceed 100 on any invocation. If unspecified, use a reasonable default.
+  ```
+
+### 🟢 **Tightening Capability Selections for AWH (`mcp.capabilities.contract.js` & `contract.ts`)**
+- **Problem**: Queries for "committed AWH" were directing to `maintenance.query_status` instead of `maintenance.query_execution_history`. The general pool returning with thousands of overdue rows saturated the 100 item slice array, hiding commits commits flawlessly trigger.
+- **Fix**: 
+  - Updated `whenNotToUse` on `maintenance.query_status` in both **PhoenixCloudBE** and **SkylarkAI** contracts to state: *"Do NOT use for historical failure analysis (use reliability), deep execution comments, or dedicated Activity Work History (AWH) queries (use execution_history instead)."*
+  - Updated `whenToUse` on `maintenance.query_execution_history` in **PhoenixCloudBE** to declare: *"Use this for all Activity Work History (AWH) queries."* and added `"Show me the latest committed AWH."` item into `typicalQuestions`.
+
+---
+
+## 🛠️ 28. Deployment Configurations (PM2 Logrotate)
+
+### 🟢 **Logrotate Installer Inclusion (`deploy-all.sh`)**
+- **Problem**: Heavy workloads prone to overrunning console log buffer sizes sizes without rotation bounds bounds.
+- **Fix**: Appended check installing and configuring the `pm2-logrotate` module automatically during remote setup runs wrapper wrappers inside `SkylarkAI/deploy-all.sh`. Ensures ceiling safety constraints of 10M file sizes natively flawlessly trigger.
