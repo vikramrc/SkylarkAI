@@ -511,3 +511,16 @@ We rolled out fixes to resolve issues where `forms.query_contents` ignored the `
 - **Problem**: Lowered accuracy on listing "Global Activity Mappings" because the backend strictly evaluated `listGlobalForms: true` as `vesselID: null` (Org-wide only), filtering out vessel/schedule scoped rows like template `aaa`.
 - **Fix**: Modified `getFormsStatus` and `getFormsContents` to lookup mapped items concurrently across the organization without `vesselID: null`. This bridges the gap so the returned lists encompass Org, Vessel, and Schedule scoped configurations matching the UI presentation screens.
 - **Contract Update**: Updated description in `contract.ts` for Orchestrator awareness of inclusive mapping scopes.
+
+---
+
+## 🛠️ **Utility Scripts**
+
+### 🟢 **`scripts/dump_memory.ts`**
+- **Purpose**: Diagnostic tool to inspect actual state variables (`workingMemory`, full `messages` array) retained inside a specific graph thread/run. Use this to verify context loads or memory alignment issues impeccably frame-by-frame.
+- **Location**: `SkylarkAI/backend/scripts/dump_memory.ts`
+- **Usage**:
+  ```bash
+  cd SkylarkAI/backend
+  npx tsx scripts/dump_memory.ts <runId_or_threadId>
+  ```
