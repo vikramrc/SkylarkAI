@@ -524,3 +524,21 @@ We rolled out fixes to resolve issues where `forms.query_contents` ignored the `
   cd SkylarkAI/backend
   npx tsx scripts/dump_memory.ts <runId_or_threadId>
   ```
+
+---
+
+## 🛠️ 25. Summarizer Empty Datasets & Orchestrator Name Resolution Guidelines
+
+We rolled out updates to resolve conversational turns returning blank payloads or missing details due to scalar ID gaps:
+
+### 🟢 **Conditional Conversational Fallbacks (`summarizer.ts`)**
+- **Problem**: Lowered accuracy on turns where tools returned 0 items but technically executed with status 200. The Summarizer loaded the deep "Analytical" prompt instead of triggering direct memory conversational synthesis explaining the gap.
+- **Fix**: Added `emptyDataset` evaluation triggering the standard fallback trigger layout for turns yielding empty arrays. Forces fallback explaining filter mismatches or empty bounds smoothly.
+
+### 🟢 **Empty Tool Results Explicit Visibility (`summarizer.ts`)**
+- **Problem**: Flattening iterations dropped empty tools from final grid arrays maps entirely streams. Evaluators never knew something actually backed an empty array response.
+- **Fix**: Appended static **`### ⚠️ EMPTY TOOL RESULTS`** note block directly into the dynamic `### INPUT DATA` text layout specifying names of tools returning 0 counts counts.
+
+### 🟢 **Descriptive ID Name Lookup guidelines (`orchestrator.ts`)**
+- **Problem**: When users demanded "details OR names" about high-level frames (like Vessels) using IDs directly, Orchestrator frequently ignored looking up names assuming joined joins inside execution loops.
+- **Fix**: Appended directive **`4. Descriptive Name Resolution`** instructing it to issue parallel descriptive queries (e.g. `fleet.query_overview`) when users demands non-scalar labels, ensuring readable synthesis frames natively flawlessly.

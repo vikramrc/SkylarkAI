@@ -49,6 +49,8 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     const results = Object.values(state.toolResults || {});
     let schemaHint = '[]';
     let jsonlData = '';
+    const allItems: any[] = [];
+    const emptyTools: string[] = [];
 
     if (results.length > 0) {
         // 🟢 Unpack MCP Wrapper accurately
@@ -69,10 +71,12 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         // Before this fix, prepareMongoForLLM received [{capability, items:[...], summary:{}}]
         // which flattened the outer wrapper shape instead of the actual 100 data rows.
         // Now we extract items[] from each result (falling back to the whole object if no items key).
-        const allItems: any[] = [];
         for (const result of unpackedResults) {
             const capability = result?.capability ?? 'unknown';
             const items = Array.isArray(result?.items) ? result.items : [result];
+            if (Array.isArray(result?.items) && result.items.length === 0) {
+                emptyTools.push(`- **${capability}**: Returned 0 matching items.`);
+            }
             // Tag each row with its source tool so the LLM can distinguish multi-tool responses
             for (const item of items) {
                 allItems.push({ _tool: capability, ...item });
@@ -97,8 +101,9 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         console.log(`  ➡ Row count:         ${parsedPayload.rows.length}`);
         console.log(`  ➡ Headers preview:   ${JSON.stringify(parsedPayload.headers.slice(0, 20))}${parsedPayload.headers.length > 20 ? ` ... (+${parsedPayload.headers.length - 20} more)` : ''}`);
         // Log first row sample so we can visually verify alignment
-        if (parsedPayload.rows.length > 0) {
-            console.log(`  ➡ Row[0] sample:     ${JSON.stringify((parsedPayload.rows[0] ?? []).slice(0, 10))}...`);
+        const firstRow = parsedPayload.rows[0];
+        if (firstRow) {
+            console.log(`  ➡ Row[0] sample:     ${JSON.stringify(firstRow.slice(0, 10))}${firstRow.length > 10 ? ` ...` : ''}`);
         }
 
         // 🟢 Inject Static Contract Shape
@@ -130,17 +135,42 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
 ${schemaHint}
 `;
 
-    if (results.length === 0) {
+    const noToolsCalled = !state.toolCalls || state.toolCalls.length === 0;
+    // 🔴 CRITICAL FALLBACK: If tools were called but returned 0 items overall, treat it as empty conversational mode
+    const emptyDataset = results.length > 0 && typeof allItems !== 'undefined' && allItems.length === 0;
+
+    if (noToolsCalled || emptyDataset) {
         systemPrompt = `You are a professional maritime operations assistant. 
-The orchestrator has decided to ask the user a clarifying question or provide a direct response instead of calling tools. 
-Please formulate a polite, efficient response back to the user based on the conversation history and any pending question.`;
+The system dataset is currently **EMPTY** (tools returned 0 matching records). 
+Please formulate a polite, helpful response back to the user based on the conversation history and any active filters in memory context.
+Be explicit that the query returned no items, but use your general context to explain why (e.g., filter mismatch) or offer next steps.`;
     }
 
     const promptMessages = [
         { role: "system", content: systemPrompt } as any,
-        ...state.messages,
-        { role: "user", content: `### INPUT DATA (Compact Array Format)\nThe dataset is serialized in a token-efficient compact format to reduce latency:\n- "headers": ordered column names for each data field\n- "rows": each row is a value array aligned to the headers (null = missing field)\nArrays and nested objects are JSON-stringified inline within the cell value.\n\n${jsonlData}` } as any
     ];
+
+    if (state.workingMemory?.summaryBuffer) {
+        promptMessages.push({
+            role: "system",
+            content: `\n### OBSERVATIONAL STATUS CONTEXT\nUse this to understand active filters/focus:\n${state.workingMemory.summaryBuffer}`
+        } as any);
+    }
+
+    if ((noToolsCalled || emptyDataset) && state.messages && state.messages.length > 0) {
+        // Only push the last message from user to keep dialogue crisp when acting in purely conversational mode
+        promptMessages.push(state.messages[state.messages.length - 1]);
+    } else {
+        promptMessages.push(...state.messages);
+    }
+
+    const emptyToolsSection = emptyTools.length > 0 
+        ? `\n\n### ⚠️ EMPTY TOOL RESULTS\nThe following tools returned 0 matching records or empty item arrays:\n${emptyTools.join('\n')}` 
+        : "";
+
+    promptMessages.push(
+        { role: "user", content: `### INPUT DATA (Compact Array Format)\nThe dataset is serialized in a token-efficient compact format to reduce latency:\n- "headers": ordered column names for each data field\n- "rows": each row is a value array aligned to the headers (null = missing field)\nArrays and nested objects are JSON-stringified inline within the cell value.\n\n⚠️ **Strict Index Offset Anchor**: When reading values, always match \`row[i]\` strictly to \`headers[i]\`. Do not assume item positions across rows of irregular lengths.${emptyToolsSection}\n\n${jsonlData}` } as any
+    );
 
     console.log(`\x1b[36m${ts()} [LangGraph Summarizer] --- PROMPT SENT TO LLM ---\x1b[0m`);
     console.log(JSON.stringify(promptMessages, null, 2));

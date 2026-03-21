@@ -69,6 +69,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
    - **Step A**: If you have a name but lack an ID, use an "Overview" or "Status" tool to resolve the canonical ID.
    - **Step B**: Only proceed to data-heavy analysis tools once you have verified the correct IDs. NEVER guess or hallucinate IDs.
 3. **Multi-Step Reasoning**: Complex queries often require sequencing. Execute tools in logical order: Discovery -> Retrieval -> Enrichment.
+4. **Descriptive Name Resolution**: If a user asks for "details" or "names" of an entity but you only have its numerical \`_id\` (e.g., \`vesselID\`), you MUST also invoke lookups that return labels (like \`fleet.query_overview\` for vessels) in parallel, ensuring a user-friendly readable report.
 
 ### OPERATIONAL BEST PRACTICES
 - **Mandatory Parameter Guard**: If a tool requires a MANDATORY parameter that you do not have in context or working memory, DO NOT invoke the tool.
