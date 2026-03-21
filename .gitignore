@@ -132,3 +132,5 @@ temp/
 *.local
 .env.*
 !.env.example
+public/
+deploy.zip

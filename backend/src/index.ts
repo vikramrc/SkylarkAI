@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import https from 'https';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { setupMcpRoutes } from './mcp/server.js';
 import {
     createPhoenixOpenAiResponseRouter,
@@ -12,7 +14,7 @@ import {
 
 import { createLangGraphWorkflowRouter } from './langgraph/routes/workflow.js';
 
-dotenv.config();
+dotenv.config({ path: process.env.NODE_ENV === 'production' ? '.env.production' : '.env' });
 
 const ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -101,8 +103,8 @@ const app = express();
 const PORT = Number.parseInt(process.env.PORT ?? '4000', 10) || 4000;
 
 // Match PhoenixCloudBE security middleware patterns
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Use helmet with patterns from PhoenixCloudBE
 app.use(helmet({
@@ -198,6 +200,21 @@ app.use('/api/phoenix', createPhoenixOpenAiResponseRouter(serviceBackedPhoenixRu
 
 // Mount LangGraph workflow routes (Switched from Mastra)
 app.use('/api/mastra', createLangGraphWorkflowRouter());
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve static files from public folder (Monolithic Bundle)
+app.use(express.static(path.join(__dirname, '../../public')));
+
+// Fallback catch-all for SPA frontend routing
+app.get(/.*/, (req, res, next) => {
+    // Skip API routes so they fall through or error correctly
+    if (req.url.startsWith('/api/') || req.url.startsWith('/mcp')) {
+        return next();
+    }
+    res.sendFile(path.join(__dirname, '../../public/index.html'));
+});
 
 app.listen(PORT, () => {
     console.log(`\n🚀 SkylarkAI Backend is LIVE on port ${PORT}`);
