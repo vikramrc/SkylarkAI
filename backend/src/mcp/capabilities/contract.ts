@@ -323,10 +323,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/documents/control-overview",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "status", "days", "limit"],
+    optionalQuery: ["vesselID", "status", "days", "startDate", "endDate", "limit"],
     purpose: "Returns document control overview including latest versions and approval statuses. Supports expiry-aware certificate queries directly through the MCP endpoint when `status=expired` or `status=expiring` is supplied.",
     whenToUse: "For finding outdated manuals, unapproved revisions, checking document tags, or answering expired/expiring certificate questions.",
-    typicalQuestions: ["Show me documents tagged as 'temporary instructions'.", "Are outdated manuals being used?", "Show me expired certificates/documents.", "Which certificates are expiring soon?"],
+    typicalQuestions: ["Show me documents tagged as 'temporary instructions'.", "Are outdated manuals being used?", "Show me expired certificates/documents.", "Which certificates are expiring soon?", "Which certificates expired this year?", "Show me certificates expiring between Jan and March 2026."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
@@ -334,10 +334,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/forms/status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "templateID", "status", "listGlobalForms", "listPTWForms", "listNCForms", "listMandatoryIfOverdueForms", "ptwType", "vesselSpecificOnly", "isAdhoc", "limit"],
+    optionalQuery: ["vesselID", "templateID", "status", "listGlobalForms", "listPTWForms", "listNCForms", "listMandatoryIfOverdueForms", "ptwType", "vesselSpecificOnly", "isAdhoc", "startDate", "endDate", "limit"],
     purpose: "Returns due, overdue, submitted, and committed forms.",
     whenToUse: "Tracking formal checklist/form submissions required for compliance or operations.",
-    typicalQuestions: ["Are there missing checklists for departure?", "Show me rejected safety forms."],
+    typicalQuestions: ["Are there missing checklists for departure?", "Show me rejected safety forms.", "Show me forms submitted last month.", "Which forms were committed between January and February 2026?"],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
@@ -345,11 +345,11 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/forms/contents",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "formId", "templateName", "activityWorkHistoryID", "status", "listGlobalForms", "listPTWForms", "listNCForms", "listMandatoryIfOverdueForms", "ptwType", "fieldNames", "vesselSpecificOnly", "isAdhoc", "limit"],
+    optionalQuery: ["vesselID", "formId", "templateName", "activityWorkHistoryID", "status", "listGlobalForms", "listPTWForms", "listNCForms", "listMandatoryIfOverdueForms", "ptwType", "fieldNames", "vesselSpecificOnly", "isAdhoc", "startDate", "endDate", "limit"],
     purpose: "Returns full form submission answers with resolved question labels, field values, attachment filenames, and DMS document references.",
     whenToUse: "Use when the user wants to read what was actually submitted in a form — the question-answer pairs, uploaded file names, or linked DMS documents. Accepts either a direct formId, templateName, or activityWorkHistoryID. If templateName is provided, the tool resolves all matching submissions automatically. If activityWorkHistoryID is provided, it returns all forms filled out for that specific work history task. Use fieldNames to filter templates that contain specific field labels (e.g., fieldNames='PTW' finds forms with a field labelled 'PTW Checklist'). Supports array or comma-separated lists of names. DO NOT use listPTWForms or listNCForms to search inside filled contents; they are purely template metadata filters. For all forms returned, it also enriches with full Activity Work History summary details if available.",
     whenNotToUse: "Do NOT use for high-level listing or counting form submissions (use forms.query_status instead). **Do NOT use when the user primarily wants to inspect full Activity Work History execution events, man-hours, or maintenance comments alone (use `maintenance.query_execution_history` instead)**.",
-    typicalQuestions: ["What did they say in the Risk Form?", "Show me attached files for form 123", "What answers were logged for task 456?"],
+    typicalQuestions: ["What did they say in the Risk Form?", "Show me attached files for form 123", "What answers were logged for task 456?", "What did the crew fill out in forms submitted last week?", "Show me safety checklist answers from Jan 2026."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
@@ -423,10 +423,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/fleet/running-hours",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "machineryID", "days", "limit"],
+    optionalQuery: ["vesselID", "machineryID", "days", "startDate", "endDate", "limit"],
     purpose: "Returns daily machinery running hours log with totals and averages.",
     whenToUse: "To track machinery usage rates, condition monitoring trends, or verify operation logs.",
-    typicalQuestions: ["Show me the running hours for the Aux Engines.", "Show me condition monitoring trends."],
+    typicalQuestions: ["Show me the running hours for the Aux Engines.", "Show me condition monitoring trends.", "Show me running hours logged in Q1 2026.", "What was the total running hours in January?"],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
     interpretationGuidance: "Defaults to latest available hours if an explicit days window returns empty."
   },
@@ -435,10 +435,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/inventory/consumption-analysis",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "partID", "transactionType", "days", "limit"],
+    optionalQuery: ["vesselID", "partID", "transactionType", "days", "startDate", "endDate", "limit"],
     purpose: "Returns parts consumption history, issue, transfer, and receipt trends.",
     whenToUse: "Analyzing exactly *where* and *how fast* parts are being used/transferred.",
-    typicalQuestions: ["Which items are issued above average trend?", "Which spares are frequently transferred between vessels?"],
+    typicalQuestions: ["Which items are issued above average trend?", "Which spares are frequently transferred between vessels?", "How many spares were issued in Jan 2026?", "Show me consumption rates from last month."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
@@ -468,10 +468,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/procurement/orders-summary",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "status", "urgency", "days", "limit"],
+    optionalQuery: ["vesselID", "status", "urgency", "days", "startDate", "endDate", "limit"],
     purpose: "Returns PO details with line items, urgency, and delivery status.",
     whenToUse: "Tracking order status, checking emergency orders.",
-    typicalQuestions: ["Show me emergency orders raised outside vendor lists.", "Are there POs stuck in transit?"],
+    typicalQuestions: ["Show me emergency orders raised outside vendor lists.", "Are there POs stuck in transit?", "Show me POs raised last month.", "Which orders are expected to deliver between Jan and Feb 2026?"],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
@@ -502,10 +502,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/crew/compliance",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "crewMemberID", "days", "limit"],
+    optionalQuery: ["vesselID", "crewMemberID", "days", "startDate", "endDate", "limit"],
     purpose: "Returns work/rest records, fatigue risk indicators, and compliance violations.",
     whenToUse: "Auditing strict MLC Work/Rest Hours violations or crew fatigue.",
-    typicalQuestions: ["Show me crew members logging excessive hours or work/rest violations."],
+    typicalQuestions: ["Show me crew members logging excessive hours or work/rest violations.", "Show me fatigue violations logged last month.", "Are there rest hour violations from Jan 2026?"],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
@@ -616,7 +616,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/inventory/transactions",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["transactionType", "vesselID", "partID", "days", "limit"],
+    optionalQuery: ["transactionType", "vesselID", "partID", "days", "startDate", "endDate", "limit"],
     purpose: "Returns inventory transaction history across receipt, issue, transfer, return, and return_to_vendor states.",
     whenToUse: "Use this for transaction-specific inventory questions like issued parts, returned-to-vendor parts, receipts, transfers, or general inventory movements.",
     whenNotToUse: "Not for current stock balance snapshots (use inventory.query_stock_position), dead stock detection, or overstock analysis.",
@@ -624,7 +624,9 @@ const baseCapabilitiesContract = [
       "Show me the issued parts.",
       "What parts were returned to vendor?",
       "Show recent inventory transfers.",
-      "Show all inventory transactions for this vessel."
+      "Show all inventory transactions for this vessel.",
+      "List receipts recorded between Jan 2026 and March 2026.",
+      "Show me stock transfers from last month.",
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
     interpretationGuidance: "If transactionType is omitted, items may include mixed transaction states. Use summary.byTransactionType to understand the distribution across receipt, issue, transfer, return, and return_to_vendor."
@@ -634,14 +636,15 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/inventory/stock-transfers",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "partID", "days", "limit"],
+    optionalQuery: ["vesselID", "partID", "days", "startDate", "endDate", "limit"],
     purpose: "Returns cross-vessel spare parts transfer transactions within the lookback window.",
     whenToUse: "To investigate which spares are frequently moved between vessels, or to check if a part was transferred away from a vessel that now needs it.",
     whenNotToUse: "Not for general stock level queries (use inventory.query_stock_position). Not for issue/receipt transactions (use inventory.query_consumption_analysis).",
     typicalQuestions: [
       "Which spares are being frequently transferred between vessels?",
       "Was any part sent from MV Atlantic to another vessel last month?",
-      "Show me cross-fleet spare movements in the last 90 days."
+      "Show me cross-fleet spare movements in the last 90 days.",
+      "List transfers recorded between Jan 2026 and Feb 2026.",
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
     interpretationGuidance: "Each item shows the fromVessel and toVessel context. A high transfer frequency for a part across vessels may indicate imbalanced centralized stocking."
@@ -702,14 +705,15 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/condition-monitoring",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "machineryID", "days", "searchTerm", "limit"],
+    optionalQuery: ["vesselID", "machineryID", "days", "startDate", "endDate", "searchTerm", "limit"],
     purpose: "Returns daily running hours trends per machinery, aggregated to show avg, min, max, and total usage over the lookback window.",
     whenToUse: "When asked about running hours trends, condition-based maintenance indicators, or which machinery is being operated most intensively.",
     whenNotToUse: "Does not include sensor readings, vibration, or temperature data (those are outside the current MCP model). Use analytics.query_mtbf for failure frequency.",
     typicalQuestions: [
       "Show me condition monitoring trends for propulsion machinery.",
       "Which machinery show abnormal running hours this month?",
-      "Show me the running hours for the Aux Engines over the last 30 days."
+      "Show me the running hours for the Aux Engines over the last 30 days.",
+      "Show me condition monitoring logging trend from last month.",
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
     interpretationGuidance: "High avgDailyRunningHours relative to fleet norms may indicate over-reliance on particular machinery. maxDailyRunningHours vs minDailyRunningHours spread reveals load variability."
@@ -719,14 +723,16 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/ptw/approval-stats",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "days", "limit"],
+    optionalQuery: ["vesselID", "days", "startDate", "endDate", "limit"],
     purpose: "Returns PTW status breakdown and approval count metrics for a given period.",
     whenToUse: "When asked about PTW approval rates, how many permits were rejected, or how many approvals a typical permit requires.",
     whenNotToUse: "For open active permits use ptw.query_pipeline instead.",
     typicalQuestions: [
       "What is the average approval time for PTWs this month?",
       "Which vessel has the highest number of rejected permits?",
-      "How many hot work permits were approved vs rejected?"
+      "How many hot work permits were approved vs rejected?",
+      "What is the approval rate for permits raised last month?",
+      "Show me rejections from Jan 2026.",
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
     interpretationGuidance: "summary.byStatus.rejected.count shows rejected PTWs. avgApprovals per status shows the workflow depth. High approval counts may indicate inefficient permit workflows."
