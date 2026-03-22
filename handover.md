@@ -640,3 +640,27 @@ The following tools with scalar `days` fallbacks now fully support absolute `sta
 
 ### 🟢 **Capability Contract Sync (`mcp.capabilities.contract.js` & `contract.ts`)**
 Appended `"startDate"` and `"endDate"` parameters to `optionalQuery` listings for all 11 modified capabilities on both projects. Orchestrator now forwards calendar constraints fluidly flawlessly flawlessly.
+
+---
+
+## 🛠️ 32. Stock Transfers Fix & Vessel Name Flattening
+
+We resolved an absolute date range query bug inside `getInventoryStockTransfers` and introduced flat response attributes for easier user visibility.
+
+### 🟢 **Aggregate Pre-Lookup Range Match (`mcp.service.js`)**
+- **Problem**: `getInventoryStockTransfers` applied its `vesselID` `$match` filter *after* lookup joins on `$unwind` locations. This could cause evaluation bubbles or misses on un-mapped models.
+- **Fix**: Pre-fetches `vesselLocationIds` inside node execution BEFORE pipeline starts. Injects filter `{ $or: [{ fromLocationID: { $in: vesselLocationIds } }, { toLocationID: { $in: vesselLocationIds } }] }` at the **very first stage** (aligned perfectly with `getInventoryTransactions`).
+
+### 🟢 **Vessel Name Flattening for Grid Visibility**
+- **Fix**: Appended flat **`fromVesselName`**, **`toVesselName`**, and **`vesselName`** columns on `.map()`/`$project` response lists inside `getInventoryTransactions` and `getInventoryStockTransfers`. Enables easy high-level rendering for row attributes without deep object extraction.
+
+---
+
+## 🛠️ 33. Diagnostic Utility Scripts
+
+To assist resolving diagnostic thread lookups where LangGraph states or toolResults can get complex for next agents:
+
+### 🟢 **`list_conversations.ts`**
+- **Location**: `SkylarkAI/backend/scripts/list_conversations.ts`
+- **Purpose**: Diagnostic lookup to isolate recent Thread/Session IDs when connection variables get mapped into LangGraph checkpoint tables (`SkylarkDB`).
+- **Run**: `npx tsx scripts/list_conversations.ts` inside backend context. Enables quick extraction of `runId` for use with `scripts/dump_memory.ts`.
