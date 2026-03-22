@@ -176,14 +176,16 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "startDate", "endDate", "limit"],
     purpose: "Returns overdue, upcoming, and recently completed maintenance work.",
     whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses.",
     whenNotToUse: "Do NOT use for historical failure analysis (use reliability), deep execution comments, or dedicated Activity Work History (AWH) queries (use execution_history instead).",
     typicalQuestions: [
       "Which activities are overdue?", 
       "What maintenance is due in the next 7 days?", 
-      "Show me pending critical jobs."
+      "Show me pending critical jobs.",
+      "Show me completed maintenance from Jan 2026 to March 2026.",
+      "What jobs are overdue from last year?"
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
     interpretationGuidance: "Filter by statusCode=overdue or statusCode=upcoming. The 'summary' block provides quick counts."
@@ -193,10 +195,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/execution-history",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "startDate", "endDate", "limit"],
     purpose: "Returns recent maintenance execution events / Activity Work History (AWH), including completion status, costs, and comments.",
     whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution. Use this for all Activity Work History (AWH) queries.",
-    typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated.", "Show me the latest committed AWH."],
+    typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated.", "Show me the latest committed AWH.", "Show me lube oil levels logged between Jan 1st and Jan 31st.", "List work completed from 2026-01-01 to 2026-02-01."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {

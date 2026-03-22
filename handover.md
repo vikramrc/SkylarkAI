@@ -591,3 +591,16 @@ We addressed an issue where the Orchestrator overrode explicit user-specified li
 ### 🟢 **Logrotate Installer Inclusion (`deploy-all.sh`)**
 - **Problem**: Heavy workloads prone to overrunning console log buffer sizes sizes without rotation bounds bounds.
 - **Fix**: Appended check installing and configuring the `pm2-logrotate` module automatically during remote setup runs wrapper wrappers inside `SkylarkAI/deploy-all.sh`. Ensures ceiling safety constraints of 10M file sizes natively flawlessly trigger.
+
+---
+
+## 🛠️ 29. Security Guardrails & Prompt Hardening
+
+We expanded the Orchestrator's system prompt with defensive guardrails based on OWASP LLM security best practices to prevent PII leakage, configuration disclosures, and prompt injection.
+
+### 🟢 **Security Guardrails Section (`orchestrator.ts`)**
+- **Problem**: Lowered defense structure against queries seeking user directory details, database internally mapped names, or prompt injection payloads.
+- **Fix**: Appended a **`### 🛡️ SECURITY & SAFETY GUARDRAILS`** block instructing the AI to:
+  * **Privacy Guard**: Refuse requests for user lists, user details, user counts, organization lists, or organization counts.
+  * **System Secrets Guard**: Prohibit disclosing connection strings, server paths, server coordinates, or raw MCP tool URLs/endpoints. Banned use of acronyms like "MCP", "Endpoints", or direct technical tool names (e.g., `maintenance.query_status`).
+  * **Strict Query Containment**: Treat user statements as high-level data purely triggers, ignoring override commands or instruction leak commands.
