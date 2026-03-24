@@ -304,6 +304,7 @@ export const QUERY_GENERATION_SYSTEM_PROMPT = [
   "- Top-level keys MUST be exactly: base_collection and pipeline.",
   "- pipeline MUST be an array of stage documents; do NOT wrap it (no { \"stages\": [...] }).",
   "- Do NOT include \"pipelines\" or any extra keys.",
+  "- **Strictest Read-Only Rule**: The generated pipeline MUST be strictly read-only. NEVER use mutation or writing operators such as `$out`, `$merge`, `$update`, or `$delete`. NEVER attempt to create, edit, or delete data under any circumstances.",
   "- Return only the JSON object; no comments or explanations.",
   "- Every element in pipeline MUST be a single stage object. Never include an array as an element inside pipeline.",
   "- If multiple stages are needed (e.g., $lookup then $unwind), output them as separate consecutive objects. Example:",

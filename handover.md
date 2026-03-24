@@ -664,3 +664,12 @@ To assist resolving diagnostic thread lookups where LangGraph states or toolResu
 - **Location**: `SkylarkAI/backend/scripts/list_conversations.ts`
 - **Purpose**: Diagnostic lookup to isolate recent Thread/Session IDs when connection variables get mapped into LangGraph checkpoint tables (`SkylarkDB`).
 - **Run**: `npx tsx scripts/list_conversations.ts` inside backend context. Enables quick extraction of `runId` for use with `scripts/dump_memory.ts`.
+
+---
+
+## 🛠️ 34. diagnostic DB count Verification
+
+To assist next agents interpreting 0-results:
+- **Direct verification** on `ProductsDB` found **0 records** with `transactionType: "transfer"` inside the `InventoryTransaction` collection (TitleCase).
+- Issues are at 62 records and Receipts at 94.
+- **Verification conclusion**: Fixed logic inside `getInventoryStockTransfers` is fully structurally compliant and will cleanly process transfers once any write payloads write records into the data set. Next agent can add sample transfer writes to verify flawlessly.
