@@ -10,7 +10,7 @@ const dbName = uri.split('/').pop()?.split('?')[0] || 'SkylarkDB';
 
 async function main() {
   const client = new MongoClient(uri);
-  const threadId = '69bf65937d056dbfc55d677c';
+  const threadId = '69c20ef74d5c2e7259c4c867';
   
   try {
     await client.connect();
@@ -24,21 +24,10 @@ async function main() {
         console.log(`\n--- 🔍 FOUND CHECKPOINT FOR THREAD ${threadId} ---`);
         const toolResults = item.channel_values.toolResults;
         if (toolResults) {
-            const keys = Object.keys(toolResults);
-            console.log(`Tools included: ${keys.join(', ')}`);
-            keys.forEach(k => {
-                const toolOut = toolResults[k];
-                if (toolOut && toolOut.items) {
-                    console.log(`  -> ${k}: ${toolOut.items.length} items returned.`);
-                    if (toolOut.items.length > 0) {
-                        console.log(`     Sample Item: ${JSON.stringify(toolOut.items[0], null, 2).substring(0, 500)}...`);
-                    }
-                } else {
-                    console.log(`  -> ${k}: No .items or not list.`);
-                }
-            });
+            console.log(JSON.stringify(toolResults, null, 2));
         } else {
             console.log("⚠️ No toolResults in channel_values.");
+            console.log("Full channel_values keys:", Object.keys(item.channel_values));
         }
     } else {
         console.log("⚠️ No checkpoint found for this thread.");
