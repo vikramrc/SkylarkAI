@@ -48,6 +48,14 @@ async function main() {
             console.log(`\n--- ⏳ STEP ${stepCount} | Node: ${node} ---`);
             const vals = state.values;
             
+            if (vals.toolCalls && vals.toolCalls.length > 0) {
+                console.log(`📡 TOOL CALLS:`);
+                for (const call of vals.toolCalls) {
+                    console.log(`  -> Call: ${call.name}`);
+                    console.log(`     Args: ${JSON.stringify(call.args || {}, null, 2)}`); // 🟢 Added arguments log Native flawlessly coord!
+                }
+            }
+
             if (vals.toolResults && Object.keys(vals.toolResults).length > 0) {
                 console.log(`🛠️ TOOL RESULTS:`);
                 for (const [k, v] of Object.entries(vals.toolResults)) {
@@ -58,6 +66,9 @@ async function main() {
                             const parsed = JSON.parse(toolVal.content[0].text);
                             console.log(`     Summary: ${JSON.stringify(parsed.summary || {}, null, 2)}`);
                             console.log(`     Items Count: ${parsed.items?.length || 0}`);
+                            if (parsed.items) {
+                                console.log(`     Items Full: ${JSON.stringify(parsed.items, null, 2)}`); // 🟢 Added full items log Native flawlessly coord!
+                            }
                         } catch {
                             console.log(`     Text: ${toolVal.content[0].text.substring(0, 100)}...`);
                         }

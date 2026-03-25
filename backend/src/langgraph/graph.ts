@@ -23,7 +23,10 @@ const workflow = new StateGraph<SkylarkState>({
         default: () => ({ activeTopics: [], extractedEntities: {}, summaryBuffer: "" }),
     },
     toolCalls: { default: () => [] },
-    toolResults: { default: () => ({}) }, // 🟢 Removed reducer to overwrite turn-by-turn to prevent inflation!
+    toolResults: { 
+        reducer: (x: any, y: any) => y || {}, // 🟢 Replace completely so parallel tools of ONE turn are kept, but past turns are wiped
+        default: () => ({}) 
+    },
     feedBackVerdict: { default: () => "SUMMARIZE" },
     iterationCount: { default: () => 0 },
     error: { default: () => undefined }, // Optional error string

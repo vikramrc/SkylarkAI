@@ -46,15 +46,15 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     }
 
     // 1. Prepare Schema Context aggregate
-    const results = Object.values(state.toolResults || {});
+    const toolEntries = Object.entries(state.toolResults || {});
     let schemaHint = '[]';
     let jsonlData = '';
     const allItems: any[] = [];
     const emptyTools: string[] = [];
 
-    if (results.length > 0) {
+    if (toolEntries.length > 0) {
         // 🟢 Unpack MCP Wrapper accurately
-        const unpackedResults = results.map((res: any) => {
+        const unpackedEntries = toolEntries.map(([key, res]: [string, any]) => {
             let data = res;
             if (data?.content?.[0]?.text) {
                 try {
@@ -64,26 +64,24 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
                     console.warn(`[Summarizer] Failed to parse content[0].text JSON`, e);
                 }
             }
-            return data;
+            return { key, data };
         });
 
         // 🔴 CRITICAL FIX: extract the actual *items* arrays from each tool result wrapper
-        // Before this fix, prepareMongoForLLM received [{capability, items:[...], summary:{}}]
-        // which flattened the outer wrapper shape instead of the actual 100 data rows.
-        // Now we extract items[] from each result (falling back to the whole object if no items key).
-        for (const result of unpackedResults) {
+        for (const entry of unpackedEntries) {
+            const { key, data: result } = entry;
             const capability = result?.capability ?? 'unknown';
             const items = Array.isArray(result?.items) ? result.items : [result];
             if (Array.isArray(result?.items) && result.items.length === 0) {
-                emptyTools.push(`- **${capability}**: Returned 0 matching items.`);
+                emptyTools.push(`- **${key}** (${capability}): Returned 0 matching items.`);
             }
-            // Tag each row with its source tool so the LLM can distinguish multi-tool responses
+            // Tag each row with its source tool KEY so the LLM can distinguish multi-tool responses
             for (const item of items) {
-                allItems.push({ _tool: capability, ...item });
+                allItems.push({ _tool: key, ...item });
             }
         }
 
-        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📐 Flattening ${allItems.length} total rows across ${unpackedResults.length} tool result(s)\x1b[0m`);
+        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📐 Flattening ${allItems.length} total rows across ${unpackedEntries.length} tool result(s)\x1b[0m`);
         const beforeSize = JSON.stringify(allItems).length;
 
         const prepped = prepareMongoForLLM(allItems);
@@ -106,20 +104,23 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
             console.log(`  ➡ Row[0] sample:     ${JSON.stringify(firstRow.slice(0, 10))}${firstRow.length > 10 ? ` ...` : ''}`);
         }
 
-        // 🟢 Inject Static Contract Shape
-        const firstItem = unpackedResults[0];
-        const capabilityName = firstItem?.capability;
-        if (capabilityName && contractStrCache) {
-            try {
-                const blockRegex = new RegExp(`name:\\s*"${capabilityName}"[\\s\\S]*?responseShape:\\s*(\\[[\\s\\S]*?\\])`);
-                const match = contractStrCache.match(blockRegex);
-                if (match && match[1]) {
-                    const staticShape = match[1].replace(/\s+/g, ' ');
-                    schemaHint = `Contract Keys: ${staticShape}\nUnique Keys: ${schemaHint}`;
-                    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📄 Injected contract shape for capability: ${capabilityName}\x1b[0m`);
+        // 🟢 Inject Static Contract Shape for ALL unique capabilities
+        const injectedCapabilities = new Set<string>();
+        for (const entry of unpackedEntries) {
+            const capabilityName = entry.data?.capability;
+            if (capabilityName && contractStrCache && !injectedCapabilities.has(capabilityName)) {
+                injectedCapabilities.add(capabilityName);
+                try {
+                    const blockRegex = new RegExp(`name:\\s*"${capabilityName}"[\\s\\S]*?responseShape:\\s*(\\[[\\s\\S]*?\\])`);
+                    const match = contractStrCache.match(blockRegex);
+                    if (match && match[1]) {
+                        const staticShape = match[1].replace(/\\s+/g, ' ');
+                        schemaHint = `Contract Keys (${capabilityName}): ${staticShape}\n` + schemaHint;
+                        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📄 Injected contract shape for capability: ${capabilityName}\x1b[0m`);
+                    }
+                } catch (e) {
+                    console.warn(`[Summarizer] Failed to read static contract shape for ${capabilityName}`, e);
                 }
-            } catch (e) {
-                console.warn(`[Summarizer] Failed to read static contract shape for ${capabilityName}`, e);
             }
         }
     }
@@ -137,7 +138,7 @@ ${schemaHint}
 
     const noToolsCalled = !state.toolCalls || state.toolCalls.length === 0;
     // 🔴 CRITICAL FALLBACK: If tools were called but returned 0 items overall, treat it as empty conversational mode
-    const emptyDataset = results.length > 0 && typeof allItems !== 'undefined' && allItems.length === 0;
+    const emptyDataset = toolEntries.length > 0 && typeof allItems !== 'undefined' && allItems.length === 0;
 
     if (noToolsCalled || emptyDataset) {
         systemPrompt = `You are a professional maritime operations assistant. 
@@ -153,7 +154,7 @@ Be explicit that the query returned no items, but use your general context to ex
     if (state.workingMemory?.summaryBuffer) {
         promptMessages.push({
             role: "system",
-            content: `\n### OBSERVATIONAL STATUS CONTEXT\nUse this to understand active filters/focus:\n${state.workingMemory.summaryBuffer}`
+            content: `\n### OBSERVATIONAL STATUS CONTEXT (FROM PREVIOUS TURN)\nUse this to understand active filters/focus:\n${state.workingMemory.summaryBuffer}\n\n⚠️ IMPORTANT: This memory summary is from the PREVIOUS loop. If the active filters or scope changed, the raw INPUT DATA array (provided below) always overrides this memory. Do NOT trust this memory for exact row counts or statuses if they contradict the raw INPUT DATA array you are receiving now!`
         } as any);
     }
 

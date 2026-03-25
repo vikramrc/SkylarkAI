@@ -188,7 +188,7 @@ const baseCapabilitiesContract = [
       "What jobs are overdue from last year?"
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
-    interpretationGuidance: "Filter by statusCode=overdue or statusCode=upcoming. The 'summary' block provides quick counts."
+    interpretationGuidance: "Valid values for statusCode: overdue, upcoming, completed, open. The 'summary' block provides quick counts."
   },
   {
     name: "maintenance.query_execution_history",

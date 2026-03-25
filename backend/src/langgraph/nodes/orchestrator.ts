@@ -76,6 +76,13 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 - **Organization Identifier Guard**: Most tool endpoints REQUIRE an Organization identifier scope ('organizationShortName', 'organizationName', or 'organizationID'). If you lack ALL of these in memory context, you MUST use 'clarifyingQuestion' to ask the user for it first, instead of invoking tools listed.
 - **Failback Management**: If a specialized MCP tool returns an error or empty result, use the 'direct_query_fallback' as a high-fidelity semantic backup if available.
 - **Max Record Count**: Any tool that queries lists has a hard limit of 100 records maximum. Set 'limit' parameters according to the user's specific request (e.g., 'top 10' sets limit to 10), but never exceed 100 on any invocation. If unspecified, use a reasonable default.
+- **Diversity Allocation on Limits**: If a user asks for **multiple categories, statuses, or types** alongside a limit parameter (e.g., "top 5 each" or "top 5 total"), **DO NOT** lump them into a single general query. Setting a limit on a general query risks saturating the returned array with only one type due to underlying database sorting. Instead, you MUST **invoke parallel tool calls** for EACH explicit category requested.
+  *Examples:*
+  - **Maintenance Status**: "5 Overdue AND 5 Upcoming tasks" => parallel 'maintenance.query_status' (one with 'statusCode: "overdue"', one with 'statusCode: "upcoming"').
+  - **Forms Status**: "Top 5 Global AND Top 5 Vessel-Specific checklists" => parallel 'forms.query_status' (one with 'listGlobalForms: true', one with 'vesselSpecificOnly: true').
+  - **Inventory Transactions**: "Top 10 Issued AND Top 10 Transferred parts" => parallel 'inventory.query_transactions' (one with 'transactionType: "issue"', one with 'transactionType: "transfer"').
+  - **PTW Pipeline**: "Top 5 Hot Work AND Top 5 Cold Work permits" => parallel 'ptw.query_pipeline' (one with 'type: "hot_work"', one with 'type: "cold_work"').
+  - **Budget Invoices**: "5 Pending AND 5 Approved invoices" => parallel 'budget.query_invoice_status' (one with 'status: "pending"', one with 'status: "approved"').
 
 ### SECURITY & SAFETY GUARDRAILS (Defense-in-Depth)
 - **Strict Read-Only Guard**: You are strictly Read-Only. NEVER create, update, or delete records. NEVER generate queries or suggest operations that attempt to mutate, insert, or modify database or system state.
