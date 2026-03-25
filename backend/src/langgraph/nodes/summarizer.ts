@@ -51,6 +51,7 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     let jsonlData = '';
     const allItems: any[] = [];
     const emptyTools: string[] = [];
+    let toolCountSummary = "";
 
     if (toolEntries.length > 0) {
         // 🟢 Unpack MCP Wrapper accurately
@@ -68,18 +69,33 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         });
 
         // 🔴 CRITICAL FIX: extract the actual *items* arrays from each tool result wrapper
+        const toolCountMap: string[] = [];
         for (const entry of unpackedEntries) {
             const { key, data: result } = entry;
             const capability = result?.capability ?? 'unknown';
             const items = Array.isArray(result?.items) ? result.items : [result];
+            
+            const filterInfo = result?.appliedFilters?.statusCode ? ` (filter: ${result.appliedFilters.statusCode})` : '';
+            toolCountMap.push(`- **${key}** (${capability}${filterInfo}): ${items.length} rows`);
+
             if (Array.isArray(result?.items) && result.items.length === 0) {
                 emptyTools.push(`- **${key}** (${capability}): Returned 0 matching items.`);
             }
             // Tag each row with its source tool KEY so the LLM can distinguish multi-tool responses
             for (const item of items) {
-                allItems.push({ _tool: key, ...item });
+                // 🟢 SANITIZE DATA: Trim and cap strings to prevent "index blindness" from junk data/whitespace
+                const sanitizedItem = { ...item };
+                for (const [k, v] of Object.entries(sanitizedItem)) {
+                    if (typeof v === 'string') {
+                        // Collapse massive whitespace gaps to prevent LLM counting errors, but preserve the FULL string data.
+                        sanitizedItem[k] = v.replace(/\s+/g, ' ').trim();
+                    }
+                }
+                allItems.push({ _tool: key, ...sanitizedItem });
             }
         }
+
+        toolCountSummary = toolCountMap.join('\n');
 
         console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📐 Flattening ${allItems.length} total rows across ${unpackedEntries.length} tool result(s)\x1b[0m`);
         const beforeSize = JSON.stringify(allItems).length;
@@ -170,7 +186,19 @@ Be explicit that the query returned no items, but use your general context to ex
         : "";
 
     promptMessages.push(
-        { role: "user", content: `### INPUT DATA (Compact Array Format)\nThe dataset is serialized in a token-efficient compact format to reduce latency:\n- "headers": ordered column names for each data field\n- "rows": each row is a value array aligned to the headers (null = missing field)\nArrays and nested objects are JSON-stringified inline within the cell value.\n\n⚠️ **Strict Index Offset Anchor**: When reading values, always match \`row[i]\` strictly to \`headers[i]\`. Do not assume item positions across rows of irregular lengths.${emptyToolsSection}\n\n${jsonlData}` } as any
+        { 
+            role: "user", 
+            content: `### INPUT DATA (Compact Array Format)\nThe dataset is serialized in a token-efficient compact format. 
+\n### TOOL RESULTS MAP (EXPECTED COUNTS)
+Use this map to verify you haven't missed any data rows:
+${toolCountSummary}
+
+- "headers": ordered column names for each data field
+- "rows": each row is a value array aligned to the headers (null = missing field)
+Arrays and nested objects are JSON-stringified inline within the cell value.
+
+⚠️ **Strict Index Offset Anchor**: When reading values, always match \`row[i]\` strictly to \`headers[i]\`. Do not assume item positions across rows of irregular lengths. Booleans like \`isOverdue\` and \`isUpcoming\` are typically near the end of the row.${emptyToolsSection}\n\n${jsonlData}` 
+        } as any
     );
 
     console.log(`\x1b[36m${ts()} [LangGraph Summarizer] --- PROMPT SENT TO LLM ---\x1b[0m`);
