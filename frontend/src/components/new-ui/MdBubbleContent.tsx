@@ -51,13 +51,14 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
     URL.revokeObjectURL(url);
   };
 
-  // 🟢 Segment-based Rendering: Split by INSIGHT tags first trigger flawless
-  const segments = content.split(/(\[INSIGHT[\s\S]*?\[\/INSIGHT\])/g).filter(Boolean);
+  // 🟢 Segment-based Rendering: Split by INSIGHT tags (supporting both closed and unclosed tags)
+  const segments = content.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|$))/g).filter(Boolean);
 
   return (
     <div className="space-y-4 text-base text-gray-800 leading-relaxed">
       {segments.map((segment, sIdx) => {
-        const insightMatch = segment.match(/\[INSIGHT\s+title="([^"]*)"\s+icon="([^"]*)"\s+color="([^"]*)"\]([\s\S]*?)\[\/INSIGHT\]/);
+        // Match both closed and unclosed tags
+        const insightMatch = segment.match(/\[INSIGHT\s+title="([^"]*)"\s+icon="([^"]*)"\s+color="([^"]*)"\]([\s\S]*?)(?:\[\/INSIGHT\]|$)/);
         
         if (insightMatch) {
           const [, title, icon, color, innerText] = insightMatch;
