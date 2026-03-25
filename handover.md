@@ -781,10 +781,12 @@ We addressed issues with highly redundant streaming component stacking and upgra
 - **Solution**: Added a `reasoning` field to `SkylarkState` and updated the Orchestrator to save its technical thought process per-turn.
 - **Benefit**: AI now retains memory across turns, and every orchestration decision is explicitly documented in the state history.
 
-### 42. Direct Query Safety Guardrail (25 Result Limit via Prompt)
+### 42. Direct Query Safety Guardrail (24-25 Result Limit via Orchestrator Override)
 - **Problem**: The `direct_query_fallback` tool (Mastra Fallback) could return 1000s of rows, overwhelming the Summarizer LLM and UI.
-- **Solution**: Implemented a **HARD LIMIT** in the tool's description prompt, instructing the AI to restrict all semantic and MongoQL queries to 25 records maximum.
-- **Note on 16MB BSON Limit**: This prompt limit is a soft guardrail. If the AI hallucinates or ignores the prompt and fetches large data, the 15MB State Pre-Validation logic (Section 44) will catch it and route gracefully to the error node.
+- **Solution**: Implemented a **SPECIAL CASE** override in `orchestrator.ts`. 
+- **Implementation**: The tool Guidance in the Orchestrator node now explicitly instructs the AI that this tool has a hard limit of 25 records maximum, overriding the global 100-record rule.
+- **Note on 16MB BSON Limit**: This prompt limit is reinforced by the 15MB State Pre-Validation logic (Section 44) which catches any hallucinations or prompt-ignoring by the LLM.
+
 
 ### 43. Error Propagation Hardening (SSE Synchronization)
 - **Problem**: Backend crashes (like MongoDB 16MB) caused the graph to stop before the next status was sent, leaving the UI stuck in "Processing..." or "Executing parallel tools...".
@@ -797,5 +799,51 @@ We addressed issues with highly redundant streaming component stacking and upgra
 - **Solution**: Implemented a **15MB Size Pre-Validation** check in `execute_tools.ts`.
 - **Implementation**: The system calculates `Buffer.byteLength(JSON.stringify(mergedResults))`. If it exceeds 15,000,000 bytes, the tool execution bypasses saving the data payload and instead returns `{ error: "Document is larger than 16MB..." }`.
 - **Benefit**: This cleanly routes the error to the `errorNode` via the standard graph edges, allowing the AI to summarize the failure and the UI to show the error interactively, rather than crashing the background Node checkpointer.
+
+### 45. Orchestrator LLM Output Hardening
+- **Problem**: In long conversations with high token counts, the LLM sometimes fails to generate valid structured JSON, returning `null` or invalid data which caused a "Cannot read properties of null (reading 'feedBackVerdict')" crash.
+- **Solution**: Added a null-check guard in `orchestrator.ts` after the LLM call.
+- **Result**: If the LLM generates invalid data, the system now returns a graceful error object. This routes the failure to the `errorNode` and preserves the server process.
+
+---
+
+## 🛠️ 46. Hardening Maintenance Instruction Retrieval (March 25, 2026)
+
+We resolved a fundamental architectural blocker where maintenance instructions could not be discovered fleet-wide due to missing organization identifiers on the `Activity` model.
+
+### 🟢 **Join-Based Instruction Discovery (`mcp.service.js`)**
+- **Problem**: `Activity` records lack an `organizationID`. Previous attempts to filter by organization returned zero results because the field didn't exist.
+- **Fix**: Refactored `getMaintenanceInstructions` to use a MongoDB aggregation pipeline that joins **Activity → Machinery → Vessel**. This allows strict verification of the `organizationID` (stored on the Vessel) before returning any activity.
+- **Removed "Active" Constraint**: Discovered that the database does not consistently use an `active: true` flag on activities. Removing this "ghost" filter immediately restored visibility to over 1,000 instruction-rich records.
+
+### 🟢 **Instruction-Aware Discovery (`hasInstructionsOnly`)**
+- **Fix**: Implemented a server-side filter that only returns activities where `notesHtml` is non-empty OR `documentIDs` has at least one entry.
+- **Result**: Enables the agent to fulfill requests like "show me activities that aren't blank" in a single turn without manual post-filtering.
+
+### 🟢 **Document Metadata Enrichment**
+- **Fix**: Upgraded the response to resolve `documentID` into `documentName`, `documentType`, and `documentDescription` by querying the `DocumentMetadata` collection.
+- **Result**: The UI now displays "Main Engine Manual" instead of raw hexadecimal IDs.
+
+### 🧪 **Consolidated Sample Test Queries**
+Use these queries to verify the new smart-retrieval and status logic:
+
+**1. Technical Instructions & Manuals**
+- *"Show me maintenance instructions for any 2 activities for fleetships, but only those with instructions."*
+- *"Find instructions for machinery on XXX1 that have documents attached."*
+- *"Show me the maker notes and attached manuals for any 2 technical jobs."*
+
+**2. Maintenance Status & Filtering**
+- *"Show me upcoming maintenance tasks for fleetships."*
+- *"List overdue maintenance for the vessel XXX1."*
+- *"Are there any critical maintenance jobs pending for Deck Machinery?"*
+
+**3. History & Compliance**
+- *"What maintenance was completed in last 30 days?"*
+- *"Show me the reliability and MTBF for the Main Engine."*
+- *"List all deferred maintenance tasks and the reasons for delay."*
+
+**4. Inventory & Readiness**
+- *"Are we ready with spares for the upcoming 2000hrs overhaul?"*
+- *"Which inventory parts are nearing their expiry date?"*
 
 

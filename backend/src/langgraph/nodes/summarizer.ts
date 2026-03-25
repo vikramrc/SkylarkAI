@@ -58,11 +58,19 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         const unpackedEntries = toolEntries.map(([key, res]: [string, any]) => {
             let data = res;
             if (data?.content?.[0]?.text) {
-                try {
-                    const parsed = JSON.parse(data.content[0].text);
-                    if (parsed) data = parsed;
-                } catch (e) {
-                    console.warn(`[Summarizer] Failed to parse content[0].text JSON`, e);
+                const text = data.content[0].text;
+                // 🟢 FIX: Handle raw error strings gracefully. Only parse if it looks like valid JSON.
+                if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
+                    try {
+                        const parsed = JSON.parse(text);
+                        if (parsed) data = parsed;
+                    } catch (e) {
+                        console.warn(`[Summarizer] Failed to parse content[0].text JSON`, e);
+                    }
+                } else if (text.includes("Error:")) {
+                    console.log(`[Summarizer] Detected tool error string, skipping JSON parse: ${text.substring(0, 50)}...`);
+                    // Use the raw text as data so the LLM can see the error message
+                    data = { items: [], error: text };
                 }
             }
             return { key, data };
@@ -153,6 +161,8 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
   - **icon**: Pick exactly one from: 'alert' (for overdue/critical), 'calendar' (for upcoming/planned), 'check' (for completed/committed), or 'lightbulb' (for general trends).
   - **color**: Pick exactly one from: 'red' (danger), 'amber' (warning), 'green' (success), or 'blue' (info/general).
   - **Content**: Inside the tags, use concise bullet points and **bolding** for key values. Finding cross-dataset insights and correlations is your primary purpose.
+
+- **Technical Notes & Manuals (Critical)**: If the dataset contains fields like \`notesHtml\`, \`notes\`, or lists of \`documents\`, you MUST summarize these instructions clearly for the user. Do NOT just say "instructions are available"; explain what they contain (e.g., "The instructions specify setting the spdpfsh and include a link to the IMO Compendium"). Since \`notesHtml\` is raw HTML, strip tags mentally and summarize the core steps.
 
 ### GLOBAL SCHEMA CONTEXT
 ${schemaHint}
