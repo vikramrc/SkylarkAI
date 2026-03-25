@@ -144,7 +144,7 @@ You are currently on a follow-up turn investigating further based on previous to
   * Optional Params:
     None
   * Response Shape: [success, source, data]
-  * Guidance: If specialized filtering endpoints do not match target granularity or fail to return field-level items, call this as high-fidelity failback seamlessly flawlessly.`;
+  * Guidance: SPECIAL CASE: For this tool only, there is a hard limit of 25 records maximum instead of the global 100. Any userQuery must explicitly include a 'Limit 25' instruction if it involves fetching lists. If specialized filtering endpoints do not match target granularity or fail to return field-level items, call this as high-fidelity failback.`;
 
     const formattedInstruction = systemInstruction.replace("%%TOOL_CONTEXT%%", finalToolDetails);
 
@@ -185,6 +185,12 @@ You are currently on a follow-up turn investigating further based on previous to
     }
 
     console.log(`[LangGraph Orchestrator Output]`, JSON.stringify(response, null, 2));
+    
+    if (!response) {
+        console.error(`[LangGraph Orchestrator] 🚨 LLM returned null or invalid structured data. Check prompt and token limits.`);
+        return { error: `Orchestrator failed to generate a valid plan. This often happens on very long conversations or when token limits are reached. Please try clearing the chat or asking a simpler question.` };
+    }
+
     console.log(`[LangGraph]   Verdict: ${response.feedBackVerdict} | Tools: ${JSON.stringify(response.tools.map((t: any) => t.name))}`);
 
     const updates: Partial<SkylarkState> = {
