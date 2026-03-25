@@ -75,6 +75,8 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "workHistoryID":
     case "crewMemberID":
       return `${requiredLabel} canonical raw MongoDB ObjectId for the ${param.replace("ID", "")}. DO NOT guess this. If you only have a name (e.g., "JPY Budget", "Main Engine"), you MUST first use a broad query/overview tool (like budget.query_overview or fleet.query_machinery_status) to find the correct ID before calling this tool.`;
+    case "fulfillmentFilter":
+      return `${requiredLabel} filter for Purchase Order fulfillment status. Options: 'over50' (received > 50%), 'under50' (received < 50%), 'completed' (100% received), 'none' (0% received).`;
     default:
       return `${requiredLabel} parameter: ${param}`;
   }
@@ -468,10 +470,11 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/procurement/orders-summary",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "status", "urgency", "days", "startDate", "endDate", "limit"],
-    purpose: "Returns PO details with line items, urgency, and delivery status.",
-    whenToUse: "Tracking order status, checking emergency orders.",
-    typicalQuestions: ["Show me emergency orders raised outside vendor lists.", "Are there POs stuck in transit?", "Show me POs raised last month.", "Which orders are expected to deliver between Jan and Feb 2026?"],
+    optionalQuery: ["vesselID", "status", "urgency", "days", "startDate", "endDate", "fulfillmentFilter", "fulfillmentPercent", "fulfillmentPercentOperator", "limit"],
+    purpose: "Returns PO details with line items, urgency, fulfillment metrics (totalOrderedQty, totalReceivedQty, fulfillmentPercent), and delivery status. Supports fulfillmentFilter (over50, under50, completed, none).",
+    whenToUse: "Tracking order status, checking emergency orders, or analyzing fulfillment-based procurement performance.",
+    typicalQuestions: ["Show me emergency orders raised outside vendor lists.", "Are there POs stuck in transit?", "Show me POs raised last month.", "Which orders are expected to deliver between Jan and Feb 2026?", "Show me sent POs which are over 30% fulfilled.", "List POs with less than 50% fulfillment."],
+    interpretationGuidance: "For fulfillment queries, pass the raw number (e.g., 30) to fulfillmentPercent. ALWAYS pass a valid MongoDB comparison operator (gte, gt, lte, lt) to fulfillmentPercentOperator. Default to gte if the user says 'at least' or 'over'.",
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
