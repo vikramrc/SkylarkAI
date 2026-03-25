@@ -154,9 +154,13 @@ export function createLangGraphWorkflowRouter() {
 
         } catch (error: any) {
             console.error(`[LangGraph Route Error]:`, error.message);
-            res.write(`event: error\ndata: ${JSON.stringify({
+            
+            // 🟢 Send timeline error status so UI spinner and timeline stop flawlessly!
+            res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: error.message || String(error) })}\n\n`);
+
+            res.write(`event: workflow_error\ndata: ${JSON.stringify({
                 runId: currentRunId,
-                error: error.message || String(error),
+                message: error.message || String(error),
                 status: 'error'
             })}\n\n`);
             res.end();

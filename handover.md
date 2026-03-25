@@ -698,3 +698,104 @@ To achieve absolute read-only isolation, we're transitioning direct query fallba
 -   Created a dedicated script that runs natively on Node.js using standard **`db.command()`** driver loops bypassing the need for `mongosh`.
 -   **Security Separation**: Targeted strictly at **Phoenix DB source coordinates** (Read-Only) preserving read-write status for standard `SkylarkDB` checkpoint saving frameworks natively securely flawless!
 -   Grants strictly `read` role on variables bounds securely.
+
+---
+
+## 🛠️ 37. Orchestrator Parallel Arrays & `maintenance.query_status` Fixes
+
+We rolled out fixes to resolve the issue where the `maintenance.query_status` capability returned empty/duplicated results when filtering for `overdue` and `upcoming` timeframe statuses, alongside preventing multi-turn context blooming in the Orchestrator's execution logic.
+
+### 🟢 **Added Missing "Pending" Alias (`mcp.service.js`)**
+- **Problem**: Lowered fidelity when querying for 'pending' maintenance, which is not natively classified in the DB schema, causing `buildMaintenanceStatusFilter` to silently drop the query range filter and return random newly created tasks.
+- **Fix**: Added logical mapping inside `PhoenixCloudBE/services/mcp.service.js` redirecting explicit `"pending"` string requests exactly into the logic block for `"overdue"`, binding it properly to `{ committed: false, plannedDueDate: { $lt: now } }`.
+
+### 🟢 **LangGraph Array Bleed Prevention (`graph.ts`)**
+- **Problem**: Modifying the state dictionary on `graph.ts` turn channels using `(x, y) => ({ ...(x || {}), ...(y || {}) })` merged arrays permanently instead of per-turn. This resulted in arrays accumulating exponentially, feeding duplicate grid items from 5 past turns simultaneously into the summarizer LLM on iteration 6.
+- **Fix**: Restored the `toolResults` reducer to securely isolate current parallel execution outcomes only (`reducer: (x, y) => y || {}`), completely eliminating cross-turn array inflation while maintaining concurrent nested overlapping tool results natively flawlessly.
+
+### 🟢 **Orchestrator Parameter Hallucination (`orchestrator.ts`)**
+- **Problem**: A system prompt misdirection (`invoke parallel tool calls (e.g., one for Overdue, one for Upcoming)`) tricked the LLM into discarding the mandatory schema key `"statusCode"`, injecting `"status": "overdue"` instead. Because `"status"` was unmapped, the backend returned 5 completely unrelated rows regardless of the actual timeline condition.
+- **Fix**: Upgraded the specific orchestrator instruction inside `SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts` to demand the API-strict schema keys: `invoke parallel tool calls (e.g., one passing statusCode="overdue", one passing statusCode="upcoming")`. Anchoring the model cleanly solves the API silent ignore bounds mismatch natively flawlessly.
+- **Universal Fix**: Expanded the `Diversity Allocation on Limits` rule to apply directly to ALL explicitly distinct categorical queries with limits (Forms, Transferred Items, Inventory, Budget Invoices). Supplied concrete examples for each context type.
+
+---
+
+## 🛠️ 38. Parallel Tool Data Loss & Summarizer Prompt Accuracy
+
+We resolved errors inside `summarizer.ts` where running multiple identical tools sequentially (e.g., querying "overdue" and "upcoming") resulted in silent data shedding and historical response hallucination.
+
+### 🟢 **Parallel Array Labelling & Key Extraction (`summarizer.ts`)**
+- **Problem**: The array flattening loop formerly used `Object.values(state.toolResults)`. This completely stripped away LangGraph's distinct tracking dictionary keys (e.g. `maintenance.query_status_1`). The result was that BOTH outputs were labeled identical `_tool: "maintenance.query_status"` and the AI failed to segregate the chunks.
+- **Fix**: Updated extraction to `Object.entries(state.toolResults)` mapped into `{ key, data }`. The unique ID keys (e.g. `maintenance.query_status_1`) are now correctly bound into the `_tool` tagging field, creating perfect semantic divisions for parallel tables.
+
+### 🟢 **Parallel Missing Schema Loop (`summarizer.ts`)**
+- **Problem**: Schema hint inference targeted `unpackedResults[0].capability` explicitly. As such, if the user triggered two fundamentally disparate UI tools in one query (e.g. Forms and Maintenance), only the first JSON schema loaded, leaving the AI blind to the second payload's structure.
+- **Fix**: Rebuilt the schema injection into an aggregated dictionary array. It now loops over all unique `.capability` IDs present in the `toolResults` batch, appending each disparate contract payload sequentially inside `schemaHint`.
+
+### 🟢 **LLM Concurrency Memory Contradiction Fix (`summarizer.ts`)**
+- **Problem**: Because `nodeSummarizer` and `nodeUpdateMemory` fire in immediate parallel graph bounds, `summarizer.ts` was forced to build its system prompt using the *previous* turn's Memory Summary buffer. If the previous chunk had 0 matching overdue values, the summarizer read the old memory and actively discarded the shiny new data arrays currently streaming!
+- **Fix**: Hand-wrote an escape boundary warning directly inside the `SystemPrompt: OBSERVATIONAL STATUS CONTEXT`. We instructed the AI that `"...This memory is from the PREVIOUS loop... The raw INPUT DATA array always overrides this. Do NOT trust this memory for exact row counts or statuses if they contradict the raw INPUT DATA array."` This perfectly immunizes the parallel UI streams.
+
+---
+
+## 🛠️ 39. Summarizer "Index Blindness" & "Committed" Alias Fix (March 25, 2026)
+
+We addressed critical hallucination vectors where the Summarizer reported "0" results despite valid tool data, and reconciled status naming discrepancies.
+
+### 🟢 **Data Sanitization & Value Capping (`summarizer.ts`)**
+- **Problem**: Incoming maintenance rows contained massive white-space gaps (500+ characters) in description fields. In the `Compact Array Format`, this "junk" token inflation caused the LLM to lose positional synchronization with the column index (e.g. it "missed" the `isUpcoming: true` flag at the end of the array).
+- **Fix**: Implemented a mandatory sanitization pass inside the row execution loop. Every string value is now `.trim()` and capped at 300 characters before being flattened into the array. This keeps rows clean, tight, and index-stable for LLM attention.
+
+### 🟢 **Tool Results Map (Expected Counts Anchoring)**
+- **Problem**: In parallel execution, the AI often failed to "see" which results belonged to which tool call.
+- **Fix**: Injected a `TOOL RESULTS MAP (EXPECTED COUNTS)` directly above the raw data array in the prompt. It explicitly lists `[tool_key, capability, statusCode_filter, row_count]`. This acts as a ground-truth "checklist" that the AI must reconcile before writing its summary, eliminating "0-count" hallucinations when data is actually present.
+
+### 🟢 **"Committed" Alias & Contract Hardening**
+- **Problem**: The AI improvised `statusCode="committed"`, while the backend strictly required `"completed"`. This caused the filter to drop, returning unfiltered "created" tasks which the AI then summarized as "no committed ones found."
+- **Fix**: Added logical mapping in `mcp.service.js` to treat `"committed"` and `"completed"` identically. Also updated the global capability contract (`contract.ts`) to explicitly list valid statuses: `overdue, upcoming, completed, open`.
+
+---
+
+## 🛠️ 40. Premium Analytical Summary & Chat UX Fix (March 25, 2026)
+
+We addressed issues with highly redundant streaming component stacking and upgraded the raw Markdown lists into a premium, styled dashboard component.
+
+### 🟢 **Streaming UI Bubble De-duplication (`ContinuousChatView.tsx`)**
+- **Problem**: The LangGraph Server-Sent Events (SSE) `tool_results` stream repeatedly emits the *accumulated* tool state. The frontend was blindly appending a new `<ResultTable />` for every emission, creating a stacked "staircase" of duplicate tables when multiple tools executed in parallel.
+- **Fix**: Updated the React `setMessages` listener. If the last message in the feed is already of type `table`, it updates that exact message's properties in-place. This yields a single, live-updating tabbed table block.
+
+### 🟢 **Dynamic Tab Label Injection (`orchestrator.ts` & `execute_tools.ts`)**
+- **Problem**: The user interface was forcefully deriving ugly tab titles straight from the tool keys (e.g. `Maintenance Query Status 1`).
+- **Fix**: Added an explicit `uiTabLabel` parameter to the Orchestrator's structured output Zod schema. Instructed the LLM to write beautifully localized tab labels (e.g., "Overdue Engine Maintenance"). The executor Node intercepts this on the backend and injects it into the MCP wrapper for the frontend `<ResultTable />` to render.
+
+### 🟢 **Premium Sectioned Analytical Insights (`AnalyticalSummary.tsx` & `MdBubbleContent.tsx`)**
+- **Problem**: The initial regex for `[INSIGHT]` tags only matched the first occurrence in a block and was sensitive to newline spacing. Additionally, the AI occasionally hallucinated Markdown tables in its text summary, creating redundancy with the UI grid.
+- **Fix**: 
+    1. Refactored `MdBubbleContent.tsx` to use a global segment-based parser that handles multiple tags flawlessly.
+    2. Hardened `summarizer.ts` with a **Strict Negative Constraint**: The AI is now explicitly FORBIDDEN from generating Markdown tables and is instructed that all analysis MUST be contained within `[INSIGHT]` tags. This ensures a clean, non-redundant, and premium analytical dashboard.
+
+### 🔍 **Discovery: Disappearing Tool Results (Known Issue)**
+- **Observation**: Users noticed that earlier tool results (e.g. "Fleet Overview") sometimes disappear when subsequent results arrive.
+- **Root Cause**: In `graph.ts`, the `toolResults` channel uses a "Replace" reducer: `reducer: (x, y) => y || {}`. When the orchestrator loops to fetch more data, the second turn's result dictionary completely overwrites the first one in the state, causing the UI (which live-updates the last table) to "lose" the previous tabs.
+- **Problem**: The AI "forgot" Loop 1 results or its intent wasn't clear in traces.
+- **Solution**: Added a `reasoning` field to `SkylarkState` and updated the Orchestrator to save its technical thought process per-turn.
+- **Benefit**: AI now retains memory across turns, and every orchestration decision is explicitly documented in the state history.
+
+### 42. Direct Query Safety Guardrail (25 Result Limit via Prompt)
+- **Problem**: The `direct_query_fallback` tool (Mastra Fallback) could return 1000s of rows, overwhelming the Summarizer LLM and UI.
+- **Solution**: Implemented a **HARD LIMIT** in the tool's description prompt, instructing the AI to restrict all semantic and MongoQL queries to 25 records maximum.
+- **Note on 16MB BSON Limit**: This prompt limit is a soft guardrail. If the AI hallucinates or ignores the prompt and fetches large data, the 15MB State Pre-Validation logic (Section 44) will catch it and route gracefully to the error node.
+
+### 43. Error Propagation Hardening (SSE Synchronization)
+- **Problem**: Backend crashes (like MongoDB 16MB) caused the graph to stop before the next status was sent, leaving the UI stuck in "Processing..." or "Executing parallel tools...".
+- **Fix**: Hardened the `catch` block in `backend/src/langgraph/routes/workflow.ts` to explicitly emit a `status_update` with `stage: 'error'`.
+- **Synchronization**: Changed the generic `error` event to `workflow_error` to match the frontend's listener in `ContinuousChatView.tsx`.
+- **Result**: Any crash now immediately terminates the UI spinner and marks the timeline stage as failed.
+
+### 44. MongoDB 16MB Checkpointer Limit (Graceful Error Routing)
+- **Problem**: Gathering extreme amounts of data from APIs (e.g., thousands of parts across loops) causes LangGraph's `MongoDBSaver` to crash with a `MongoInvalidArgumentError` (16MB BSON limit), hanging the UI since the promise rejection isn't caught locally.
+- **Solution**: Implemented a **15MB Size Pre-Validation** check in `execute_tools.ts`.
+- **Implementation**: The system calculates `Buffer.byteLength(JSON.stringify(mergedResults))`. If it exceeds 15,000,000 bytes, the tool execution bypasses saving the data payload and instead returns `{ error: "Document is larger than 16MB..." }`.
+- **Benefit**: This cleanly routes the error to the `errorNode` via the standard graph edges, allowing the AI to summarize the failure and the UI to show the error interactively, rather than crashing the background Node checkpointer.
+
+

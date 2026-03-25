@@ -29,6 +29,7 @@ export interface SkylarkState {
   toolCalls: any[]; // The parallel tools listed by the Orchestrator
   toolResults: Record<string, any>; // execution outputs mapped by tool name
   feedBackVerdict: 'SUMMARIZE' | 'FEED_BACK_TO_ME'; // Prompt decisions
+  reasoning?: string; // 🟢 Captured thought process from the Orchestrator flawlessly!
 
   // 4. Safety Loop Safeguard
   iterationCount: number;

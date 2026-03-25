@@ -18,7 +18,7 @@ export const orchestratorSchema = z.object({
     })).describe("List of MCP tool names and their arguments to execute in parallel."),
     feedBackVerdict: z.enum(['SUMMARIZE', 'FEED_BACK_TO_ME']).describe("Decide whether the results should be fed back for sequential chain investigation or passed straight to the Summarizer."),
     clarifyingQuestion: z.string().describe("Use this to Ask the user a question if mandatory parameters (e.g., Organization ID/Name) are missing and no tools can be called.").nullable(),
-    reasoning: z.string().describe("Quick thought process supporting the tool picks.")
+    reasoning: z.string().describe("Your internal technical thought process. If you pick FEED_BACK_TO_ME, explain exactly what gap you are trying to fill (e.g., 'Fetched Job IDs, now need to fetch their specific form contents' or 'Direct query failed, trying standard tool fallback').")
 });
 
 // 🟢 Global Module-Level Cache for multitenant startup-once speedups
@@ -190,6 +190,7 @@ You are currently on a follow-up turn investigating further based on previous to
     const updates: Partial<SkylarkState> = {
         toolCalls: response.tools,
         feedBackVerdict: response.feedBackVerdict,
+        reasoning: response.reasoning, // 🟢 Save technical reasoning for diagnostics flawlessly!
         iterationCount: (state.iterationCount || 0) + 1,
         hitl_required: undefined, // 🟢 Clear previous checkpoints flags breakouts!
         error: undefined // 🟢 Clear previous turn errors carry over flawless flawlessly index flaws!

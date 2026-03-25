@@ -110,13 +110,30 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
         }
     });
 
+    // 🟢 16MB MongoDB Crash Prevention: Pre-validate State Size
+    const mergedResults = { ...(state.toolResults || {}), ...outputs };
+    const sizeInBytes = Buffer.byteLength(JSON.stringify(mergedResults), 'utf8');
+    const MAX_BYTES = 15000000; // 15MB safe limit
+
+    let errorObj: any = null;
+    if (sizeInBytes > MAX_BYTES) {
+        console.warn(`[LangGraph Execute] 🚨 Payload size ${sizeInBytes} bytes exceeds 15MB safe limit. Routing to errorNode.`);
+        errorObj = { error: `MongoInvalidArgumentError: Document is larger than the maximum size 16777216 bytes. Current size: ${sizeInBytes} bytes. Please refine your query to return less data.` };
+    }
+
     if (finalMessageContent) {
         const { AIMessage } = await import("@langchain/core/messages");
+        if (errorObj) {
+            return {
+                ...errorObj,
+                messages: [...state.messages, new AIMessage({ content: finalMessageContent })]
+            } as any;
+        }
         return { 
             toolResults: outputs,
             messages: [...state.messages, new AIMessage({ content: finalMessageContent })]
         } as any;
     }
 
-    return { toolResults: outputs };
+    return errorObj ? errorObj : { toolResults: outputs };
 }

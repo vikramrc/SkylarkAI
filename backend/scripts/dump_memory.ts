@@ -48,11 +48,26 @@ async function main() {
             console.log(`\n--- ⏳ STEP ${stepCount} | Node: ${node} ---`);
             const vals = state.values;
             
+            const lastMsgs = vals.messages?.slice(-10) || []; // 🟢 Show last 10 messages for deeper context
+            console.log(`💬 MESSAGE HISTORY (${lastMsgs.length} messages):`);
+            for (const m of lastMsgs) {
+                const role = (m as any)._getType?.() || m.role || 'user';
+                const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                console.log(`   [${role}]: ${content.substring(0, 200).replace(/\n/g, ' ')}...`);
+            }
+
+            if (vals.feedBackVerdict) {
+                console.log(`💡 VERDICT: ${vals.feedBackVerdict}`);
+                if (vals.reasoning) {
+                    console.log(`🧠 REASONING: ${vals.reasoning.replace(/\n/g, ' ')}`);
+                }
+            }
+
             if (vals.toolCalls && vals.toolCalls.length > 0) {
-                console.log(`📡 TOOL CALLS:`);
+                console.log(`📡 TOOL CALLS (${vals.toolCalls.length}):`);
                 for (const call of vals.toolCalls) {
                     console.log(`  -> Call: ${call.name}`);
-                    console.log(`     Args: ${JSON.stringify(call.args || {}, null, 2)}`); // 🟢 Added arguments log Native flawlessly coord!
+                    console.log(`     Args: ${JSON.stringify(call.args || {}, null, 1).replace(/\n/g, ' ')}`);
                 }
             }
 
@@ -61,18 +76,6 @@ async function main() {
                 for (const [k, v] of Object.entries(vals.toolResults)) {
                     const toolVal = v as any;
                     console.log(`  -> ${k} (${toolVal.content?.length || 0} items)`);
-                    if (toolVal.content?.[0]?.text) {
-                        try {
-                            const parsed = JSON.parse(toolVal.content[0].text);
-                            console.log(`     Summary: ${JSON.stringify(parsed.summary || {}, null, 2)}`);
-                            console.log(`     Items Count: ${parsed.items?.length || 0}`);
-                            if (parsed.items) {
-                                console.log(`     Items Full: ${JSON.stringify(parsed.items, null, 2)}`); // 🟢 Added full items log Native flawlessly coord!
-                            }
-                        } catch {
-                            console.log(`     Text: ${toolVal.content[0].text.substring(0, 100)}...`);
-                        }
-                    }
                 }
             } else {
                 console.log("No toolResults in this step.");

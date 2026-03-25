@@ -24,7 +24,7 @@ const workflow = new StateGraph<SkylarkState>({
     },
     toolCalls: { default: () => [] },
     toolResults: { 
-        reducer: (x: any, y: any) => y || {}, // 🟢 Replace completely so parallel tools of ONE turn are kept, but past turns are wiped
+        reducer: (x: any, y: any) => ({ ...x, ...(y || {}) }), // 🟢 Shallow merge results across Turns so AI memory persists flawless!
         default: () => ({}) 
     },
     feedBackVerdict: { default: () => "SUMMARIZE" },

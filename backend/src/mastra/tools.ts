@@ -7,7 +7,7 @@ import { ambiguityStore, setAmbiguity } from './ambiguity-store.js';
 
 export const directQueryFallback = createTool({
   id: 'direct_query_fallback',
-  description: 'Use this tool for general maritime queries, complex data aggregation, or when no other specific maintenance/procurement tool covers the request. This tool performs a direct semantic search and MongoQL query against the database.',
+  description: 'Use this tool for general maritime queries, complex data aggregation, or when no other specific maintenance/procurement tool covers the request. This tool performs a direct semantic search and MongoQL query against the database. HARD LIMIT: You must limit your query results to 25 records maximum.',
   inputSchema: z.object({
     userQuery: z.string().describe('The user\'s original query or a refined version for database searching.'),
   }),
