@@ -10,6 +10,7 @@ import { getParameterDescription } from "../../mcp/capabilities/contract.js";
 export const orchestratorSchema = z.object({
     tools: z.array(z.object({
         name: z.string().describe("The dot-separated tool name (e.g., maintenance.query_status)"),
+        uiTabLabel: z.string().describe("A short, user-friendly title for this tool's UI tab, summarizing the context or specific filters applied (e.g., 'Overdue Tasks', 'Global Checklists', 'Deck Operations')."),
         args: z.array(z.object({
             key: z.string().describe("The argument key/parameter name (e.g., organizationID)"),
             value: z.union([z.string(), z.number(), z.boolean()]).describe("The value for this parameter")
@@ -83,6 +84,8 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
   - **Inventory Transactions**: "Top 10 Issued AND Top 10 Transferred parts" => parallel 'inventory.query_transactions' (one with 'transactionType: "issue"', one with 'transactionType: "transfer"').
   - **PTW Pipeline**: "Top 5 Hot Work AND Top 5 Cold Work permits" => parallel 'ptw.query_pipeline' (one with 'type: "hot_work"', one with 'type: "cold_work"').
   - **Budget Invoices**: "5 Pending AND 5 Approved invoices" => parallel 'budget.query_invoice_status' (one with 'status: "pending"', one with 'status: "approved"').
+
+- **Tab Labeling**: Always include a 'uiTabLabel' for the generated tool call. Evaluate your filters and pick a descriptive text summarizing exactly what we are fetching. Avoid technical tool names like "Status Query", write contextual titles like "Overdue Maintenance" or "Hot Work Permits".
 
 ### SECURITY & SAFETY GUARDRAILS (Defense-in-Depth)
 - **Strict Read-Only Guard**: You are strictly Read-Only. NEVER create, update, or delete records. NEVER generate queries or suggest operations that attempt to mutate, insert, or modify database or system state.

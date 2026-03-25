@@ -50,6 +50,11 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                     const result = await tool.execute(inputArgs, contextMock); 
                     console.log(`[LangGraph Execute] ${sanitizedName} Result Preview: ${JSON.stringify(result).slice(0, 251)}...`);
                     
+                    // 🟢 Inject UI Label from Orchestrator flawlessly 
+                    if (result && typeof result === 'object' && toolCall.uiTabLabel) {
+                        result.uiTabLabel = toolCall.uiTabLabel;
+                    }
+
                     // Breakout if payload carries error: true (Validation failures proxy layer responses flawless)
                     if (result && result.__ambiguity_stop === true) {
                         return { name, result, index, ambiguity: true };

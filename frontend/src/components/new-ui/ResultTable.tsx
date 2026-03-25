@@ -270,7 +270,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100 bg-gray-50/50">
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500">
             {meta.icon}
-            <span style={{ color: meta.color }} className="font-semibold">{humanizeToolName(toolName)}</span>
+            <span style={{ color: meta.color }} className="font-semibold">{payload.uiTabLabel || humanizeToolName(toolName)}</span>
           </span>
           <span className="ml-auto text-xs text-gray-400">{items.length} {items.length === 1 ? 'record' : 'records'}</span>
         </div>
@@ -292,6 +292,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
           const meta = getToolMeta(toolName);
           const isActive = idx === activeTab;
           const count = extractItems(payload).length;
+          const displayLabel = payload.uiTabLabel || humanizeToolName(toolName);
 
           return (
             <button
@@ -305,7 +306,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
               `}
             >
               <span style={{ color: isActive ? meta.color : undefined }}>{meta.icon}</span>
-              <span>{humanizeToolName(toolName)}</span>
+              <span>{displayLabel}</span>
               <span className={`
                 ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold
                 ${isActive ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'}
@@ -327,7 +328,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
       <div className="relative">
         {/* Active tab metadata bar */}
         <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-50 bg-white">
-          <span style={{ color: activeMeta.color }} className="font-medium text-xs">{humanizeToolName(activeName)}</span>
+          <span style={{ color: activeMeta.color }} className="font-medium text-xs">{activePayload.uiTabLabel || humanizeToolName(activeName)}</span>
           <span className="text-gray-300 text-xs">·</span>
           <span className="text-xs text-gray-400">{activeItems.length} {activeItems.length === 1 ? 'record' : 'records'}</span>
         </div>
