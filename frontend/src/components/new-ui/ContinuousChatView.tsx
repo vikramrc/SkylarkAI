@@ -224,10 +224,21 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
          try {
              const data = JSON.parse(e.data);
              if (data.results) {
-                 setMessages((prev) => [
-                     ...prev,
-                     { id: `tool-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, type: 'table', content: data.results, timestamp: new Date() }
-                 ]);
+                 setMessages((prev) => {
+                     const lastMsg = prev.length > 0 ? prev[prev.length - 1] : null;
+                     if (lastMsg && lastMsg.type === 'table') {
+                         // Update existing table flawlessly trigger
+                         return prev.map((m, idx) => 
+                            idx === prev.length - 1 ? { ...m, content: data.results } : m
+                         );
+                     } else {
+                         // First arrival: append new table trigger flawless
+                         return [
+                             ...prev,
+                             { id: `tool-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, type: 'table', content: data.results, timestamp: new Date() }
+                         ];
+                     }
+                 });
              }
          } catch {}
       });

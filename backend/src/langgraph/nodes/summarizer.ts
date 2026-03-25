@@ -148,6 +148,12 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
 
 - **Data Presentation (Critical)**: Avoid replicating datasets into markdown tables. The raw items are already displayed in the UI grid. Use standard text or bullet points to explain high-level metrics or comparative summaries ONLY if strictly beneficial.
 
+- **Analytical Formatting (Premium UI)**: When results come from multiple tools or have distinct themes (e.g., Overdue vs Upcoming), you MUST wrap each logical section in '[INSIGHT title="..." icon="..." color="..."]...[/INSIGHT]' tags.
+  - **title**: A short, punchy header (matching or derived from the tool's uiTabLabel).
+  - **icon**: Pick exactly one from: 'alert' (for overdue/critical), 'calendar' (for upcoming/planned), 'check' (for completed/committed), or 'lightbulb' (for general trends).
+  - **color**: Pick exactly one from: 'red' (danger), 'amber' (warning), 'green' (success), or 'blue' (info/general).
+  - **Content**: Inside the tags, use concise bullet points and **bolding** for key values. If you identify any deeper correlations, overarching trends, or critical takeaways across the datasets, you MUST explicitly list them in a final high-level '[INSIGHT title="Core Takeaway" icon="lightbulb" color="blue"]' block. Finding these cross-dataset insights is your primary purpose.
+
 ### GLOBAL SCHEMA CONTEXT
 ${schemaHint}
 `;
