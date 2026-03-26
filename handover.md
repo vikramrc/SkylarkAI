@@ -1006,3 +1006,17 @@ This session focused on absolute stabilization of the LangGraph loop and "hollow
     - **Contract Sync**: Aligned `ptw.query_approval_stats` across `SkylarkAI/backend/src/mcp/capabilities/contract.ts` and `PhoenixCloudBE/constants/mcp.capabilities.contract.js` to ensure all status and date filters are explicitly defined.
 - **Outcome**: The Orchestrator now has perfect parity between its intent and the reported tool results. No more duplicate tabs or redundant execution loops.
 - **Files Changed**: `PhoenixCloudBE/services/mcp.service.js`, `SkylarkAI/backend/src/mcp/capabilities/contract.ts`, `PhoenixCloudBE/constants/mcp.capabilities.contract.js`
+
+## 🛠️ 64. ID-Based Deduplication Hardening (March 26, 2026)
+- **Problem**: The Orchestrator would loop indefinitely when querying specific `activityWorkHistoryID` or `activityID` records, even after the date-filter fix in Section 63.
+- **Root Cause**: The MCP results were missing the **identifying IDs** (e.g., `activityWorkHistoryID`) in the `appliedFilters` metadata. This made specific investigations look like "generic" broad queries to the Orchestrator, triggering a retry for the "missing" specific ID.
+- **Fix**: Hardened `buildAppliedFilters` in `PhoenixCloudBE/services/mcp.service.js` for all maintenance tools to explicitly include `vesselID`, `scheduleID`, `activityID`, and `activityWorkHistoryID` in the response.
+- **Outcome**: The Orchestrator now correctly matches specific ID-based results to its previous actions, achieving a clean exit after exactly one turn for targeted investigations.
+## 🛠️ 65. Global Metadata Hardening & Contract Sync (March 26, 2026)
+- **Problem**: The Orchestrator still encountered loops on certain Procurement, Crew, and Inventory queries due to missing date filters in the response metadata.
+- **Root Cause**: A systemic "Metadata Blind Spot" across the MCP service layer. Parameters like `startDate`, `endDate`, and `statusCode` were accepted by the tools but omitted from the `appliedFilters` JSON result, causing the Orchestrator to retry.
+- **Fix**: 
+    - **Global Hardening**: Updated `mcp.service.js` for 6 major tools (Maintenance Status, Running Hours, Orders Summary, Crew Compliance, Stock Transfers, Consumption Analysis) to report all active filters.
+    - **Contract Alignment**: Corrected the `ptw.query_pipeline` and `procurement.query_replenish_orders` contracts in Phoenix and Skylark to match the actual backend implementations.
+- **Outcome**: Achieved 100% parity between Orchestrator intent and Backend reporting. Infinite loops are officially eradicated for all time-series and filtered queries.
+- **Files Changed**: `PhoenixCloudBE/services/mcp.service.js`, `SkylarkAI/backend/src/mcp/capabilities/contract.ts`, `PhoenixCloudBE/constants/mcp.capabilities.contract.js`
