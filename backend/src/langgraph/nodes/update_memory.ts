@@ -42,12 +42,20 @@ export async function nodeUpdateMemory(state: SkylarkState): Promise<Partial<Sky
 
     const resultsStr = JSON.stringify(flattenedResults, null, 2);
     const systemPrompt = `You are the Skylark PMS (Planned Maintenance System) Observational Memory Controller.
-Based on the Previous Memory and the Latest Tool Results, provide a single consolidated, cumulative context summary (e.g., active vessels, equipment inspected, or list counts) for the investigation trail.
+Based on the Previous Memory and the Latest Tool Results, produce a **cumulative, entity-level context summary** for the investigation trail.
 Reference canonical PMS entities where applicable: Vessel, Machinery, Component, ActivityWorkHistory (Work History), InventoryPart (Spares/Parts), Procurement (PurchaseOrder), or Forms.
 
 - **Continuous Session Scope (Critical)**: Always explicitly carry forward and preserve any filtering criteria or bounding context currently driving the session scope (e.g., Organization Name/IDs, specific Vessel Name/IDs, Machinery IDs, Budget Year, or timeframe offsets). Unless explicitly overridden by the user, these remain the implicitly controlling session filters for any subsequent tool calls.
 
-Your output will form the entire rolling Observational Memory buffer for subsequent tool triggers. Keep it extremely concise (5-6 sentences or 6-7 bullet points max) to avoid inflating context token sizes. Do not hallucinate data that wasn't in the tool responses.`;
+- **Entity-Level Retention (Critical)**: You MUST preserve entity-specific details at the row level:
+  - For each **Vessel**: retain its name, and any per-vessel counts (overdue, upcoming, completed) that were returned.
+  - For any **Machinery, Component, Activity**: retain returned names, IDs, and status flags.
+  - For any **InventoryPart, PurchaseOrder, Form**: retain returned names, part numbers, or form IDs.
+  - Do NOT collapse vessel-specific counts into a single fleet total if individual vessel data was returned — keep per-vessel breakdown.
+
+- **Do NOT omit data already in memory** unless the latest tool results explicitly correct or supersede it.
+
+Your output will form the entire rolling Observational Memory buffer for subsequent tool triggers. Aim for 10-15 focused bullet points. Avoid padding or generic phrases. Do not hallucinate data that wasn't in the tool responses.`;
 
     const promptMessages = [
         { role: "system", content: systemPrompt } as any,

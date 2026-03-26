@@ -58,9 +58,56 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         modelName: process.env.MASTRA_ORCHESTRATOR_MODEL || "gpt-5-mini",
     }).withStructuredOutput(orchestratorSchema, { includeRaw: true } as any);
 
-    const memoryContext = state.workingMemory?.summaryBuffer 
-        ? `\n[Context from Previous Moves]: ${state.workingMemory.summaryBuffer}` 
+    const memoryBuffer = state.workingMemory?.summaryBuffer || "";
+    const rawResults = state.toolResults || [];
+    const lastTurnResults = (rawResults.length > 0 ? rawResults[rawResults.length - 1] : {}) || {};
+    
+    // 🟢 Format last turn as structured summary (schema-hint style) for high-fidelity Orchestrator decisions!
+    // This gives the agent exactly what it needs: "I already have this data" vs raw BSON blobs.
+    let resultsContext = "";
+    if (lastTurnResults && Object.keys(lastTurnResults).length > 0) {
+        const toolLines: string[] = [];
+        for (const [key, res] of Object.entries(lastTurnResults as Record<string, any>)) {
+            let data: any = res;
+            // 🟢 Unwrap MCP wrapper: content[0].text → parse JSON
+            if (data?.content?.[0]?.text) {
+                const text = data.content[0].text;
+                if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
+                    try { data = JSON.parse(text); } catch {}
+                }
+            }
+            const label = data?.uiTabLabel || key;
+            const items = Array.isArray(data?.items) ? data.items : [];
+            const count = items.length;
+            const isEmpty = count === 0;
+            
+            // Extract a few key IDs/fields for context (activityID, _id, name etc.)
+            const keyIds: string[] = [];
+            for (const item of items.slice(0, 3)) {
+                const id = item?.activityID || item?._id || item?.id || item?.name;
+                if (id) keyIds.push(String(id).slice(0, 16));
+            }
+
+            // Per-tool counts if available
+            const overdue = items.filter((i: any) => i?.isOverdue === true || i?.statusCode === 'overdue').length;
+            const upcoming = items.filter((i: any) => i?.isUpcoming === true || i?.statusCode === 'upcoming').length;
+            
+            let line = `- "${label}": ${count} item${count !== 1 ? 's' : ''}`;
+            if (isEmpty) {
+                line += ` | ⚠️ EMPTY — no matching records`;
+            } else {
+                if (overdue > 0 || upcoming > 0) line += ` | overdue: ${overdue}, upcoming: ${upcoming}`;
+                if (keyIds.length > 0) line += ` | IDs: [${keyIds.join(', ')}]`;
+            }
+            toolLines.push(line);
+        }
+        resultsContext = `\n\n### RESULTS FROM LAST TURN (Iteration ${state.iterationCount || 0} — ${Object.keys(lastTurnResults).length} tool calls):\n${toolLines.join('\n')}\n⚠️ If the data above already satisfies the user query, set feedBackVerdict to SUMMARIZE immediately. DO NOT re-call tools that already returned data above.`;
+    }
+
+    const memoryContext = memoryBuffer || resultsContext
+        ? `\n[Context from Previous Moves]: ${memoryBuffer}${resultsContext}` 
         : "";
+
 
     const systemInstruction = `You are a professional maritime operations orchestrator with access to MCP tools. Your goal is to provide accurate, data-driven insights by effectively utilizing the connected MCP infrastructure. Provide solutions based on context guidelines below:
 

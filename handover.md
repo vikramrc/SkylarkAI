@@ -877,3 +877,57 @@ This session focused on absolute stabilization of the LangGraph loop and "hollow
 - **Fix**: Enforced a strict array-append strategy and added a `history` helper in the nodes to unpack all results into a flat list for the LLM regardless of turn structure.
 
 ---
+
+## 🛠️ 47. Intermediate Result Suppression & Flattened Tables (March 26, 2026)
+- **Problem**: In multi-turn autonomous loops (`FEED_BACK_TO_ME`), every turn emitted a partial result table. This created a "staircase" of intermediate data on the UI that was distracting and "spilled" before the final analysis was ready. Additionally, the new array-of-turns state format caused the `ResultTable` to fail rendering because it expected a single object.
+- **Fix**:
+    1. **Suppression**: Updated `routes/workflow.ts` to only emit the `tool_results` event when the turn is "Final" (detected by `SUMMARIZE` verdict, ambiguity stop, or iteration limit). This hides intermediate "Chain of Thought" tables.
+    2. **ASAP Final Emission**: The final aggregated tool set is emitted immediately after `execute_tools` finishes, ensuring the user sees the data table **before** the Summarizer begins its long analytical text stream.
+    3. **Flattening**: The backend merges all turns in the `toolResults` array into a single dictionary before emission, restoring compatibility with the `ResultTable` component.
+
+## 🛠️ 48. "Thought Process" Reasoning Display (March 26, 2026)
+- **Problem**: The orchestrator's technical reasoning (`reasoning` field) was captured in state but never surfaced to the user, leaving them blind to "why" certain tools were being called during long automated sequences.
+- **Fix**:
+    1. **Backend**: Emitted the `reasoning` field inside the `status_update` SSE event whenever the orchestrator finishes a planning turn.
+    2. **Frontend**: Updated `ContinuousChatView` and `StreamingTimeline` to capture and display this reasoning as a small, italicized "Chain of Thought" block beneath each timeline activity.
+
+## 🛠️ 49. Word-by-Word Summarizer Streaming (March 26, 2026)
+- **Problem**: The `Summarizer` node block-waited for the full LLM response before returning, preventing the "typing" effect on the final analytical synthesis.
+- **Fix**: Passed the LangGraph `config` object directly into `model.stream()`. This allows LangChain's internal event system to bubble up `on_chat_model_stream` events to the `.streamEvents()` listener in `workflow.ts`.
+
+---
+
+## 🛠️ **Utility Scripts (Diagnostic Toolkit)**
+
+### 🟡 **`scripts/check_last_convo.ts` [NEW]**
+- **Purpose**: High-fidelity diagnostic tool for inspecting the latest conversation state. Uses `skylarkGraph.getState()` to properly deserialize BSON binary checkpoints from MongoDB.
+- **Use Case**: Use this when tool results are missing from the UI or when suspecting state bloating/corruption.
+- **Output**: Logs iteration count, final verdict, full reasoning string, and a detailed turn-by-turn breakdown of all tool payloads.
+- **Run**: `npx tsx scripts/check_last_convo.ts`
+
+### 🟢 **`scripts/dump_memory.ts`**
+- **Purpose**: Inspect state history and observational memory retained inside a specific graph thread.
+- **Run**: `npx tsx scripts/dump_memory.ts [<runId>]`
+
+### 🟢 **`scripts/list_conversations.ts`**
+- **Purpose**: Quickly pull recent Thread/Session IDs from the `checkpoints` collection to use with the above scripts.
+- **Run**: `npx tsx scripts/list_conversations.ts`
+
+---
+
+## 🛠️ 50. Fix Reducer Key Collision in `toolResults` (March 26, 2026)
+- **Problem**: When the same tool (e.g., `maintenance_query_status`) was called in multiple turns (Iterations 1 and 2), they generated the same dictionary key (e.g., `maintenance_query_status_0`). When results were merged into a single flat object for the UI or Orchestrator context, Turn 2 silently overwrote Turn 1, losing data.
+- **Fix**: Updated `execute_tools.ts` to prefix each result key with an iteration stamp. Keys are now globally unique: `maintenance_query_status_iter1_0`, `maintenance_query_status_iter2_0`, etc.
+- **Files Changed**: `backend/src/langgraph/nodes/execute_tools.ts`
+
+## 🛠️ 51. Less Aggressive Memory Compression (March 26, 2026)
+- **Problem**: The `UpdateMemory` node prompt instructed the LLM to "keep it extremely concise (5-6 sentences or 6-7 bullets max)". This caused it to collapse per-vessel item counts and IDs into vague fleet-level summaries. The Orchestrator then couldn't determine whether it had already fetched specific data, causing loop repetition.
+- **Fix**: Updated the `update_memory.ts` system prompt to require **entity-level retention** — vessel names, per-vessel overdue/upcoming/completed counts, and any IDs (activityID, _id) already retrieved. Target: 10-15 focused bullets instead of 6-7.
+- **Files Changed**: `backend/src/langgraph/nodes/update_memory.ts`
+
+## 🛠️ 52. Structured Orchestrator Context (March 26, 2026)
+- **Problem**: The Orchestrator received either no last-turn data or a raw JSON BSON blob from the last execution turn. The LLM couldn't efficiently parse "what did I already fetch?" from this, causing it to repeat the same tool calls.
+- **Fix**: Updated `orchestrator.ts` to format the last turn's results as a structured, schema-hint-style summary per-tool:
+  - Label (from `uiTabLabel`), item count, overdue/upcoming breakdown, and first 3 key IDs.
+  - Includes an explicit directive: `DO NOT re-call tools that already returned data above.`
+- **Files Changed**: `backend/src/langgraph/nodes/orchestrator.ts`

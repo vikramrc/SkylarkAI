@@ -79,7 +79,8 @@ workflow.addConditionalEdges(
   ((state: SkylarkState) => {
       if (state.error) return "errorNode";
 
-      const results = Object.values(state.toolResults || {});
+      const turns = state.toolResults || [];
+      const results = Object.values(turns[turns.length - 1] || {});
       const standsAmbiguous = results.some((r: any) => r && r.__ambiguity_stop === true);
 
       if (standsAmbiguous) {
@@ -114,12 +115,13 @@ workflow.addConditionalEdges(
   ((state: SkylarkState) => {
       if (state.error) return "errorNode";
 
-      const results = Object.values(state.toolResults || {});
+      const turns = state.toolResults || [];
+      const results = Object.values(turns[turns.length - 1] || {});
       const standsAmbiguous = results.some((r: any) => r && r.__ambiguity_stop === true);
 
       // 🟢 Parallelization Guard:
       // If we were already summarizing (parallel branches), just END this node's branch to prevent double triggers on summarizer.
-      const wasSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 5;
+      const wasSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 8;
       if (wasSummarizing) {
           return "__end__"; 
       }

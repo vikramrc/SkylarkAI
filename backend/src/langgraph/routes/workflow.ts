@@ -55,6 +55,8 @@ export function createLangGraphWorkflowRouter() {
 
                 let assistantResponse = "";
                 let didError = false; // 🟢 Track if any node triggered error triggers flaws!
+                let lastVerdict = "FEED_BACK_TO_ME"; // 🟢 Tracking for final table emission flaws
+                let lastReasoning = ""; // 🟢 Capture for CoT thought process UI
 
                 for await (const event of eventStream) {
                     // 🟢 A. Status Updates for Nodes
@@ -63,17 +65,33 @@ export function createLangGraphWorkflowRouter() {
                         let statusMessage = "Processing...";
                         
                         if (nodeName === "orchestrator") statusMessage = "Orchestrating tools... 🔍";
-                        if (nodeName === "execute_tools") statusMessage = "Executing Parallel Tools... 🛠️";
+                        if (nodeName === "execute_tools") {
+                            const tools = event.data?.input?.toolCalls || [];
+                            const count = tools.length;
+                            statusMessage = `Executing ${count > 0 ? count + ' ' : ''}Parallel Tools... 🛠️`;
+                        }
                         if (nodeName === "update_memory") statusMessage = "Updating Observational Memory... 🧠";
                         if (nodeName === "summarizer") statusMessage = "Finalizing Analysis... 📝";
                         if (nodeName === "errorNode") {
                             statusMessage = "Explaining Error... 🚨";
                             didError = true; 
-                            res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: statusMessage })}\n\n`);
+                            res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: statusMessage, reasoning: lastReasoning })}\n\n`);
                             continue;
                         }
 
-                        res.write(`event: status_update\ndata: ${JSON.stringify({ message: statusMessage })}\n\n`);
+                        res.write(`event: status_update\ndata: ${JSON.stringify({ 
+                            message: statusMessage, 
+                            reasoning: nodeName === 'execute_tools' ? lastReasoning : undefined 
+                        })}\n\n`);
+                    }
+
+                    // 🟢 B. Capture Reasoning & Verdict from Orchestrator Node END event flawlessly trigger
+                    if (event.event === "on_chain_end" && event.metadata?.langgraph_node === "orchestrator") {
+                        const output = event.data.output;
+                        if (output) {
+                            lastVerdict = output.feedBackVerdict || lastVerdict;
+                            lastReasoning = output.reasoning || lastReasoning;
+                        }
                     }
 
                     // 🟢 C. Trigger Immediate red UI timeline indicators on node error breakdowns layouts
@@ -82,15 +100,40 @@ export function createLangGraphWorkflowRouter() {
                         res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: errorMsg })}\n\n`);
                     }
 
-                    // 🟢 D. Emit Raw Tool Results immediately after execution finishes triggers
+                    // 🟢 D. Emit Raw Tool Results — ONLY on FINAL Turn set for UI cleanliness flaws triggers
                     if (event.event === "on_chain_end" && event.metadata?.langgraph_node === "execute_tools") {
-                        const output = event.data.output;
-                        if (output && output.toolResults) {
-                            res.write(`event: tool_results\ndata: ${JSON.stringify({ results: output.toolResults })}\n\n`);
+                        try {
+                            const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
+                            const currentState = finalState.values;
+                            
+                            // 🟢 Detect if this is a "Final" turn ASAP flawlessly trigger
+                            const results = Object.values(currentState.toolResults[currentState.toolResults.length - 1] || {});
+                            const standsAmbiguous = results.some((r: any) => r && r.__ambiguity_stop === true);
+                            
+                            const isFinalTurn = lastVerdict === "SUMMARIZE" || standsAmbiguous || (currentState.iterationCount || 0) >= 8;
+
+                            if (isFinalTurn) {
+                                const rawResults = currentState.toolResults || [];
+                                const turns = Array.isArray(rawResults) ? rawResults : [rawResults];
+                                
+                                // Flatten ALL turns into a single dictionary for the ResultTable component flawlessly!
+                                const mergedResults: Record<string, any> = {};
+                                turns.forEach((turn: any) => {
+                                    Object.entries(turn || {}).forEach(([key, val]) => {
+                                        mergedResults[key] = val;
+                                    });
+                                });
+
+                                if (Object.keys(mergedResults).length > 0) {
+                                    res.write(`event: tool_results\ndata: ${JSON.stringify({ results: mergedResults })}\n\n`);
+                                }
+                            }
+                        } catch (e) {
+                            console.error(`[Workflow Route] Failed to fetch state for tool_results flattening:`, e);
                         }
                     }
 
-                    // 🟢 B. Word-by-Word Streaming from Summarizer OR Error Node LLMs
+                    // 🟢 E. Word-by-Word Streaming from Summarizer OR Error Node LLMs
                     if (event.event === "on_chat_model_stream" && 
                         (event.metadata?.langgraph_node === "summarizer" || event.metadata?.langgraph_node === "errorNode")) {
                         const chunk = event.data.chunk;
@@ -108,7 +151,7 @@ export function createLangGraphWorkflowRouter() {
                     const finalMessages = finalState.values?.messages || [];
                     const lastMsg = finalMessages[finalMessages.length - 1];
 
-                    const isAiMessage = (lastMsg as any)._getType && (lastMsg as any)._getType() === "ai";
+                    const isAiMessage = lastMsg && (lastMsg as any)._getType && (lastMsg as any)._getType() === "ai";
 
                     if (!assistantResponse && lastMsg && lastMsg.content && isAiMessage) {
                         assistantResponse = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);

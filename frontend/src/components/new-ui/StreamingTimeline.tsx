@@ -12,6 +12,7 @@ export type StreamingStatus = {
   startTime: number;
   activityLevel?: number;
   tokenCount?: number;
+  reasoning?: string; // 🟢 Field for CoT thought process trigger flawless
 };
 
 interface TimelineItem {
@@ -23,6 +24,7 @@ interface TimelineItem {
   elapsedSeconds: number;
   // When BE signals a retry via status.re_analyzing, mark the last Execute item as failed
   forcedError?: boolean;
+  reasoning?: string; // 🟢 Persist reasoning into timeline rows flawlessly
 }
 
 interface Props { status: StreamingStatus | null; }
@@ -186,14 +188,19 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
         if (bypassRepeat) textsMatch = false;
 
         // If texts match, update existing placeholder with the canonical messageKey instead of appending
-        if (textsMatch) {
-          const updated = [...base];
-          if (!last.messageKey && status.messageKey) {
-            updated[lastIdx] = { ...last, messageKey: status.messageKey, message: undefined };
+          if (textsMatch) {
+            const updated = [...base];
+            if ((!last.messageKey && status.messageKey) || status.reasoning) {
+              updated[lastIdx] = { 
+                ...last, 
+                messageKey: status.messageKey || last.messageKey, 
+                message: (!status.messageKey ? status.message : undefined) || last.message,
+                reasoning: status.reasoning || last.reasoning // 🟢 Capture reasoning update on repeat turns flawlessly
+              };
+            }
+            lastKeyRef.current = key; // mark as handled
+            return updated;
           }
-          lastKeyRef.current = key; // mark as handled
-          return updated;
-        }
       }
 
       // Otherwise, finalize previous tail (duration since it appeared) and append the new item
@@ -208,7 +215,15 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
       }
       const out = [
         ...updated,
-        { id: `${now}-${Math.random()}`, stage: status.stage, message: status.message, messageKey: status.messageKey, timestamp: now, elapsedSeconds: 0 },
+        { 
+          id: `${now}-${Math.random()}`, 
+          stage: status.stage, 
+          message: status.message, 
+          messageKey: status.messageKey, 
+          reasoning: status.reasoning, // 🟢 Set initial reasoning for new items flaws triggers flawless
+          timestamp: now, 
+          elapsedSeconds: 0 
+        },
       ];
       // If we bypassed de-dup for the repeated 'executing_query', reset the flag now
       if (status.stage === 'execute' && status.messageKey === 'status.executing_query' && allowNextExecuteRepeatRef.current) {
@@ -313,6 +328,14 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
                     <span className={`text-sm font-medium ${iconIsError ? 'text-red-800' : isActive ? 'text-gray-900' : 'text-gray-600'}`}>
                       {text}
                     </span>
+                    
+                    {/* 🟢 Reasoning / CoT Chain Display flawlessly trigger */}
+                    {it.reasoning && !iconIsError && (
+                      <div className="text-[11px] leading-relaxed text-gray-400 mt-1 italic border-l-2 border-gray-100 pl-2 py-0.5">
+                        {it.reasoning}
+                      </div>
+                    )}
+
                     {iconIsError && it.message && it.message !== textRaw && (
                       <div className="text-xs text-gray-500 mt-1.5 bg-gray-50 border border-gray-100/80 rounded-lg px-2.5 py-1.5 max-w-fit shadow-sm">
                         {it.message.replace(/^error:?\s*/i, '')}

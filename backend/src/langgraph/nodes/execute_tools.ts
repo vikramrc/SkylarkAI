@@ -82,13 +82,15 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
         return { error: nodeError };
     }
 
-    // 🟢 Sequentially populate dictionary to avoid race condition overwrite triggers!
+    // 🟢 Stamp keys with iteration number to prevent cross-turn collisions in the accumulated toolResults dict flawlessly!
+    // e.g. "maintenance_query_status_iter2_0" is unique even if Iteration 1 also ran "maintenance_query_status_0"
+    const iterStamp = `iter${state.iterationCount || 0}`;
     executedResults.forEach((item: any) => {
         if (!item || item.result === null) return;
         const { name, index, result } = item;
-        let key = name;
+        let key = `${name}_${iterStamp}`;
         if (outputs[key] !== undefined) {
-            key = `${name}_${index}`; // 🟢 Append suffix index safely sequential flaws trigger flawless
+            key = `${name}_${iterStamp}_${index}`; // 🟢 Further disambiguate parallel calls to same tool
         }
         outputs[key] = result;
     });

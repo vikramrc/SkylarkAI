@@ -236,7 +236,7 @@ Arrays and nested objects are JSON-stringified inline within the cell value.
         const abortCtrl = threadId ? activeStreams.get(threadId) : null;
         
         // 🟢 Using model.stream() explicitly flawlessly trigger
-        const responseStream = await model.stream(promptMessages, { signal: abortCtrl?.signal });
+        const responseStream = await model.stream(promptMessages, { ...config, signal: abortCtrl?.signal });
         let fullContent = "";
 
         for await (const chunk of responseStream) {

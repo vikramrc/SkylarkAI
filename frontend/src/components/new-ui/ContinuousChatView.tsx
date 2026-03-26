@@ -214,7 +214,12 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
              if (data.message) {
                  setTimelineStatuses((prev) => ({
                      ...prev,
-                     [tlId]: { ...(prev[tlId] || {}), stage: data.stage || 'execute', message: data.message }
+                     [tlId]: { 
+                        ...(prev[tlId] || {}), 
+                        stage: data.stage || 'execute', 
+                        message: data.message,
+                        reasoning: data.reasoning // 🟢 Capture CoT reasoning for thought process UI trigger flawless
+                     }
                  }));
              }
          } catch {}
