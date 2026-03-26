@@ -994,3 +994,15 @@ This session focused on absolute stabilization of the LangGraph loop and "hollow
     - **Node Isolation**: Updated `orchestrator.ts`, `update_memory.ts`, and `summarizer.ts` to strictly `.slice(state.startTurnIndex)` their result inputs. 
 - **Outcome**: Every node in the graph now has a "Request-Level Filter." They can still see the **Cumulative Summary Buffer** (for topic continuity), but they only reason about **Raw Data** that was fetched in response to the *current* user prompt. This makes the system extremely stable, fast, and token-efficient even in very long conversations.
 - **Files Changed**: `backend/src/langgraph/state.ts`, `backend/src/langgraph/graph.ts`, `backend/src/langgraph/routes/workflow.ts`, `backend/src/langgraph/nodes/orchestrator.ts`, `backend/src/langgraph/nodes/update_memory.ts`, `backend/src/langgraph/nodes/summarizer.ts`
+
+## 🛠️ 63. Resolution of Orchestrator Looping & Contract Sync (March 26, 2026)
+- **Problem**: The Orchestrator was entering infinite loops and generating duplicate UI tabs when processing date-filtered queries (e.g., "last 6 months"). 
+- **Root Cause**: 
+    - **The Blind Spot**: The `maintenance.query_execution_history` MCP tool was omitting `startDate` and `endDate` from its `appliedFilters` result metadata.
+    - **The Loop**: The Orchestrator's deduplication logic (which is filter-aware) couldn't "see" that the date-filtered query had already run. It saw the results as "all-time" and decided to retry the 6-month subset.
+    - **The Duplicates**: Each retry was stamped with a unique iteration ID in `toolResults`, causing the frontend to render multiple identical tabs.
+- **Remediation**:
+    - **Tool Hardening**: Updated `PhoenixCloudBE/services/mcp.service.js` to include `startDate`, `endDate`, and `majorJobsOnly` in the `appliedFilters` response.
+    - **Contract Sync**: Aligned `ptw.query_approval_stats` across `SkylarkAI/backend/src/mcp/capabilities/contract.ts` and `PhoenixCloudBE/constants/mcp.capabilities.contract.js` to ensure all status and date filters are explicitly defined.
+- **Outcome**: The Orchestrator now has perfect parity between its intent and the reported tool results. No more duplicate tabs or redundant execution loops.
+- **Files Changed**: `PhoenixCloudBE/services/mcp.service.js`, `SkylarkAI/backend/src/mcp/capabilities/contract.ts`, `PhoenixCloudBE/constants/mcp.capabilities.contract.js`

@@ -752,7 +752,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/ptw/approval-stats",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "days", "startDate", "endDate", "limit"],
+    optionalQuery: ["vesselID", "days", "startDate", "endDate", "status", "type", "approvalStatus", "rejectedOnly", "documentsOnly", "riskAssessmentOnly", "limit"],
     purpose: "Returns PTW status breakdown and approval count metrics for a given period.",
     whenToUse: "When asked about PTW approval rates, how many permits were rejected, or how many approvals a typical permit requires.",
     whenNotToUse: "For open active permits use ptw.query_pipeline instead.",

@@ -199,9 +199,11 @@ ${schemaHint}
 
     if (noToolsCalled || emptyDataset) {
         systemPrompt = `You are a professional maritime operations assistant. 
-The system dataset is currently **EMPTY** (tools returned 0 matching records). 
-Please formulate a polite, helpful response back to the user based on the conversation history and any active filters in memory context.
-Be explicit that the query returned no items, but use your general context to explain why (e.g., filter mismatch) or offer next steps.`;
+The system dataset is currently **EMPTY** for this specific turn (no new tools were called or matching records found in this run). 
+
+- **Memory Fallback**: Check the 'OBSERVATIONAL STATUS CONTEXT' from previous turns. If relevant results (vessels, jobs, parts) were mentioned in history, acknowledge them explicitly (e.g., "While no new items were fetched in this run, previous results in this session showed..."). 
+- **User Guidance**: If the history is also empty, formulate a polite response explaining that the query returned no items (potentially due to filter mismatches) and offer to help with a broader search.
+- **Tone**: Be helpful and transparent about what data is fresh vs. what is from memory.`;
     }
 
     const promptMessages = [
