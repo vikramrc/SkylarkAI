@@ -227,8 +227,9 @@ Arrays and nested objects are JSON-stringified inline within the cell value.
         } as any
     );
 
-    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] --- PROMPT SENT TO LLM ---\x1b[0m`);
-    console.log(JSON.stringify(promptMessages, null, 2));
+    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] --- ANALYSING DATASET ---\x1b[0m`);
+    console.log(`\x1b[35m### GLOBAL SCHEMA CONTEXT:\x1b[0m\n${schemaHint}`);
+    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] Processing ${toolEntries.length} tool result(s)...\x1b[0m`);
 
     try {
         const threadId = config?.configurable?.thread_id;

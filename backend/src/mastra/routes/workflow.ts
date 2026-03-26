@@ -60,9 +60,6 @@ export function createMastraWorkflowRouter() {
                     inputData: { 
                         userQuery,
                         authToken,
-                        onChunk: (chunk: string) => {
-                            res.write(`event: text_delta\ndata: ${JSON.stringify({ delta: chunk })}\n\n`);
-                        }
                     },
                 });
 

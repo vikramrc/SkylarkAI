@@ -847,3 +847,33 @@ Use these queries to verify the new smart-retrieval and status logic:
 - *"Which inventory parts are nearing their expiry date?"*
 
 
+---
+
+## 🛠️ 45. Session 24: Orchestration Hardening & Observability Refinement (Latest)
+
+This session focused on absolute stabilization of the LangGraph loop and "hollowing out" terminal noise for human readability.
+
+### 🟢 **Turn-based Tool History (`graph.ts` & `execute_tools.ts`)**
+- **Problem**: Parallel tool calls or multi-turn loops formerly overwrote the `toolResults` object, causing data loss (e.g., Vessel A results clobbering Vessel B).
+- **Fix**: Refactored `toolResults` into a **cumulative array of turns**. 
+    *   **Reducer**: Updated `graph.ts` to use `(x, y) => [...(x || []), y]` ensuring every execution turn is preserved.
+    *   **Defensive Migration**: Added `Array.isArray` checks across all nodes (`execute_tools`, `summarizer`, `update_memory`) to handle both legacy object-based results and the new array format seamlessly.
+
+### 🟢 **Iteration Ceiling & Logic Alignment (`graph.ts`)**
+- **Problem**: Complex queries (e.g., "2 per ship for fleet") hit the default 5-iteration limit, forcing a premature summary before all data was retrieved.
+- **Fix**: 
+    *   Increased limit to **8 iterations**.
+    *   Added **Color-Coded Status Logs**: Turns 1-6 show in **Cyan/Blue**, while turns 7-8 turn **Red** to signify the loop is wrapping up.
+
+### 🟢 **"Clean Prompt" Visibility Optimization (All Nodes)**
+- **Problem**: Massive 50+ line system prompts flooded the terminal, making it impossible to see the "Thinking" or "Data Shape."
+- **Fix**: Implemented a "hollowing" regex in the console-log path of `orchestrator.ts`, `summarizer.ts`, and `update_memory.ts`.
+    *   **Hollowed**: Static system instructions and massive tool descriptions are hidden `[... Hidden for Brevity ...]`.
+    *   **Preserved**: The final reasoning, tool calls, and data schema hints remain visible.
+    *   **Actor Labels**: Added distinct markers (e.g., `[LangGraph Orchestrator] --- PROMPT SENT TO LLM ---`) so the actor is always clear.
+
+### 🟢 **Stabilization: "is not iterable" Crash Fix (`graph.ts` & Nodes)**
+- **Problem**: Clashes between array-based results and object-based reducers during the transition caused graph crashes.
+- **Fix**: Enforced a strict array-append strategy and added a `history` helper in the nodes to unpack all results into a flat list for the LLM regardless of turn structure.
+
+---

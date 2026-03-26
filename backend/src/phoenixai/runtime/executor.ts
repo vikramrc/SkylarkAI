@@ -154,7 +154,7 @@ function sanitizePipelineValue(value: unknown): unknown {
     return nextValue;
 }
 
-function sanitizePipeline(p: readonly any[] | unknown): any[] {
+export function sanitizePipeline(p: readonly any[] | unknown): any[] {
     const pipeline = Array.isArray(p) ? p : [];
     return pipeline.map((stage) => {
         const op = Object.keys(stage || {})[0];

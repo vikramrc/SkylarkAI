@@ -88,10 +88,11 @@ workflow.addConditionalEdges(
 
       // 🟢 Parallelization Optimization: 
       // If we are summarizing, run BOTH update_memory and summarizer in parallel branches concurrently.
-      // Increase limit to 5 to support deep per-vessel discovery loops flawlessly!
-      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || (state.iterationCount || 0) >= 5;
+      // Increase limit to 8 to support deep multi-step discovery loops flawlessly!
+      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || (state.iterationCount || 0) >= 8;
       
-      console.log(`[LangGraph Loop] Iteration: ${state.iterationCount || 0}/${5} | Verdict: ${state.feedBackVerdict} | Summarizing: ${isSummarizing}`);
+      const loopColor = (state.iterationCount || 0) >= 7 ? '\x1b[31m' : '\x1b[34m';
+      console.log(`${loopColor}[LangGraph Loop] Iteration: ${state.iterationCount || 0}/8 | Verdict: ${state.feedBackVerdict} | Summarizing: ${isSummarizing}\x1b[0m`);
 
       if (isSummarizing) {
           return ["update_memory", "summarizer"];

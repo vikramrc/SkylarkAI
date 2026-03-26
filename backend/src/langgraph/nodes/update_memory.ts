@@ -55,7 +55,7 @@ Your output will form the entire rolling Observational Memory buffer for subsequ
     ];
 
     console.log(`\x1b[33m${ts()} [LangGraph UpdateMemory] --- PROMPT SENT TO LLM ---\x1b[0m`);
-    console.log(JSON.stringify(promptMessages, null, 2));
+    // console.log(JSON.stringify(promptMessages, null, 2));
 
     try {
         const response = await model.invoke(promptMessages);

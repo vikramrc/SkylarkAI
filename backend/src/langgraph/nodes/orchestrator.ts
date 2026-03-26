@@ -167,9 +167,21 @@ You are currently on a follow-up turn investigating further based on previous to
 
     promptMessages.push(...state.messages);
 
-    console.log(`[LangGraph Orchestrator] --- PROMPT SENT TO LLM ---`);
+    console.log(`\x1b[36m[LangGraph Orchestrator] --- PROMPT SENT TO LLM ---\x1b[0m`);
     const promptJson = JSON.stringify(promptMessages, null, 2);
-    const coloredLogs = promptJson
+    
+    // 🟢 Console Visibility Optimization: Hollow out stagnant system instructions flawlessly!
+    const consoleFormatted = promptJson
+        .replace(
+            /"You are a professional maritime operations orchestrator[\s\S]*?### 🛠️ AVAILABLE MCP TOOLS/g,
+            `"[... Stagnant System Instructions Hidden for Brevity ...]\n\n### 🛠️ AVAILABLE MCP TOOLS`
+        )
+        .replace(
+            /### 🛠️ AVAILABLE MCP TOOLS[\s\S]*?### OBSERVATIONAL MEMORY CONTEXT/g,
+            `### 🛠️ AVAILABLE MCP TOOLS\n\n[... ${baseCapabilitiesContract.length} Tool Descriptions Hidden for Brevity ...]\n\n### OBSERVATIONAL MEMORY CONTEXT`
+        );
+
+    const coloredLogs = consoleFormatted
         .replace(/"### OBSERVATIONAL MEMORY CONTEXT\\n"/g, `"\x1b[35m### OBSERVATIONAL MEMORY CONTEXT\x1b[0m\\n"`)
         .replace(/\\n\[Context from Previous Moves\]:/g, `\\n\x1b[36m[Context from Previous Moves]\x1b[0m:`)
         .replace(/### 🔄 SEQUENTIAL INVESTIGATION/g, `\x1b[35m### 🔄 SEQUENTIAL INVESTIGATION\x1b[0m`);

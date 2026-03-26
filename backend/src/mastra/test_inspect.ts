@@ -1,4 +1,4 @@
-import { initMastra } from '../index.js';
+import { initMastra } from './index.js';
 
 async function test() {
     const mastra = await initMastra();
