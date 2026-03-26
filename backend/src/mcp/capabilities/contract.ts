@@ -178,7 +178,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "hasInstructionsOnly", "startDate", "endDate", "limit"],
+    optionalQuery: ["vesselID", "vesselName", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "hasInstructionsOnly", "activityDescription", "startDate", "endDate", "limit"],
     purpose: "Returns overdue, upcoming, and recently completed maintenance work.",
     whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses. This is the primary tool for 'What is due/overdue' or 'Finding an activity ID'.",
     whenNotToUse: "Do NOT use for historical failure analysis (use reliability), deep execution comments, dedicated AWH queries (use execution_history), or technical instructions/manuals (use query_instructions).",
@@ -187,7 +187,9 @@ const baseCapabilitiesContract = [
       "What maintenance is due in the next 7 days?", 
       "Show me pending critical jobs.",
       "Show me completed maintenance from Jan 2026 to March 2026.",
-      "What jobs are overdue from last year?"
+      "What jobs are overdue from last year?",
+      "Show me all overdue for 'Grease up'",
+      "Are there any upcoming jobs for 'Valve'?"
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
     interpretationGuidance: "Valid values for statusCode: overdue, upcoming, completed, open. The 'summary' block provides quick counts."
