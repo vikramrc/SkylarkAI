@@ -46,7 +46,17 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     }
 
     // 1. Prepare Schema Context aggregate
-    const toolEntries = Object.entries(state.toolResults || {});
+    // 🟢 Parallelization Support: toolResults is now an array of turns. 
+    // Flatten into a single array of entries for unpacking flawlessly!
+    const toolEntries: [string, any][] = [];
+    const rawResults = state.toolResults;
+    const turns = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
+
+    turns.forEach((turn: any) => {
+        Object.entries(turn || {}).forEach(([key, val]) => {
+            toolEntries.push([key, val]);
+        });
+    });
     let schemaHint = '[]';
     let jsonlData = '';
     const allItems: any[] = [];

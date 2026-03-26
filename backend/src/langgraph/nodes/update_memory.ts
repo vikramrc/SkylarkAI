@@ -28,7 +28,19 @@ export async function nodeUpdateMemory(state: SkylarkState): Promise<Partial<Sky
         throw new Error(`[LangGraph] Provider '${provider}' not fully implemented for UpdateMemory Node. Please install @langchain/${provider} to enable.`);
     }
 
-    const resultsStr = JSON.stringify(state.toolResults, null, 2);
+    // 🟢 Parallelization Support: toolResults is now an array of turns. 
+    // Flatten into a single dictionary for the Memroy LLM to process flawlessly!
+    const flattenedResults: Record<string, any> = {};
+    const rawResults = state.toolResults;
+    const turns = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
+    
+    turns.forEach((turn: any) => {
+        Object.entries(turn || {}).forEach(([key, val]) => {
+            flattenedResults[key] = val;
+        });
+    });
+
+    const resultsStr = JSON.stringify(flattenedResults, null, 2);
     const systemPrompt = `You are the Skylark PMS (Planned Maintenance System) Observational Memory Controller.
 Based on the Previous Memory and the Latest Tool Results, provide a single consolidated, cumulative context summary (e.g., active vessels, equipment inspected, or list counts) for the investigation trail.
 Reference canonical PMS entities where applicable: Vessel, Machinery, Component, ActivityWorkHistory (Work History), InventoryPart (Spares/Parts), Procurement (PurchaseOrder), or Forms.

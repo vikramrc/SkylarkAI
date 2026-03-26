@@ -27,7 +27,7 @@ export interface SkylarkState {
 
   // 3. Execution Control & Data Outputs
   toolCalls: any[]; // The parallel tools listed by the Orchestrator
-  toolResults: Record<string, any>; // execution outputs mapped by tool name
+  toolResults: Record<string, any>[]; // execution outputs mapped by tool name (Array of turns)
   feedBackVerdict: 'SUMMARIZE' | 'FEED_BACK_TO_ME'; // Prompt decisions
   reasoning?: string; // 🟢 Captured thought process from the Orchestrator flawlessly!
 

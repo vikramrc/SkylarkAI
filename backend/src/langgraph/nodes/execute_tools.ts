@@ -110,9 +110,15 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
         }
     });
 
-    // 🟢 16MB MongoDB Crash Prevention: Pre-validate State Size
-    const mergedResults = { ...(state.toolResults || {}), ...outputs };
-    const sizeInBytes = Buffer.byteLength(JSON.stringify(mergedResults), 'utf8');
+    // 16MB MongoDB Crash Prevention: Pre-validate State Size
+    // 🟢 Generic Architectural Fix: Defensive check for toolResults shape (Legacy Object vs. New Array) flawlessly!
+  //  console.log(`[LangGraph Execute] 💾 State toolResults (${typeof state.toolResults}):`, JSON.stringify(state.toolResults).slice(0, 100));
+    const rawHistory = state.toolResults;
+    const history = Array.isArray(rawHistory) ? rawHistory : (rawHistory ? [rawHistory] : []);
+    
+    // Calculate total size including CURRENT turn results to prevent 16MB BSON limit crashes!
+    const allTurns = [...history, outputs];
+    const sizeInBytes = Buffer.byteLength(JSON.stringify(allTurns), 'utf8');
     const MAX_BYTES = 15000000; // 15MB safe limit
 
     let errorObj: any = null;
@@ -135,5 +141,5 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
         } as any;
     }
 
-    return errorObj ? errorObj : { toolResults: outputs };
+    return (errorObj ? errorObj : { toolResults: outputs }) as any;
 }

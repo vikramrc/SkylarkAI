@@ -24,11 +24,20 @@ const workflow = new StateGraph<SkylarkState>({
     },
     toolCalls: { default: () => [] },
     toolResults: { 
-        reducer: (x: any, y: any) => ({ ...x, ...(y || {}) }), // 🟢 Shallow merge results across Turns so AI memory persists flawless!
-        default: () => ({}) 
+        reducer: (x: any[], y: any) => {
+          console.log(`[LangGraph Reducer] toolResults input:`, { x_type: typeof x, x_isArray: Array.isArray(x), y_present: !!y });
+          const current = Array.isArray(x) ? x : [];
+          if (!y) return current;
+          // Store each turn's results as a new entry in the array to prevent overwriting parallel tool outputs flawlessly!
+          return [...current, y];
+        },
+        default: () => [] 
     },
     feedBackVerdict: { default: () => "SUMMARIZE" },
-    iterationCount: { default: () => 0 },
+    iterationCount: { 
+        reducer: (x: number, y: number) => y ?? x,
+        default: () => 0 
+    },
     error: { default: () => undefined }, // Optional error string
     hitl_required: { default: () => undefined }, // 🟢 Add this to preserve state update mechanics flawless!
   } as any 
@@ -79,8 +88,11 @@ workflow.addConditionalEdges(
 
       // 🟢 Parallelization Optimization: 
       // If we are summarizing, run BOTH update_memory and summarizer in parallel branches concurrently.
-      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || (state.iterationCount || 0) >= 3;
+      // Increase limit to 5 to support deep per-vessel discovery loops flawlessly!
+      const isSummarizing = state.feedBackVerdict === "SUMMARIZE" || (state.iterationCount || 0) >= 5;
       
+      console.log(`[LangGraph Loop] Iteration: ${state.iterationCount || 0}/${5} | Verdict: ${state.feedBackVerdict} | Summarizing: ${isSummarizing}`);
+
       if (isSummarizing) {
           return ["update_memory", "summarizer"];
       }
@@ -106,7 +118,7 @@ workflow.addConditionalEdges(
 
       // 🟢 Parallelization Guard:
       // If we were already summarizing (parallel branches), just END this node's branch to prevent double triggers on summarizer.
-      const wasSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 3;
+      const wasSummarizing = state.feedBackVerdict === "SUMMARIZE" || standsAmbiguous || (state.iterationCount || 0) >= 5;
       if (wasSummarizing) {
           return "__end__"; 
       }

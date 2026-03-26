@@ -124,7 +124,9 @@ export function createLangGraphWorkflowRouter() {
                 // 🟢 Save message pair using Model flawless trigger flawlessly
                 try {
                     const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
-                    const toolResults = finalState.values?.toolResults;
+                    // 🟢 Defensive Migration: Ensure toolResults is treated as an array for the new turn-based history format flawlessly!
+                    const rawResults = finalState.values?.toolResults;
+                    const toolResults = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
                     
                     await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse, toolResults);
                     await ConversationModel.upsertShell(currentRunId, userQuery);
