@@ -178,7 +178,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "startDate", "endDate", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "hasInstructionsOnly", "startDate", "endDate", "limit"],
     purpose: "Returns overdue, upcoming, and recently completed maintenance work.",
     whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses. This is the primary tool for 'What is due/overdue' or 'Finding an activity ID'.",
     whenNotToUse: "Do NOT use for historical failure analysis (use reliability), deep execution comments, dedicated AWH queries (use execution_history), or technical instructions/manuals (use query_instructions).",
