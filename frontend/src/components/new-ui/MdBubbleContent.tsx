@@ -51,13 +51,87 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
     URL.revokeObjectURL(url);
   };
 
-  // 🟢 Segment-based Rendering: Split by INSIGHT tags (supporting both closed and unclosed tags)
-  const segments = content.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|$))/g).filter(Boolean);
+  // 🟢 Segment-based Rendering: Split by INSIGHT or TABLE tags (supporting both closed and unclosed tags)
+  const segments = content.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|$)|\[TABLE[\s\S]*?(?:\[\/TABLE\]|$))/g).filter(Boolean);
 
   return (
     <div className="space-y-4 text-base text-gray-800 leading-relaxed">
       {segments.map((segment, sIdx) => {
-        // Match both closed and unclosed tags
+        // 🟢 TABLE block: [TABLE caption="..."] ... pipe table ... [/TABLE]
+        const tableMatch = segment.match(/\[TABLE(?:\s+caption="([^"]*)")?\]([\s\S]*?)(?:\[\/TABLE\]|$)/);
+        if (tableMatch) {
+          const [, caption, innerContent] = tableMatch;
+          const lines = innerContent.trim().split('\n');
+          const tableLines = lines.filter(l => l.includes('|'));
+          if (tableLines.length >= 2) {
+            const headerLine = tableLines[0]!;
+            const headers = headerLine.split('|').map(h => h.trim()).filter(Boolean);
+            const dataLines = tableLines.slice(1).filter(l => !l.includes('---'));
+            const rows = dataLines.map(line =>
+              line.split('|').map(c => c.trim()).filter(Boolean)
+            );
+            const chartData: ChartData[] = [];
+            rows.forEach(row => {
+              if (row.length >= 2) {
+                const val = parseFloat(row[1]!.replace(/[$,\s]/g, ''));
+                if (!isNaN(val)) chartData.push({ label: row[0]!, value: val });
+              }
+            });
+            const key = `table-${sIdx}`;
+            const isChartable = chartData.length > 0;
+            const isShowingChart = showChartMap[key] || false;
+            const activeChartType = chartTypeMap[key] || 'bar';
+            const isCopied = copiedMap[key] || false;
+            return (
+              <div key={key} className="my-4">
+                {caption && (
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <TableIcon className="w-3.5 h-3.5 text-indigo-400" />
+                    {caption}
+                  </p>
+                )}
+                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    {isChartable && (
+                      <button onClick={() => setShowChartMap(p => ({ ...p, [key]: !isShowingChart }))}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-200 ${isShowingChart ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                        {isShowingChart ? <TableIcon className="w-3.5 h-3.5" /> : <BarChart2 className="w-3.5 h-3.5" />}
+                        {isShowingChart ? 'Show Table' : 'Show Chart'}
+                      </button>
+                    )}
+                    {isShowingChart && isChartable && (
+                      <div className="flex p-0.5 bg-gray-100 rounded-lg border border-gray-200">
+                        <button onClick={() => setChartTypeMap(p => ({ ...p, [key]: 'bar' }))} className={`px-2 py-1 text-xs font-medium rounded-md transition-all ${activeChartType === 'bar' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}>Bar</button>
+                        <button onClick={() => setChartTypeMap(p => ({ ...p, [key]: 'pie' }))} className={`px-2 py-1 text-xs font-medium rounded-md transition-all ${activeChartType === 'pie' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}>Pie</button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <button onClick={() => handleCopyTable(key, headers, rows)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 shadow-xs">
+                      {isCopied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      {isCopied ? 'Copied!' : 'Copy'}
+                    </button>
+                    <button onClick={() => handleExportCSV(headers, rows)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 shadow-xs">
+                      <Download className="w-3.5 h-3.5" /> Export
+                    </button>
+                  </div>
+                </div>
+                {isShowingChart && isChartable ? (
+                  <InlineChart type={activeChartType} data={chartData} title={headers[0]!} />
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-indigo-100 bg-white/60 shadow-sm">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <thead className="bg-indigo-50/50"><tr>{headers.map((h, i) => <th key={i} className="px-4 py-3 text-left font-semibold text-indigo-800 tracking-tight">{h}</th>)}</tr></thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-4 py-3 text-gray-700">{cell}</td>)}</tr>)}</tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          }
+        }
+
+        // Match both closed and unclosed INSIGHT tags
         const insightMatch = segment.match(/\[INSIGHT\s+title="([^"]*)"\s+icon="([^"]*)"\s+color="([^"]*)"\]([\s\S]*?)(?:\[\/INSIGHT\]|$)/);
         
         if (insightMatch) {

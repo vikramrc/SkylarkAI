@@ -164,13 +164,24 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
 
 - **Completion Directive (Critical)**: Your role is purely **Analytical**. DO NOT replicate or list out row-level dataset items (e.g., full item rows, exact IDs, or table rows) in your response text. The raw items are already being rendered into a grid visual for the user. Summarize the **findings**, explain the **trends/issues**, and answer the core question asked. Keep descriptions concise and focused on high-level synthesis or actionable insights.
 
-- **Data Presentation (No Tables Permitted)**: ⚠️ **STRICT NEGATIVE CONSTRAINT**: You are FORBIDDEN from generating Markdown tables (e.g., | Header |). Even if the user explicitly asks for a "list" or "table", you must NOT output one in your text because the system is already rendering that data in a synchronized dedicated UI component. Replicating tables in Markdown is considered a system failure. Use standard text or bullet points for high-level highlights ONLY.
+- **Data Presentation**: ⚠️ **STRICT NEGATIVE CONSTRAINT**: You are FORBIDDEN from generating raw Markdown tables (e.g., | Header |) directly in your text. The ONLY permitted way to output a table is via the \`[TABLE]\` tag described below. Raw pipe-table markdown outside a \`[TABLE]\` tag is a system failure.
 
 - **Analytical Formatting (Premium UI)**: All analysis MUST be bucketed into '[INSIGHT title="..." icon="..." color="..."]...[/INSIGHT]' tags to mount the special UI cards. Never output raw paragraphs of bullet points outside of these tags if they represent tool data summaries.
   - **title**: A short, punchy header (matching or derived from the tool's uiTabLabel).
   - **icon**: Pick exactly one from: 'alert' (for overdue/critical), 'calendar' (for upcoming/planned), 'check' (for completed/committed), or 'lightbulb' (for general trends).
   - **color**: Pick exactly one from: 'red' (danger), 'amber' (warning), 'green' (success), or 'blue' (info/general).
   - **Content**: Inside the tags, use concise bullet points and **bolding** for key values. Finding cross-dataset insights and correlations is your primary purpose.
+
+- **Inline Table (When Applicable)**: If you need to show a compact comparison, ranking, or columnar summary that was **inferred from memory** (i.e., no live tool data rows exist for it), use the \`[TABLE caption="..."]\` tag wrapping a standard markdown pipe table, then \`[/TABLE]\`. The UI will render it as a styled, exportable table. Example:
+  \`\`\`
+  [TABLE caption="Grease Up Overdue Summary (from memory)"]
+  | Vessel | Overdue | Upcoming |
+  |---|---|---|
+  | M.V BLUE SKY | 28 | 162 |
+  | M.V KOBAYASHI MARU | 83 | 390 |
+  [/TABLE]
+  \`\`\`
+  Only use this for inferred/aggregated summaries — NOT for data that is already rendered in the ResultTable grid.
 
 - **Technical Notes & Manuals (Critical)**: If the dataset contains fields like \`notesHtml\`, \`notes\`, or lists of \`documents\`, you MUST summarize these instructions clearly for the user. Do NOT just say "instructions are available"; explain what they contain (e.g., "The instructions specify setting the spdpfsh and include a link to the IMO Compendium"). Since \`notesHtml\` is raw HTML, strip tags mentally and summarize the core steps.
 
@@ -223,7 +234,13 @@ ${toolCountSummary}
 - "rows": each row is a value array aligned to the headers (null = missing field)
 Arrays and nested objects are JSON-stringified inline within the cell value.
 
-⚠️ **Strict Index Offset Anchor**: When reading values, always match \`row[i]\` strictly to \`headers[i]\`. Do not assume item positions across rows of irregular lengths. Booleans like \`isOverdue\` and \`isUpcoming\` are typically near the end of the row.${emptyToolsSection}\n\n${jsonlData}` 
+⚠️ **Strict Index Offset Anchor**: When reading values, always match \`row[i]\` strictly to \`headers[i]\`. Do not assume item positions across rows of irregular lengths. Booleans like \`isOverdue\` and \`isUpcoming\` are typically near the end of the row.${emptyToolsSection}
+
+---
+🎨 **OUTPUT FORMAT REMINDER (Non-Negotiable)**: You MUST wrap ALL findings inside \`[INSIGHT title="..." icon="..." color="..."][/INSIGHT]\` containers. Plain markdown bullet points or headers OUTSIDE of INSIGHT tags are strictly forbidden. Every vessel group, summary finding, and trend MUST be an INSIGHT block. Do not output a single bullet point or heading outside of an INSIGHT tag.
+---
+
+${jsonlData}` 
         } as any
     );
 

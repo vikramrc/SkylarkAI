@@ -57,6 +57,7 @@ export function createLangGraphWorkflowRouter() {
                 let didError = false; // 🟢 Track if any node triggered error triggers flaws!
                 let lastVerdict = "FEED_BACK_TO_ME"; // 🟢 Tracking for final table emission flaws
                 let lastReasoning = ""; // 🟢 Capture for CoT thought process UI
+                let toolResultsEmitted = false; // 🟢 Guard against double-emit: D1 sets this, D2 checks it
 
                 for await (const event of eventStream) {
                     // 🟢 A. Status Updates for Nodes
@@ -100,36 +101,76 @@ export function createLangGraphWorkflowRouter() {
                         res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: errorMsg })}\n\n`);
                     }
 
-                    // 🟢 D. Emit Raw Tool Results — ONLY on FINAL Turn set for UI cleanliness flaws triggers
+                    // 🟢 D. Emit Raw Tool Results — shared helper used by both execute_tools and summarizer nodes
+                    const emitToolResults = async (nodeLabel: string) => {
+                        try {
+                            const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
+                            const currentState = finalState.values;
+
+                            const rawResults = currentState.toolResults || [];
+                            const turns = Array.isArray(rawResults) ? rawResults : [rawResults];
+
+                            // 🟢 Fix 2: Promote uiTabLabel from MCP wrapper to the top-level of each result entry
+                            // ResultTable.tsx reads payload.uiTabLabel to name tabs — it must be at the top level
+                            const mergedResults: Record<string, any> = {};
+                            turns.forEach((turn: any) => {
+                                Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                                    const entry = { ...val }; // shallow clone to avoid mutation
+                                    // Promote uiTabLabel: it's already on the outer object from execute_tools.ts
+                                    // but may be lost if MCP rewraps. Ensure it stays at top level.
+                                    if (!entry.uiTabLabel) {
+                                        // Try parsing the MCP text to grab it from inside if missing
+                                        const text = entry?.content?.[0]?.text;
+                                        if (text) {
+                                            try {
+                                                const parsed = JSON.parse(text);
+                                                if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
+                                            } catch {}
+                                        }
+                                    }
+                                    mergedResults[key] = entry;
+                                });
+                            });
+
+                            if (Object.keys(mergedResults).length > 0) {
+                                console.log(`[Workflow Route] 📤 Emitting tool_results from [${nodeLabel}]: ${Object.keys(mergedResults).length} entries`);
+                                res.write(`event: tool_results\ndata: ${JSON.stringify({ results: mergedResults })}\n\n`);
+                            }
+                        } catch (e) {
+                            console.error(`[Workflow Route] Failed to emit tool_results from [${nodeLabel}]:`, e);
+                        }
+                    };
+
+                    // 🟢 D1. Emit from execute_tools — ASAP if this is a final turn (SUMMARIZE verdict or ambiguity)
                     if (event.event === "on_chain_end" && event.metadata?.langgraph_node === "execute_tools") {
                         try {
                             const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
                             const currentState = finalState.values;
                             
-                            // 🟢 Detect if this is a "Final" turn ASAP flawlessly trigger
-                            const results = Object.values(currentState.toolResults[currentState.toolResults.length - 1] || {});
-                            const standsAmbiguous = results.some((r: any) => r && r.__ambiguity_stop === true);
+                            const resultsArr = Object.values(currentState.toolResults[currentState.toolResults.length - 1] || {});
+                            const standsAmbiguous = resultsArr.some((r: any) => r && r.__ambiguity_stop === true);
                             
+                            // 🟢 Final Turn Detection: summarize verdict, ambiguity hit, or hard floor at 8 iterations flawlessly!
                             const isFinalTurn = lastVerdict === "SUMMARIZE" || standsAmbiguous || (currentState.iterationCount || 0) >= 8;
-
+                            
                             if (isFinalTurn) {
-                                const rawResults = currentState.toolResults || [];
-                                const turns = Array.isArray(rawResults) ? rawResults : [rawResults];
-                                
-                                // Flatten ALL turns into a single dictionary for the ResultTable component flawlessly!
-                                const mergedResults: Record<string, any> = {};
-                                turns.forEach((turn: any) => {
-                                    Object.entries(turn || {}).forEach(([key, val]) => {
-                                        mergedResults[key] = val;
-                                    });
-                                });
-
-                                if (Object.keys(mergedResults).length > 0) {
-                                    res.write(`event: tool_results\ndata: ${JSON.stringify({ results: mergedResults })}\n\n`);
-                                }
+                                await emitToolResults("execute_tools");
+                                toolResultsEmitted = true; // 🟢 Mark as sent so D2 doesn't double-emit
                             }
                         } catch (e) {
-                            console.error(`[Workflow Route] Failed to fetch state for tool_results flattening:`, e);
+                            console.error(`[Workflow Route] Failed to check final turn state:`, e);
+                        }
+                    }
+
+                    // 🟢 D2. Flush from summarizer — safety-net catch for when Orchestrator goes SUMMARIZE
+                    // with NO further tool calls (skipping execute_tools entirely).
+                    // Only fires if D1 did NOT already emit to prevent redundant double-write to the client.
+                    if (event.event === "on_chain_end" && event.metadata?.langgraph_node === "summarizer") {
+                        if (!toolResultsEmitted) {
+                            await emitToolResults("summarizer");
+                            toolResultsEmitted = true;
+                        } else {
+                            console.log(`[Workflow Route] ⏭️ D2 skipped — tool_results already emitted by D1`);
                         }
                     }
 

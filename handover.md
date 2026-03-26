@@ -931,3 +931,34 @@ This session focused on absolute stabilization of the LangGraph loop and "hollow
   - Label (from `uiTabLabel`), item count, overdue/upcoming breakdown, and first 3 key IDs.
   - Includes an explicit directive: `DO NOT re-call tools that already returned data above.`
 - **Files Changed**: `backend/src/langgraph/nodes/orchestrator.ts`
+
+## 🛠️ 53. Vessel-Identity-Aware Deduplication in Orchestrator (March 26, 2026)
+- **Problem**: The orchestrator was repeating the same vessel queries across iterations by switching arg formats (e.g., `vesselID` → `vesselName`). The LLM rationalized this as a "different attempt", bypassing the original `DO NOT re-call` directive. The structured context also used anonymous iteration-stamped keys (`maintenance_iter2_0`) which gave the LLM no way to map a key to a vessel name.
+- **Fix**: Updated `orchestrator.ts` to use `uiTabLabel` as the primary descriptor in the structured context (e.g., `"Grease up — M.V BLUE SKY"`) and stamped each line with the `appliedFilters.vesselID` from the actual tool response for traceability.
+- **Directive Strengthened**: Added a `🚫 DEDUPLICATION RULE` block: *"A vessel is considered COMPLETE once it appears in this list OR in session memory at any prior iteration — regardless of arg format. If a vessel returned fewer results than expected, that is the maximum available — accept it and summarize."*
+- **Files Changed**: `backend/src/langgraph/nodes/orchestrator.ts`
+
+## 🛠️ 54. INSIGHT Format Reinforcement in Summarizer (March 26, 2026)
+- **Problem**: The summarizer was producing plain markdown headers and bullet lists instead of `[INSIGHT ... /INSIGHT]` blocks. The format rule existed in the system prompt but was too far from the actual data, causing the small model (`gpt-4o-mini`) to revert to familiar markdown patterns.
+- **Fix**: Added a **non-negotiable format reminder** directly in the user prompt message, right before the JSONL data payload — the last thing the model reads before generating output. Rule: *"You MUST wrap ALL findings inside `[INSIGHT...]` containers. Plain markdown bullets or headers OUTSIDE of INSIGHT tags are strictly forbidden."*
+- **Files Changed**: `backend/src/langgraph/nodes/summarizer.ts`
+
+## 🛠️ 55. SSE Flush on Summarizer & Ambiguity Node (March 26, 2026)
+- **Problem**: `workflow.ts` only emitted the `tool_results` SSE event when `execute_tools` ended. If the Orchestrator jumped straight to `SUMMARIZE` or if the agent hit an **ambiguity stop** (clarifying question), `execute_tools` was either skipped or the turn ended without a flush — leaving the UI tables empty.
+- **Fix**: 
+  - Refactored emission into a shared `emitToolResults()` helper.
+  - **Execute Tools Flush**: Now checks for `isFinalTurn` (verdict=SUMMARIZE, hitl_required, ambiguity block, or iteration >= 8) and flushes immediately.
+  - **Summarizer Flush**: Acts as a guaranteed catch-all at the end of the summarizer chain.
+- **Files Changed**: `backend/src/langgraph/routes/workflow.ts`
+
+## 🛠️ 56. uiTabLabel Promotion in Merge Loop (March 26, 2026)  
+- **Problem**: The merge loop in `workflow.ts` was copying raw MCP wrapper objects into `mergedResults`. `ResultTable.tsx` reads `payload.uiTabLabel` at the top level to name tabs. If the `uiTabLabel` was missing at the top level (e.g., buried in the parsed JSON inside `content[0].text`), tabs defaulted to internal key names like `maintenance_query_status_iter2_0`.
+- **Fix**: In the merge loop, each entry is now shallow-cloned and `uiTabLabel` is explicitly promoted — first from the wrapper's own top-level property, then by parsing `content[0].text` as a fallback.
+- **Files Changed**: `backend/src/langgraph/routes/workflow.ts`
+
+## 🛠️ 57. Inline [TABLE] Tag for Summarizer + Renderer (March 26, 2026)
+- **Problem**: When the Orchestrator inferred a summary from memory (without running tools), the Summarizer had no clean way to present columnar data. It either fell back to markdown pipe tables (rendered as lists) or bullet points — neither being ideal.
+- **Fix**:
+  - Added `[TABLE caption="..."]...[/TABLE]` tag instruction to `summarizer.ts` system prompt. The rule explicitly replaces the old "no markdown tables" constraint with "no raw markdown tables — use `[TABLE]` tag instead."
+  - Updated `MdBubbleContent.tsx` segment regex to also split on `[TABLE]` tags. The TABLE renderer extracts the caption and inner pipe table, then renders them through the same styled, exportable table component (with Copy/Export CSV and optional Chart toggle). Table headers use indigo theming to visually distinguish them from raw data ResultTable tabs.
+- **Files Changed**: `backend/src/langgraph/nodes/summarizer.ts`, `frontend/src/components/new-ui/MdBubbleContent.tsx`

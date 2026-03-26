@@ -63,7 +63,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     const lastTurnResults = (rawResults.length > 0 ? rawResults[rawResults.length - 1] : {}) || {};
     
     // 🟢 Format last turn as structured summary (schema-hint style) for high-fidelity Orchestrator decisions!
-    // This gives the agent exactly what it needs: "I already have this data" vs raw BSON blobs.
+    // Uses uiTabLabel as primary label so the agent can reason "I already have M.V BLUE SKY" not just "maintenance_iter2_0"
     let resultsContext = "";
     if (lastTurnResults && Object.keys(lastTurnResults).length > 0) {
         const toolLines: string[] = [];
@@ -76,32 +76,34 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
                     try { data = JSON.parse(text); } catch {}
                 }
             }
+            // 🟢 Use uiTabLabel as primary descriptor so the LLM knows WHICH VESSEL this result belongs to
             const label = data?.uiTabLabel || key;
             const items = Array.isArray(data?.items) ? data.items : [];
             const count = items.length;
             const isEmpty = count === 0;
             
-            // Extract a few key IDs/fields for context (activityID, _id, name etc.)
-            const keyIds: string[] = [];
-            for (const item of items.slice(0, 3)) {
-                const id = item?.activityID || item?._id || item?.id || item?.name;
-                if (id) keyIds.push(String(id).slice(0, 16));
-            }
+            // Extract the applied vesselID/vesselName filter from the result for deduplication signal
+            const appliedVesselID = data?.appliedFilters?.vesselID || '';
+            const vLabel = appliedVesselID ? ` [vesselID:${appliedVesselID}]` : '';
 
             // Per-tool counts if available
             const overdue = items.filter((i: any) => i?.isOverdue === true || i?.statusCode === 'overdue').length;
             const upcoming = items.filter((i: any) => i?.isUpcoming === true || i?.statusCode === 'upcoming').length;
+            const totalAvailable = data?.summary?.overdueCount !== undefined
+                ? `total available: overdue=${data.summary.overdueCount} upcoming=${data.summary.upcomingCount}`
+                : '';
             
-            let line = `- "${label}": ${count} item${count !== 1 ? 's' : ''}`;
+            let line = `- "${label}"${vLabel}: ${count} item${count !== 1 ? 's' : ''}`;
             if (isEmpty) {
-                line += ` | ⚠️ EMPTY — no matching records`;
+                line += ` | ⚠️ EMPTY — no matching records exist for this vessel+filter`;
             } else {
-                if (overdue > 0 || upcoming > 0) line += ` | overdue: ${overdue}, upcoming: ${upcoming}`;
-                if (keyIds.length > 0) line += ` | IDs: [${keyIds.join(', ')}]`;
+                if (overdue > 0 || upcoming > 0) line += ` | returned: overdue=${overdue}, upcoming=${upcoming}`;
+                if (totalAvailable) line += ` | ${totalAvailable}`;
+                if (count < 2) line += ` | ⚠️ only ${count} match exists — database has no more records for this vessel+filter`;
             }
             toolLines.push(line);
         }
-        resultsContext = `\n\n### RESULTS FROM LAST TURN (Iteration ${state.iterationCount || 0} — ${Object.keys(lastTurnResults).length} tool calls):\n${toolLines.join('\n')}\n⚠️ If the data above already satisfies the user query, set feedBackVerdict to SUMMARIZE immediately. DO NOT re-call tools that already returned data above.`;
+        resultsContext = `\n\n### RESULTS FROM LAST TURN (Iteration ${state.iterationCount || 0} — ${Object.keys(lastTurnResults).length} tool calls):\n${toolLines.join('\n')}\n\n🚫 DEDUPLICATION RULE (Critical): A vessel is considered COMPLETE once it appears in this list OR in session memory at any prior iteration — regardless of whether you used vesselID or vesselName or organizationID or organizationShortName as the arg. Do NOT re-query the same vessel in a different arg format. If a vessel returned fewer results than expected (e.g., only 1 of 2 requested), that is the maximum available — accept it and summarize.\n✅ If all vessels have been queried at least once, set feedBackVerdict to SUMMARIZE immediately.`;
     }
 
     const memoryContext = memoryBuffer || resultsContext
