@@ -59,6 +59,18 @@ export function createLangGraphWorkflowRouter() {
                 let lastReasoning = ""; // 🟢 Capture for CoT thought process UI
                 let toolResultsEmitted = false; // 🟢 Guard against double-emit: D1 sets this, D2 checks it
 
+                // 🟢 Bug 2 Fix: Snapshot the current turn count before the run begins.
+                // This ensures we only emit/save results generated during THIS specific request,
+                // ignoring stale historical results persisted in the thread's MongoDB state.
+                let startTurnIndex = 0;
+                try {
+                    const initialState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
+                    startTurnIndex = (initialState.values?.toolResults || []).length;
+                    console.log(`[Workflow Route] 🟢 Thread ${currentRunId} starting at turn index ${startTurnIndex}`);
+                } catch (stateErr) {
+                    console.error(`[Workflow Route] Failed to fetch initial state for turn index:`, stateErr);
+                }
+
                 for await (const event of eventStream) {
                     // 🟢 A. Status Updates for Nodes
                     if (event.event === "on_chain_start" && event.metadata?.langgraph_node) {
@@ -108,10 +120,12 @@ export function createLangGraphWorkflowRouter() {
                             const currentState = finalState.values;
 
                             const rawResults = currentState.toolResults || [];
-                            const turns = Array.isArray(rawResults) ? rawResults : [rawResults];
+                            const allTurns = Array.isArray(rawResults) ? rawResults : [rawResults];
+                            
+                            // 🟢 Slice turns: only include results from THIS request flawlessly trigger flawless
+                            const turns = allTurns.slice(startTurnIndex);
 
                             // 🟢 Fix 2: Promote uiTabLabel from MCP wrapper to the top-level of each result entry
-                            // ResultTable.tsx reads payload.uiTabLabel to name tabs — it must be at the top level
                             const mergedResults: Record<string, any> = {};
                             turns.forEach((turn: any) => {
                                 Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
@@ -205,14 +219,33 @@ export function createLangGraphWorkflowRouter() {
                     assistantResponse = didError ? "" : "No response generated.";
                 }
 
-                // 🟢 Save message pair using Model flawless trigger flawlessly
+                // 🟢 Bug 3 Fix: When saving turn message pair, flatten the turns into a single merged dict.
+                // ResultTable.tsx on the frontend expects a flat Record<string, any> for 'type: table'.
+                // Saving the raw turns array causes hydration failures on refresh.
                 try {
                     const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
-                    // 🟢 Defensive Migration: Ensure toolResults is treated as an array for the new turn-based history format flawlessly!
-                    const rawResults = finalState.values?.toolResults;
-                    const toolResults = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
+                    const rawResults = finalState.values?.toolResults || [];
+                    const allTurns = Array.isArray(rawResults) ? rawResults : [rawResults];
+                    const currentTurns = allTurns.slice(startTurnIndex);
+
+                    const mergedResults: Record<string, any> = {};
+                    currentTurns.forEach((turn: any) => {
+                        Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                            const entry = { ...val };
+                            if (!entry.uiTabLabel) {
+                                const text = entry?.content?.[0]?.text;
+                                if (text) {
+                                    try {
+                                        const parsed = JSON.parse(text);
+                                        if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
+                                    } catch {}
+                                }
+                            }
+                            mergedResults[key] = entry;
+                        });
+                    });
                     
-                    await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse, toolResults);
+                    await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse, mergedResults);
                     await ConversationModel.upsertShell(currentRunId, userQuery);
                 } catch (dbErr) {
                     console.error(`[Workflow Route] Failed to save conversation message:`, dbErr);

@@ -962,3 +962,13 @@ This session focused on absolute stabilization of the LangGraph loop and "hollow
   - Added `[TABLE caption="..."]...[/TABLE]` tag instruction to `summarizer.ts` system prompt. The rule explicitly replaces the old "no markdown tables" constraint with "no raw markdown tables — use `[TABLE]` tag instead."
   - Updated `MdBubbleContent.tsx` segment regex to also split on `[TABLE]` tags. The TABLE renderer extracts the caption and inner pipe table, then renders them through the same styled, exportable table component (with Copy/Export CSV and optional Chart toggle). Table headers use indigo theming to visually distinguish them from raw data ResultTable tabs.
 - **Files Changed**: `backend/src/langgraph/nodes/summarizer.ts`, `frontend/src/components/new-ui/MdBubbleContent.tsx`
+
+## 🛠️ 58. Stale Tool Results Slicing (March 26, 2026)
+- **Problem**: LangGraph thread state (MongoDB) persists `toolResults` across multiple user queries within the same conversation. Because the reducer appends turns, Query #2 would show all tabs from Query #1 in its ResultTable.
+- **Fix**: In `workflow.ts`, I now snapshot `startTurnIndex = (initialState.values.toolResults || []).length` at the start of each request. All SSE emissions and DB saves now slice the `toolResults` array using this index, ensuring only results generated during the **current call** are visible.
+- **Files Changed**: `backend/src/langgraph/routes/workflow.ts`
+
+## 🛠️ 59. ResultTable Persistence & Flattening (March 26, 2026)
+- **Problem**: On page refresh, the ResultTable disappeared. `ConversationModel` was saving the raw multi-turn array of results, but the frontend hydration and the `ChatMessage` model expected a flat merged dictionary.
+- **Fix**: In `workflow.ts`, before calling `addMessage`, I now run the same flattening/promotion logic used in the SSE emitter. This merges all current-run turns into a single `{ key: val }` dictionary where `uiTabLabel` is promoted to the top level. This ensures MongoDB stores exactly what the frontend needs for a reliable re-render on refresh.
+- **Files Changed**: `backend/src/langgraph/routes/workflow.ts`, `backend/src/langgraph/nodes/summarizer.ts` (Prompt Synthesis fix)
