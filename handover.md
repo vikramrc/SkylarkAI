@@ -972,3 +972,16 @@ This session focused on absolute stabilization of the LangGraph loop and "hollow
 - **Problem**: On page refresh, the ResultTable disappeared. `ConversationModel` was saving the raw multi-turn array of results, but the frontend hydration and the `ChatMessage` model expected a flat merged dictionary.
 - **Fix**: In `workflow.ts`, before calling `addMessage`, I now run the same flattening/promotion logic used in the SSE emitter. This merges all current-run turns into a single `{ key: val }` dictionary where `uiTabLabel` is promoted to the top level. This ensures MongoDB stores exactly what the frontend needs for a reliable re-render on refresh.
 - **Files Changed**: `backend/src/langgraph/routes/workflow.ts`, `backend/src/langgraph/nodes/summarizer.ts` (Prompt Synthesis fix)
+
+## 🛠️ 60. Filter-Aware Orchestration (March 26, 2026)
+- **Problem**: The "Deduplication Rule" was too aggressive. If Turn 1 searched for "Overdue" items, the Orchestrator would block Turn 2 from searching for "Grease up" on the same vessel, assuming the vessel was "already queried." This caused missed results for specific job searches.
+- **Fix**: In `orchestrator.ts`, I updated the `resultsContext` to explicitly list the `appliedFilters` used in previous turns (e.g., `[filters: vesselID:X, description:Overdue]`). I then refined the Deduplication Rule to be "Filter-Aware"—allowing re-querying if the new search intent requires a specific filter (like `description`) that was missing in previous broad queries.
+- **Files Changed**: `backend/src/langgraph/nodes/orchestrator.ts`
+
+## 🛠️ 61. Summarizer "Analytical Synthesis" Refinement (March 26, 2026)
+- **Problem**: The Summarizer node was falling into a "Reporting Trap"—listing row-level items (e.g., jobs 1-10) instead of synthesizing them. This led to redundant, verbose chat bubbles that simply replicated the data already visible in the `ResultTable`.
+- **Fix**: Re-engineered the System Prompt in `summarizer.ts` with aggressive synthesis constraints:
+    - **Rule of 3**: The AI is strictly forbidden from referencing more than 3 specific items/IDs in its entire response.
+    - **Numbered List Ban**: Explicitly designated numbered enumerations (1, 2, 3...) as a "System Violation."
+    - **Fleet-Level Aggregation**: Forced the model to group insights by **Status, Priority, or Problem Area** (e.g. "Missing Grease Up across 3 vessels") rather than by individual ship or task.
+- **Files Changed**: `backend/src/langgraph/nodes/summarizer.ts`

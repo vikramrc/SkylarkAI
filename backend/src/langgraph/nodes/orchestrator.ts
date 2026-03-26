@@ -82,28 +82,31 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
             const count = items.length;
             const isEmpty = count === 0;
             
-            // Extract the applied vesselID/vesselName filter from the result for deduplication signal
-            const appliedVesselID = data?.appliedFilters?.vesselID || '';
-            const vLabel = appliedVesselID ? ` [vesselID:${appliedVesselID}]` : '';
-
-            // Per-tool counts if available
+            // Extract all non-null filters to help the LLM recognize the specific 'search scope' previously used
+            const filters = data?.appliedFilters || {};
+            const filterParts = Object.entries(filters)
+                .filter(([k, v]) => v !== null && v !== undefined && v !== '' && k !== 'organizationID')
+                .map(([k, v]) => `${k}:${v}`);
+            const fLabel = filterParts.length > 0 ? ` [filters: ${filterParts.join(', ')}]` : '';
+            
+            // Per-tool counts if available (Restored from previous accidental deletion)
             const overdue = items.filter((i: any) => i?.isOverdue === true || i?.statusCode === 'overdue').length;
             const upcoming = items.filter((i: any) => i?.isUpcoming === true || i?.statusCode === 'upcoming').length;
             const totalAvailable = data?.summary?.overdueCount !== undefined
                 ? `total available: overdue=${data.summary.overdueCount} upcoming=${data.summary.upcomingCount}`
                 : '';
-            
-            let line = `- "${label}"${vLabel}: ${count} item${count !== 1 ? 's' : ''}`;
+
+            let line = `- "${label}"${fLabel}: ${count} item${count !== 1 ? 's' : ''}`;
             if (isEmpty) {
                 line += ` | ⚠️ EMPTY — no matching records exist for this vessel+filter`;
             } else {
                 if (overdue > 0 || upcoming > 0) line += ` | returned: overdue=${overdue}, upcoming=${upcoming}`;
                 if (totalAvailable) line += ` | ${totalAvailable}`;
-                if (count < 2) line += ` | ⚠️ only ${count} match exists — database has no more records for this vessel+filter`;
+                if (count < 2 && count > 0) line += ` | ⚠️ only ${count} match exists — database has no more records for this vessel+filter`;
             }
             toolLines.push(line);
         }
-        resultsContext = `\n\n### RESULTS FROM LAST TURN (Iteration ${state.iterationCount || 0} — ${Object.keys(lastTurnResults).length} tool calls):\n${toolLines.join('\n')}\n\n🚫 DEDUPLICATION RULE (Critical): A vessel is considered COMPLETE once it appears in this list OR in session memory at any prior iteration — regardless of whether you used vesselID or vesselName or organizationID or organizationShortName as the arg. Do NOT re-query the same vessel in a different arg format. If a vessel returned fewer results than expected (e.g., only 1 of 2 requested), that is the maximum available — accept it and summarize.\n✅ If all vessels have been queried at least once, set feedBackVerdict to SUMMARIZE immediately.`;
+        resultsContext = `\n\n### RESULTS FROM LAST TURN (Iteration ${state.iterationCount || 0} — ${Object.keys(lastTurnResults).length} tool calls):\n${toolLines.join('\n')}\n\n🚫 DEDUPLICATION RULE (Filter-Aware): A (Vessel + Filter) combination is considered COMPLETE if it appears in this list or in session memory. Do NOT re-query the same vessel with the same filters. However, if the current request requires a specific search (e.g., a specific 'description' or 'department') that was NOT used in previous broad queries, you MUST call the tool again with the specific filter to get accurate results. If a vessel returned fewer results than expected (e.g., only 1 of X requested), that is the maximum available for that specific filter — accept it.\n✅ If you have all required data across the correct vessels and relevant filters, set feedBackVerdict to SUMMARIZE.`;
     }
 
     const memoryContext = memoryBuffer || resultsContext
