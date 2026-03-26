@@ -43,22 +43,6 @@ export function createLangGraphWorkflowRouter() {
                 // 2. Register stream with abort controller controller controllers
                 const controller = registerStream(currentRunId);
 
-                // 3. Stream LangGraph Events
-                const eventStream = (skylarkGraph as any).streamEvents({
-                    messages: [new HumanMessage(userQuery)],
-                    iterationCount: 0, // 🟢 Reset each turn to enable autonomous loops flawless!
-                }, {
-                    version: "v2",
-                    configurable: { thread_id: currentRunId },
-                    signal: controller.signal // 🟢 Pass abort signal to stream streamEvents triggers flaws flawlessly flawless trigger flawless
-                });
-
-                let assistantResponse = "";
-                let didError = false; // 🟢 Track if any node triggered error triggers flaws!
-                let lastVerdict = "FEED_BACK_TO_ME"; // 🟢 Tracking for final table emission flaws
-                let lastReasoning = ""; // 🟢 Capture for CoT thought process UI
-                let toolResultsEmitted = false; // 🟢 Guard against double-emit: D1 sets this, D2 checks it
-
                 // 🟢 Bug 2 Fix: Snapshot the current turn count before the run begins.
                 // This ensures we only emit/save results generated during THIS specific request,
                 // ignoring stale historical results persisted in the thread's MongoDB state.
@@ -70,6 +54,23 @@ export function createLangGraphWorkflowRouter() {
                 } catch (stateErr) {
                     console.error(`[Workflow Route] Failed to fetch initial state for turn index:`, stateErr);
                 }
+                
+                // 3. Stream LangGraph Events
+                const eventStream = (skylarkGraph as any).streamEvents({
+                    messages: [new HumanMessage(userQuery)],
+                    iterationCount: 0, // 🟢 Reset each turn to enable autonomous loops flawless!
+                    startTurnIndex: startTurnIndex, // 🟢 Pass isolation marker to nodes flawlessly!
+                }, {
+                    version: "v2",
+                    configurable: { thread_id: currentRunId },
+                    signal: controller.signal // 🟢 Pass abort signal to stream streamEvents triggers flaws flawlessly flawless trigger flawless
+                });
+
+                let assistantResponse = "";
+                let didError = false; // 🟢 Track if any node triggered error triggers flaws!
+                let lastVerdict = "FEED_BACK_TO_ME"; // 🟢 Tracking for final table emission flaws
+                let lastReasoning = ""; // 🟢 Capture for CoT thought process UI
+                let toolResultsEmitted = false; // 🟢 Guard against double-emit: D1 sets this, D2 checks it
 
                 for await (const event of eventStream) {
                     // 🟢 A. Status Updates for Nodes

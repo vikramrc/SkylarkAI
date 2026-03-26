@@ -30,11 +30,14 @@ export async function nodeUpdateMemory(state: SkylarkState): Promise<Partial<Sky
 
     // 🟢 Parallelization Support: toolResults is now an array of turns. 
     // Flatten into a single dictionary for the Memroy LLM to process flawlessly!
-    const flattenedResults: Record<string, any> = {};
+    // 🟢 Request Isolation Fix: Use startTurnIndex to ignore stale results from previous queries flawlessly!
+    // This prevents the Memory Orchestrator from "drowning" in old JSON history and hitting token limits.
     const rawResults = state.toolResults;
-    const turns = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
-    
-    turns.forEach((turn: any) => {
+    const history = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
+    const currentTurns = history.slice(state.startTurnIndex || 0);
+
+    const flattenedResults: Record<string, any> = {};
+    currentTurns.forEach((turn: any) => {
         Object.entries(turn || {}).forEach(([key, val]) => {
             flattenedResults[key] = val;
         });

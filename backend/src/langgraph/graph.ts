@@ -38,6 +38,10 @@ const workflow = new StateGraph<SkylarkState>({
         reducer: (x: number, y: number) => y ?? x,
         default: () => 0 
     },
+    startTurnIndex: {
+        reducer: (x: number, y: number) => y ?? x,
+        default: () => 0
+    },
     error: { default: () => undefined }, // Optional error string
     hitl_required: { default: () => undefined }, // 🟢 Add this to preserve state update mechanics flawless!
   } as any 

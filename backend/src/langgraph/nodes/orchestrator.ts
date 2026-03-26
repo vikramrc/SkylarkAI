@@ -59,8 +59,11 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     }).withStructuredOutput(orchestratorSchema, { includeRaw: true } as any);
 
     const memoryBuffer = state.workingMemory?.summaryBuffer || "";
-    const rawResults = state.toolResults || [];
-    const lastTurnResults = (rawResults.length > 0 ? rawResults[rawResults.length - 1] : {}) || {};
+    const history = Array.isArray(state.toolResults) ? state.toolResults : (state.toolResults ? [state.toolResults] : []);
+    const currentTurns = history.slice(state.startTurnIndex || 0);
+
+    // 🟢 Request Isolation Fix: Only look at results from the last turn of the CURRENT request flawlessly!
+    const lastTurnResults = (currentTurns.length > 0 ? currentTurns[currentTurns.length - 1] : {}) || {};
     
     // 🟢 Format last turn as structured summary (schema-hint style) for high-fidelity Orchestrator decisions!
     // Uses uiTabLabel as primary label so the agent can reason "I already have M.V BLUE SKY" not just "maintenance_iter2_0"

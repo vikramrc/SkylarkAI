@@ -48,11 +48,15 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     // 1. Prepare Schema Context aggregate
     // 🟢 Parallelization Support: toolResults is now an array of turns. 
     // Flatten into a single array of entries for unpacking flawlessly!
-    const toolEntries: [string, any][] = [];
+    // 🟢 Request Isolation Fix: Use startTurnIndex to ignore stale results from previous queries flawlessly!
     const rawResults = state.toolResults;
-    const turns = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
+    const history = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
+    const currentTurns = history.slice(state.startTurnIndex || 0);
 
-    turns.forEach((turn: any) => {
+    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] Processing ${currentTurns.length} current tool result turns (Isolation Start: ${state.startTurnIndex || 0})\x1b[0m`);
+
+    const toolEntries: [string, any][] = [];
+    currentTurns.forEach((turn: any) => {
         Object.entries(turn || {}).forEach(([key, val]) => {
             toolEntries.push([key, val]);
         });

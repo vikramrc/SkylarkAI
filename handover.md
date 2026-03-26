@@ -985,3 +985,12 @@ This session focused on absolute stabilization of the LangGraph loop and "hollow
     - **Numbered List Ban**: Explicitly designated numbered enumerations (1, 2, 3...) as a "System Violation."
     - **Fleet-Level Aggregation**: Forced the model to group insights by **Status, Priority, or Problem Area** (e.g. "Missing Grease Up across 3 vessels") rather than by individual ship or task.
 - **Files Changed**: `backend/src/langgraph/nodes/summarizer.ts`
+
+## 🛠️ 62. Unified Request-Level Isolation (March 26, 2026)
+- **Problem**: While Section 58 fixed the **UI** results, the **LLM Nodes** (Orchestrator, UpdateMemory, Summarizer) were still "drowning" in the entire thread's tool history (sometimes processing 36+ turns of redundant JSON). This caused token bloat, infinite tool-call loops, and "No results found" hallucinations.
+- **Fix**:
+    - **State Expansion**: Added `startTurnIndex` to `SkylarkState` in `state.ts` and registered it as a replace-channel in `graph.ts`.
+    - **Baseline Snapshot**: In `workflow.ts`, we now capture the exact `toolResults.length` **before** the LangGraph run starts and inject it as the `startTurnIndex`.
+    - **Node Isolation**: Updated `orchestrator.ts`, `update_memory.ts`, and `summarizer.ts` to strictly `.slice(state.startTurnIndex)` their result inputs. 
+- **Outcome**: Every node in the graph now has a "Request-Level Filter." They can still see the **Cumulative Summary Buffer** (for topic continuity), but they only reason about **Raw Data** that was fetched in response to the *current* user prompt. This makes the system extremely stable, fast, and token-efficient even in very long conversations.
+- **Files Changed**: `backend/src/langgraph/state.ts`, `backend/src/langgraph/graph.ts`, `backend/src/langgraph/routes/workflow.ts`, `backend/src/langgraph/nodes/orchestrator.ts`, `backend/src/langgraph/nodes/update_memory.ts`, `backend/src/langgraph/nodes/summarizer.ts`
