@@ -514,6 +514,18 @@ const baseCapabilitiesContract = [
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
   },
   {
+    name: "crew.query_members",
+    method: "GET",
+    path: "/api/mcp/crew/members",
+    requiredQuery: ["organizationID"],
+    optionalQuery: ["crewMemberIDs", "vesselID", "limit"],
+    purpose: "Returns non-PII metadata (Rank, Department) for crew members to enable anonymized reporting.",
+    whenToUse: "Use this to resolve performer IDs into their functional roles/ranks for 'Anonymized Profile' requests. Specifically useful when IDs are returned from other maintenance or procurement tools and you need to show 'who' they are by rank instead of name.",
+    typicalQuestions: ["What are the ranks of the crew who did these jobs?", "Show me the roles for these performer IDs."],
+    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
+    interpretationGuidance: "Items return crewMemberID, designation (Rank), and department. Names/Emails are strictly excluded for privacy."
+  },
+  {
     name: "fleet.query_structures",
     method: "GET",
     path: "/api/mcp/fleet/structures",

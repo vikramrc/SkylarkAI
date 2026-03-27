@@ -187,6 +187,13 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
   \`\`\`
   Only use this for inferred/aggregated summaries — NOT for data that is already rendered in the ResultTable grid.
 
+- **Anonymized Crew Profiles**: If you receive results from \`crew.query_members\`, you are fulfilling an Anonymized Profile request.
+  - **Masking**: Use generic labels like "Crew Member A", "Crew Member B", or "Performer #1".
+  - **Matching**: Match the IDs from the maintenance/procurement data to the ranks/departments returned by \`crew.query_members\`.
+  - **Formatting**: Present a clean mapping of "Masked Identity | Rank/Designation | Department".
+  - **Strict PII Ban**: Never include real names or emails in this mapping, even if they are present in earlier turns of the conversation history.
+  - **Scope Isolation**: Masking applies ONLY to the identity of crew members (PII). You MUST NOT anonymize, mask, or genericize vessel names, machinery IDs, SFI codes, part descriptions, or any other operational data. These must remain exact as per the dataset to ensure report utility.
+
 - **Technical Notes & Manuals (Critical)**: If the dataset contains fields like \`notesHtml\`, \`notes\`, or lists of \`documents\`, you MUST summarize these instructions clearly for the user. Do NOT just say "instructions are available"; explain what they contain (e.g., "The instructions specify setting the spdpfsh and include a link to the IMO Compendium"). Since \`notesHtml\` is raw HTML, strip tags mentally and summarize the core steps.
 
 ### GLOBAL SCHEMA CONTEXT

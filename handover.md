@@ -1124,3 +1124,14 @@ These scripts are located in the `PhoenixCloudBE/scripts/` directory and are use
     - **Cross-Vessel Safety**: Verified that `vesselID` is correctly wired and reported in `maintenance.query_quality_assurance`.
 - **Outcome**: The Orchestrator now has 100% metadata visibility across the entire service surface. Caching and deduplication are now mathematically perfect for the entire PMS domain.
 - **Status**: **PROJECT COMPLETE**. All contracts and services are in 1:1 synchronization.
+
+---
+
+## 🛠️ 70. Crew Query Orchestration Fix (March 27, 2026)
+- **Problem**: The `crew.query_members` tool was entering an infinite loop when given a comma-separated string of IDs.
+- **Root Cause**: The backend `getCrewMembers` function strictly expected an `Array` for `crewMemberIDs`. When passed a string, it defaulted to an empty array for the query and reported `crewMemberIDs: null` in the `appliedFilters` metadata. The Orchestrator interpreted this `null` as a failure to apply its requested filter, re-triggering the same query repeatedly.
+- **Fix**: 
+    - **Parameter Parsing**: Integrated `parseQueryValueList(crewMemberIDs)` in `PhoenixCloudBE/services/mcp.service.js`. This helper correctly splits comma-separated strings into valid ID arrays.
+    - **Metadata Reporting**: Ensured the resulting `idList` is echoed back in the `appliedFilters` result block.
+- **Outcome**: The Orchestrator now receives an explicit confirmation that its requested IDs were processed in the `appliedFilters`, allowing it to transition to the `SUMMARIZE` phase instead of looping.
+- **Files Changed**: `PhoenixCloudBE/services/mcp.service.js`
