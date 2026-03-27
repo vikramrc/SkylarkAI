@@ -126,25 +126,23 @@ export function createLangGraphWorkflowRouter() {
                             // 🟢 Slice turns: only include results from THIS request flawlessly trigger flawless
                             const turns = allTurns.slice(startTurnIndex);
 
-                            // 🟢 Fix 2: Promote uiTabLabel from MCP wrapper to the top-level of each result entry
+                            // 🟢 Final Turn Isolation: only include results from the VERY LAST turn of this sequence
                             const mergedResults: Record<string, any> = {};
-                            turns.forEach((turn: any) => {
-                                Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
-                                    const entry = { ...val }; // shallow clone to avoid mutation
-                                    // Promote uiTabLabel: it's already on the outer object from execute_tools.ts
-                                    // but may be lost if MCP rewraps. Ensure it stays at top level.
-                                    if (!entry.uiTabLabel) {
-                                        // Try parsing the MCP text to grab it from inside if missing
-                                        const text = entry?.content?.[0]?.text;
-                                        if (text) {
-                                            try {
-                                                const parsed = JSON.parse(text);
-                                                if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
-                                            } catch {}
-                                        }
+                            const finalTurn = turns.length > 0 ? turns[turns.length - 1] : {};
+
+                            Object.entries(finalTurn || {}).forEach(([key, val]: [string, any]) => {
+                                const entry = { ...val }; // shallow clone to avoid mutation
+                                // Promote uiTabLabel: ensure it stays at top level
+                                if (!entry.uiTabLabel) {
+                                    const text = entry?.content?.[0]?.text;
+                                    if (text) {
+                                        try {
+                                            const parsed = JSON.parse(text);
+                                            if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
+                                        } catch {}
                                     }
-                                    mergedResults[key] = entry;
-                                });
+                                }
+                                mergedResults[key] = entry;
                             });
 
                             if (Object.keys(mergedResults).length > 0) {
@@ -229,21 +227,22 @@ export function createLangGraphWorkflowRouter() {
                     const allTurns = Array.isArray(rawResults) ? rawResults : [rawResults];
                     const currentTurns = allTurns.slice(startTurnIndex);
 
+                    // 🟢 Final Turn Isolation: only save results from the VERY LAST turn of this sequence
                     const mergedResults: Record<string, any> = {};
-                    currentTurns.forEach((turn: any) => {
-                        Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
-                            const entry = { ...val };
-                            if (!entry.uiTabLabel) {
-                                const text = entry?.content?.[0]?.text;
-                                if (text) {
-                                    try {
-                                        const parsed = JSON.parse(text);
-                                        if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
-                                    } catch {}
-                                }
+                    const finalTurn = currentTurns.length > 0 ? currentTurns[currentTurns.length - 1] : {};
+
+                    Object.entries(finalTurn || {}).forEach(([key, val]: [string, any]) => {
+                        const entry = { ...val };
+                        if (!entry.uiTabLabel) {
+                            const text = entry?.content?.[0]?.text;
+                            if (text) {
+                                try {
+                                    const parsed = JSON.parse(text);
+                                    if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
+                                } catch {}
                             }
-                            mergedResults[key] = entry;
-                        });
+                        }
+                        mergedResults[key] = entry;
                     });
                     
                     await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse, mergedResults);
