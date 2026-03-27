@@ -40,4 +40,7 @@ export interface SkylarkState {
 
   // 6. Request Isolation
   startTurnIndex: number; // 🟢 Snapshot of toolResults.length when the request started flawless!
+
+  // 7. Conductor Result Selection
+  selectedResultKeys?: string[]; // 🟢 Explicit tool result keys to promote to final UI/Summary flawless!
 }

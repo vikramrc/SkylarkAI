@@ -90,9 +90,23 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
             return { key, data };
         });
 
+        // 🟢 Conductor Selection Filter: If the Orchestrator explicitly picked results, ignore everything else!
+        // This prevents "Discovery" turns or "Internal Thinking" tools from bloating the final summary.
+        let finalEntries = unpackedEntries;
+        if (state.selectedResultKeys && state.selectedResultKeys.length > 0) {
+            console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🎯 Conductor Selection Active: Filtering for ${state.selectedResultKeys.length} specific tool(s)\x1b[0m`);
+            finalEntries = unpackedEntries.filter(e => state.selectedResultKeys?.includes(e.key));
+            
+            // Fallback: If AI picked keys that don't exist (hallucination), use all current turns
+            if (finalEntries.length === 0) {
+                console.warn(`\x1b[33m${ts()} [LangGraph Summarizer] ⚠️ Conductor picked keys [${state.selectedResultKeys}] but none matched! Falling back to all current results.\x1b[0m`);
+                finalEntries = unpackedEntries;
+            }
+        }
+
         // 🔴 CRITICAL FIX: extract the actual *items* arrays from each tool result wrapper
         const toolCountMap: string[] = [];
-        for (const entry of unpackedEntries) {
+        for (const entry of finalEntries) {
             const { key, data: result } = entry;
             const capability = result?.capability ?? 'unknown';
             const items = Array.isArray(result?.items) ? result.items : [result];

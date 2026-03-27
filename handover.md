@@ -945,21 +945,47 @@ We performed a comprehensive audit and synchronization of the entire MCP orchest
 
 ---
 
-## 🛠️ **Utility Scripts (Diagnostic Toolkit)**
+## 🛠️ Diagnostic Utility Scripts (The Developer Toolkit)
 
-### 🟡 **`scripts/check_last_convo.ts` [NEW]**
-- **Purpose**: High-fidelity diagnostic tool for inspecting the latest conversation state. Uses `skylarkGraph.getState()` to properly deserialize BSON binary checkpoints from MongoDB.
-- **Use Case**: Use this when tool results are missing from the UI or when suspecting state bloating/corruption.
-- **Output**: Logs iteration count, final verdict, full reasoning string, and a detailed turn-by-turn breakdown of all tool payloads.
+To assist with resolving complex orchestration logic, state persistence, or session memory issues, use the following tools in the `backend/` directory:
+
+### 🟢 `scripts/check_last_convo_full.ts` [RECOMMENDED]
+- **Purpose**: High-fidelity full-state dump of the most recent conversation.
+- **Output**: Logs `workingMemory` (summary buffer), `iterationCount`, and the full `messages` history with roles.
+- **Use Case**: Use this as the first line of defense when the AI seems "confused" or asks redundant questions (PII/Scope) to see what is currently in its observational memory.
+- **Run**: `npx tsx scripts/check_last_convo_full.ts`
+
+### 🟢 `scripts/check_detailed.ts`
+- **Purpose**: Deep-dive into multi-turn investigations.
+- **Output**: Lists every tool key generated across all turns (Turns 1, 2, 3...) and attempts to resolve and display the `uiTabLabel` for each.
+- **Use Case**: Use this to debug "Tab Clutter" or missing result tables in the UI.
+- **Run**: `npx tsx scripts/check_detailed.ts`
+
+### 🟢 `scripts/check_last_convo.ts`
+- **Purpose**: Concise status check for the latest run.
+- **Output**: Summarizes iteration count, final verdict, and tool result counts per turn.
+- **Use Case**: Quick verification that a turn executed and returned data.
 - **Run**: `npx tsx scripts/check_last_convo.ts`
 
-### 🟢 **`scripts/dump_memory.ts`**
-- **Purpose**: Inspect state history and observational memory retained inside a specific graph thread.
+### 🟢 `scripts/check_keys.ts`
+- **Purpose**: Specific audit of the "Conductor" model's promotions.
+- **Output**: Dumps the `selectedResultKeys` array from the latest checkpoint.
+- **Use Case**: Use this to verify if the Orchestrator is correctly selecting and "promoting" old tool results to the final UI.
+- **Run**: `npx tsx scripts/check_keys.ts`
+
+### 🟢 `scripts/dump_memory.ts`
+- **Purpose**: Step-by-step history of the state machine.
+- **Output**: Logs messages and verdicts for *every single node transition* in the graph.
 - **Run**: `npx tsx scripts/dump_memory.ts [<runId>]`
 
-### 🟢 **`scripts/list_conversations.ts`**
+### 🟢 `scripts/list_conversations.ts`
 - **Purpose**: Quickly pull recent Thread/Session IDs from the `checkpoints` collection to use with the above scripts.
 - **Run**: `npx tsx scripts/list_conversations.ts`
+
+### 🟢 `scripts/check_history.ts`
+- **Purpose**: Basic metadata check.
+- **Output**: Turn history count and top-level result keys.
+- **Run**: `npx tsx scripts/check_history.ts`
 
 ---
 
@@ -1172,3 +1198,42 @@ Search the raw `out.log` for specific high-signal markers:
 
 ### 4. Correlation with Run ID
 When a user reports a specific UI crash, extract the `runId` from the browser console or URL and grep the remote log for that specific UUID to isolate the turn history and tool result state.
+
+---
+
+## 🛠️ 73. The Conductor Model (Selective Tool Promotion)
+We implemented a **Conductor Model** to eliminate redundant "Visibility Loops" where the Orchestrator would re-run tools just to keep results visible in the UI.
+
+### 1. State & Schema Changes
+- **`selectedResultKeys`**: Added to `SkylarkState` and `orchestratorSchema`. The Orchestrator now outputs a list of specific tool result keys (e.g., `maintenance.query_status_iter2_0`) it wants to promote.
+- **Selective Unpacking**: The `summarizer.ts` node now filters its input data using this array, preventing "Discovery" results (which are only for AI internal thinking) from bloating the final summary.
+
+### 2. Router Emission (`workflow.ts`)
+The SSE emission and DB persistence logic was updated to:
+- **Prioritize Selection**: If `selectedResultKeys` is provided, the router "fishes" those specific results out of the *entire* request history (Turns 1, 2, 3...) and promotes them to the UI's `ResultTable`.
+- **Discovery Guard**: Implemented `isFinalTurn` logic. Tool results are **not** emitted to the UI during discovery turns (`FEED_BACK_TO_ME`) unless explicitly selected, preventing the UI from jumping around while the AI is "thinking."
+
+---
+
+## 🛠️ 74. PII Policy Hardening & Consent Persistence
+To resolve a recurring issue where the AI would ask for permission twice (HITL loop) during personnel investigations:
+
+1.  **One-Time Consent Rule**: Updated the `orchestrator.ts` prompt. Once a user provides "Option 2" consent (anonymized mapping) in the thread history, the agent skips the second verification step.
+2.  **Auto-Resolution**: The Orchestrator is now strictly instructed to **immediately resolve** all discovered personnel IDs (via `crew.query_members`) in subsequent turns once general permission is granted. 
+
+---
+
+## 🛠️ 75. Prompt Restoration & Reasoning Guards
+We restored several "Critical Reasoning Guards" to the Orchestrator prompt that were previously simplified. These are essential for preventing infinite loops:
+
+### 1. Per-Tool Counts (Reasoning Fidelity)
+The Orchestrator now receives detailed counts for every tool result in the history:
+- `overdue`/`upcoming` record counts.
+- `totalAvailable` counts from the tool's summary metadata (to know if it fetched the full list).
+- **Empty Result Markers**: Explicitly warns the AI if a vessel+filter combination returned **0 records** so it doesn't try again.
+
+### 2. Operational Rules
+Revised the **🚫 DEDUPLICATION & THE CONDUCTOR RULE** section:
+- **Vessel+Filter Completeness**: A combination is considered COMPLETE if it appears in the tool history. The AI must NOT re-fetch.
+- **Max Records & Gaps**: If the AI asked for 5 but got 1, it must accept this as the maximum available and stop re-querying.
+- **Search Specificity**: Only re-query if a *new* specific filter (department/description) is needed that wasn't in the previous broad search.

@@ -123,26 +123,35 @@ export function createLangGraphWorkflowRouter() {
                             const rawResults = currentState.toolResults || [];
                             const allTurns = Array.isArray(rawResults) ? rawResults : [rawResults];
                             
-                            // 🟢 Slice turns: only include results from THIS request flawlessly trigger flawless
-                            const turns = allTurns.slice(startTurnIndex);
-
-                            // 🟢 Final Turn Isolation: only include results from the VERY LAST turn of this sequence
+                            // 🟢 CONDUCTOR SELECTION: If the Orchestrator picked specific keys, promote them across all turns!
                             const mergedResults: Record<string, any> = {};
-                            const finalTurn = turns.length > 0 ? turns[turns.length - 1] : {};
+                            const selection = currentState.selectedResultKeys || [];
 
-                            Object.entries(finalTurn || {}).forEach(([key, val]: [string, any]) => {
-                                const entry = { ...val }; // shallow clone to avoid mutation
-                                // Promote uiTabLabel: ensure it stays at top level
+                            if (selection.length > 0) {
+                                console.log(`[Workflow Route] 🎯 Conductor Selection: Promoting ${selection.length} keys to UI`);
+                                allTurns.forEach(turn => {
+                                    Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                                        if (selection.includes(key)) {
+                                            mergedResults[key] = { ...val };
+                                        }
+                                    });
+                                });
+                            } else {
+                                // Fallback: Default to only the VERY LAST turn results (Section 71 behavior)
+                                const turns = allTurns.slice(startTurnIndex);
+                                const finalTurn = turns.length > 0 ? turns[turns.length - 1] : {};
+                                Object.entries(finalTurn).forEach(([k, v]) => mergedResults[k] = { ...v as any });
+                            }
+
+                            // 🟢 Promote uiTabLabel normalization for Table mapping
+                            Object.values(mergedResults).forEach((entry: any) => {
                                 if (!entry.uiTabLabel) {
                                     const text = entry?.content?.[0]?.text;
-                                    if (text) {
-                                        try {
-                                            const parsed = JSON.parse(text);
-                                            if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
-                                        } catch {}
-                                    }
+                                    try {
+                                        const parsed = JSON.parse(text);
+                                        if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
+                                    } catch {}
                                 }
-                                mergedResults[key] = entry;
                             });
 
                             if (Object.keys(mergedResults).length > 0) {
@@ -225,24 +234,32 @@ export function createLangGraphWorkflowRouter() {
                     const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
                     const rawResults = finalState.values?.toolResults || [];
                     const allTurns = Array.isArray(rawResults) ? rawResults : [rawResults];
-                    const currentTurns = allTurns.slice(startTurnIndex);
-
-                    // 🟢 Final Turn Isolation: only save results from the VERY LAST turn of this sequence
+                    // 🟢 Final Turn Isolation: Respect Conductor's selection for DB persistence!
                     const mergedResults: Record<string, any> = {};
-                    const finalTurn = currentTurns.length > 0 ? currentTurns[currentTurns.length - 1] : {};
+                    const selection = finalState.values?.selectedResultKeys || [];
 
-                    Object.entries(finalTurn || {}).forEach(([key, val]: [string, any]) => {
-                        const entry = { ...val };
+                    if (selection.length > 0) {
+                        allTurns.forEach(turn => {
+                            Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                                if (selection.includes(key)) {
+                                    mergedResults[key] = { ...val };
+                                }
+                            });
+                        });
+                    } else {
+                        const currentTurns = allTurns.slice(startTurnIndex);
+                        const finalTurn = currentTurns.length > 0 ? currentTurns[currentTurns.length - 1] : {};
+                        Object.entries(finalTurn).forEach(([k, v]) => mergedResults[k] = { ...v as any });
+                    }
+
+                    // Normalize label for frontend ResultTable.tsx
+                    Object.values(mergedResults).forEach((entry: any) => {
                         if (!entry.uiTabLabel) {
-                            const text = entry?.content?.[0]?.text;
-                            if (text) {
-                                try {
-                                    const parsed = JSON.parse(text);
-                                    if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
-                                } catch {}
-                            }
+                            try {
+                                const parsed = JSON.parse(entry?.content?.[0]?.text);
+                                if (parsed?.uiTabLabel) entry.uiTabLabel = parsed.uiTabLabel;
+                            } catch {}
                         }
-                        mergedResults[key] = entry;
                     });
                     
                     await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse, mergedResults);

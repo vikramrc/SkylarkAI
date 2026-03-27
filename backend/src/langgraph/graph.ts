@@ -44,6 +44,10 @@ const workflow = new StateGraph<SkylarkState>({
     },
     error: { default: () => undefined }, // Optional error string
     hitl_required: { default: () => undefined }, // 🟢 Add this to preserve state update mechanics flawless!
+    selectedResultKeys: { 
+        reducer: (x: string[], y: string[]) => y?.length ? y : (x || []), // 🟢 Latest decision wins flawless!
+        default: () => [] 
+    },
   } as any 
 });
 
