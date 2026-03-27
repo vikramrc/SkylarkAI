@@ -1146,3 +1146,29 @@ These scripts are located in the `PhoenixCloudBE/scripts/` directory and are use
 - **Backend Integrity**: Explicitly preserved the full `toolResults` array within the LangGraph internal state (`checkpoints` collection). The Agent, UpdateMemory, and Summarizer nodes still have access to the full request history for data correlation and synthesis.
 - **Outcome**: The UI now renders only the final, relevant tool tabs intended for the user's focus. Discovery-phase noise is filtered out of the presentation layer while maintaining 100% analytical fidelity in the background.
 - **Files Changed**: `SkylarkAI/backend/src/langgraph/routes/workflow.ts`
+
+---
+
+## 🛠️ 72. Remote Debugging & Observability (Seikaizen Prod Server)
+To diagnose orchestration logic, state persistence, or system crashes on the live production environment (`20.169.48.27`), follow these standardized steps:
+
+### 1. Direct SSH Access
+Use the established private key to connect to the Azure VM:
+```bash
+ssh -i ~/Downloads/seikaizen_key.pem azureuser@20.169.48.27
+```
+
+### 2. Live Log Monitoring (PM2)
+The `skylarkai` application runs under PM2. Use these commands for high-level observability:
+- **Tail Logs**: `pm2 logs skylarkai --lines 500`
+- **Find Log Path**: `pm2 show skylarkai | grep 'out log path'` 
+- **Standard Path**: `/home/azureuser/maximapmx/skylark/logs/out.log`
+
+### 3. Deep-Dive Orchestration Analysis
+Search the raw `out.log` for specific high-signal markers:
+- **Orchestrator Reasoning**: Grep for `[LangGraph Orchestrator Output]` to inspect the `reasoning`, `clarifyingQuestion`, and `feedBackVerdict` JSON blocks.
+- **Token Usage/Bloat**: Grep for `UpdateMemory Token & Savings Report` or `Orchestrator Token & Savings Report`. Requests exceeding **20,000 tokens** are prone to API timeouts (408/504) or context window overflows.
+- **Error Triggers**: Search for `🚨 Error Node invoked` to identify when the graph has transitioned to the error-recovery state due to an LLM provider crash or a tool execution exception.
+
+### 4. Correlation with Run ID
+When a user reports a specific UI crash, extract the `runId` from the browser console or URL and grep the remote log for that specific UUID to isolate the turn history and tool result state.
