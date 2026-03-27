@@ -1135,3 +1135,14 @@ These scripts are located in the `PhoenixCloudBE/scripts/` directory and are use
     - **Metadata Reporting**: Ensured the resulting `idList` is echoed back in the `appliedFilters` result block.
 - **Outcome**: The Orchestrator now receives an explicit confirmation that its requested IDs were processed in the `appliedFilters`, allowing it to transition to the `SUMMARIZE` phase instead of looping.
 - **Files Changed**: `PhoenixCloudBE/services/mcp.service.js`
+
+---
+
+## 🛠️ 71. UI Tab Isolation — Final Turn Only (March 27, 2026)
+- **Problem**: Multi-turn orchestration sequences were causing "tab clutter" in the UI. Intermediary discovery results (e.g., generic vessel search results from Turn 1) remained visible alongside the final requested data (e.g., a specific maintenance history from Turn 2), creating a "staircase" of redundant tabs.
+- **Fix**:
+    - **Emission Slicing**: Refactored `backend/src/langgraph/routes/workflow.ts` in the `emitToolResults` helper to only extract and emit tools from the **very last turn** of the current request's `toolResults` slice.
+    - **Persistence Slicing**: Applied the same "final turn only" extraction when saving results to the `Conversation` collection via `addMessage`.
+- **Backend Integrity**: Explicitly preserved the full `toolResults` array within the LangGraph internal state (`checkpoints` collection). The Agent, UpdateMemory, and Summarizer nodes still have access to the full request history for data correlation and synthesis.
+- **Outcome**: The UI now renders only the final, relevant tool tabs intended for the user's focus. Discovery-phase noise is filtered out of the presentation layer while maintaining 100% analytical fidelity in the background.
+- **Files Changed**: `SkylarkAI/backend/src/langgraph/routes/workflow.ts`
