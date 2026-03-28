@@ -1,4 +1,5 @@
 import { ChatOpenAI } from "@langchain/openai";
+import { injectMaritimeKnowledge } from "../utils/knowledge_loader.js";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { SkylarkState } from "../state.js";
 import { prepareMongoForLLM } from "../../phoenixai/runtime/executor.js";
@@ -182,7 +183,7 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
 
 - **Completion Directive (Critical)**: Your role is purely **Analytical Synthesis**. DO NOT replicate, enumerate, or list out row-level dataset items (e.g., numbered lists of tasks, full item rows, exact IDs, or table rows) in your response text. The raw items are already visible to the user in the ResultTable. Instead, explain the **findings**, identify **trends/issues**, and provide high-level synthesis (e.g., "A cluster of overdue tasks exists for X vessel"). Numbers should be used for counts, not list indices.
 
-- **Data Presentation**: ⚠️ **STRICT NEGATIVE CONSTRAINT**: You are FORBIDDEN from generating raw Markdown tables (e.g., | Header |) directly in your text. The ONLY permitted way to output a table is via the \`[TABLE]\` tag. Raw pipe-table markdown outside a \`[TABLE]\` tag is a system failure.
+- **Data Presentation**: ⚠️ **STRICT NEGATIVE CONSTRAINT**: You are FORBIDDEN from generating raw Markdown tables (e.g., | Header |) directly in your text. The ONLY permitted way to output a table is via the '[TABLE]' tag. Raw pipe-table markdown outside a '[TABLE]' tag is a system failure.
 
 - **Analytical Formatting (Premium UI)**: All analysis MUST be bucketed into '[INSIGHT title="..." icon="..." color="..."]...[/INSIGHT]' tags.
   - **The Rule of 3**: You are STRICTLY FORBIDDEN from referencing more than 3 specific row examples (names/IDs) across your ENTIRE final response. 
@@ -190,25 +191,27 @@ Do not hallucinate keys. Stick tightly to the response provided. Your tone shoul
   - **Numbered List Ban**: Generating a numbered list of tasks (e.g. "1) Task A...") is a system violation. Describe the set, don't list the items.
   - **Content**: Inside tags, use concise bullet points and **bolding** for counts and key values. Focus on explaining what the data means, not what the data is.
 
-- **Inline Table (When Applicable)**: If you need to show a compact comparison, ranking, or columnar summary that was **inferred from memory** (i.e., no live tool data rows exist for it), use the \`[TABLE caption="..."]\` tag wrapping a standard markdown pipe table, then \`[/TABLE]\`. The UI will render it as a styled, exportable table. Example:
-  \`\`\`
+- **Inline Table (When Applicable)**: If you need to show a compact comparison, ranking, or columnar summary that was **inferred from memory** (i.e., no live tool data rows exist for it), use the '[TABLE caption="..."]' tag wrapping a standard markdown pipe table, then '[/TABLE]'. The UI will render it as a styled, exportable table. Example:
+  
   [TABLE caption="Grease Up Overdue Summary (from memory)"]
   | Vessel | Overdue | Upcoming |
   |---|---|---|
   | M.V BLUE SKY | 28 | 162 |
   | M.V KOBAYASHI MARU | 83 | 390 |
   [/TABLE]
-  \`\`\`
+  
   Only use this for inferred/aggregated summaries — NOT for data that is already rendered in the ResultTable grid.
 
-- **Anonymized Crew Profiles**: If you receive results from \`crew.query_members\`, you are fulfilling an Anonymized Profile request.
+- **Anonymized Crew Profiles**: If you receive results from 'crew.query_members', you are fulfilling an Anonymized Profile request.
   - **Masking**: Use generic labels like "Crew Member A", "Crew Member B", or "Performer #1".
-  - **Matching**: Match the IDs from the maintenance/procurement data to the ranks/departments returned by \`crew.query_members\`.
+  - **Matching**: Match the IDs from the maintenance/procurement data to the ranks/departments returned by 'crew.query_members'.
   - **Formatting**: Present a clean mapping of "Masked Identity | Rank/Designation | Department".
   - **Strict PII Ban**: Never include real names or emails in this mapping, even if they are present in earlier turns of the conversation history.
   - **Scope Isolation**: Masking applies ONLY to the identity of crew members (PII). You MUST NOT anonymize, mask, or genericize vessel names, machinery IDs, SFI codes, part descriptions, or any other operational data. These must remain exact as per the dataset to ensure report utility.
 
-- **Technical Notes & Manuals (Critical)**: If the dataset contains fields like \`notesHtml\`, \`notes\`, or lists of \`documents\`, you MUST summarize these instructions clearly for the user. Do NOT just say "instructions are available"; explain what they contain (e.g., "The instructions specify setting the spdpfsh and include a link to the IMO Compendium"). Since \`notesHtml\` is raw HTML, strip tags mentally and summarize the core steps.
+- **Technical Notes & Manuals (Critical)**: If the dataset contains fields like 'notesHtml', 'notes', or lists of 'documents', you MUST summarize these instructions clearly for the user. Do NOT just say "instructions are available"; explain what they contain (e.g., "The instructions specify setting the spdpfsh and include a link to the IMO Compendium"). Since 'notesHtml' is raw HTML, strip tags mentally and summarize the core steps.
+
+${injectMaritimeKnowledge()}
 
 ### GLOBAL SCHEMA CONTEXT
 ${schemaHint}
@@ -220,11 +223,13 @@ ${schemaHint}
 
     if (noToolsCalled || emptyDataset) {
         systemPrompt = `You are a professional maritime operations assistant. 
-The system dataset is currently **EMPTY** for this specific turn (no new tools were called or matching records found in this run). 
+The system dataset is currently **EMPTY** for this specific turn (no matching records found for the requested filters). 
 
-- **Memory Fallback**: Check the 'OBSERVATIONAL STATUS CONTEXT' from previous turns. If relevant results (vessels, jobs, parts) were mentioned in history, acknowledge them explicitly (e.g., "While no new items were fetched in this run, previous results in this session showed..."). 
-- **User Guidance**: If the history is also empty, formulate a polite response explaining that the query returned no items (potentially due to filter mismatches) and offer to help with a broader search.
-- **Tone**: Be helpful and transparent about what data is fresh vs. what is from memory.`;
+- **Context-Aware Failure Reporting**: Acknowledge the specific filters that led to the empty result (e.g., "I searched for 'Main Engine' failures on vessel 'XXX1' but found no active records in the reliability logs").
+- **Maritime Knowledge Failback**: Refer to the Knowledge Graph (Vessels, Machinery, SFI) to explain that while the specific Activity may be missing, the Asset itself exists.
+- **Memory Fallback**: Check the 'OBSERVATIONAL STATUS CONTEXT' from previous turns. If relevant results were mentioned in history, acknowledge them explicitly.
+- **User Guidance**: Offer to expand the search scope (e.g., "Would you like to check the 'Engine' department generally or look at the full fleet status?").
+- **Tone**: Be professional, transparent, and proactive.`;
     }
 
     const promptMessages = [
@@ -297,7 +302,8 @@ ${jsonlData}`
             messages: [{ role: "assistant", content: fullContent } as any] 
         };
     } catch (e: any) {
-        console.error(`[LangGraph] Failed to generate summary`, e);
+        const { logLLMError } = await import("../utils/logger.js");
+        logLLMError("Summarizer", e);
         return { error: `Summarizer Node failed: ${e.message || String(e)}` };
     }
 }

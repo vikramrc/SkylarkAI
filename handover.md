@@ -185,10 +185,35 @@ We achieved **100% parity** and **loop-safety** across the MCP service layer by 
 
 ---
 
-## 📑 42. Next Step Tasks for Next Agent:
-- **Comprehensive Trace Audit**: Monitor LangGraph traces for any remaining "Reflexion" loops where the AI might be ignoring the `appliedFilters` hints despite the new hardening.
-- **Enhanced Data Visualizations**: Now that date ranges are stable, consider adding "Trend Analysis" or "Time-series" UI components to the `ResultTable` for temporal datasets.
-- **Audit Analytical Models**: Ensure that the `summarizer.ts` correctly utilizes the `appliedFilters` to describe the *scope* of the summary ("Based on the data from Jan-Mar 2026...").
+## 🛠️ 43. Maritime Agentic Workflow Hardening (March 27, 2026)
+
+We achieved extreme stability in the maintenance diagnostic loops by enforcing a "Discovery-First" protocol and injecting a centralized maritime knowledge graph.
+
+### 🟢 **Maritime Mental Model Injection (`knowledge_loader.ts`)**
+- **Problem**: Lowered accuracy on technical entities (Component-Activity mappings, Landing Orders, Invoices) because the LLM relied on its generic maritime training rather than the actual Phoenix source schema.
+- **Fix**: Created `phoenix_knowledge_graph.json` containing the complete domain hierarchy (Machinery -> Components -> Activities -> Finance).
+- **Injection**: Updated all LangGraph nodes to dynamically load this "Maritime Mental Model" into their system instructions at runtime.
+
+### 🟢 **Discovery-First Mandate & ID Grounding (`orchestrator.ts`)**
+- **Problem**: The AI was hallucinating vessel counts and IDs (e.g., "I will fetch for 7 vessels") for org-wide queries without actually knowing which vessels belonged to the org.
+- **Fix**: Mandated a **Fleet Discovery turn** (`fleet.query_overview`) for any Org-wide or Fleet-wide request.
+- **Grounding Rule**: Added a strict **ID Grounding Safety Guard**—the AI is forbidden from using ANY ID (Vessel, Machinery, Performer) that was not explicitly returned in the current session's history.
+
+### 🟢 **Protocol Short-Circuiting & Generalized Consent**
+- **Problem**: The AI was stuck in "Clarification Shyness," asking "Proceed to resolve names?" even after the user had already agreed to an anonymized mapping, often because it was looking for a specific label like "Option 2".
+- **Fix (Protocol Short-Circuit)**: Added a mandate: "If findings for a later protocol step (e.g., performerIDs for Step 3) are in memory, you are **FORBIDDEN** from staying in Step 1. Transition immediately."
+- **Fix (Generalized Consent)**: Shifted away from fragile labels (Option A/B) to **Generalized Consent recognition**. The AI now recognizes any semantic agreement to "anonymized data" as final security clearance to execute resolution tools.
+
+### 🟢 **Maintenance Performer Surface (`mcp.service.js`)**
+- **Fix**: Updated the `maintenance.query_reliability` tool to return the `latestEventPerformedBy` ID field.
+- **Result**: Enables immediate transition to the crew resolution step without needing intermediate work history event lookups.
+
+---
+
+## 📑 44. Next Step Tasks for Next Agent:
+- **Monitor Reasoning Efficiency**: Observe turns where the AI might still be "shy" despite general consent.
+- **Anonymized Resolution Batching**: Ensure that if 50 performer IDs are found, the AI batches them into a single parallel turn for `crew.lookup_anonymized`.
+- **Knowledge Graph Expansion**: Consider adding "Safety & Permits" (PTW) logic details to the `phoenix_knowledge_graph.json`.
 ---
 
 ## 🛠️ 20. Summarizer Data Flattening & Forms Contents MCP Tooling Optimizer
@@ -1237,3 +1262,35 @@ Revised the **🚫 DEDUPLICATION & THE CONDUCTOR RULE** section:
 - **Vessel+Filter Completeness**: A combination is considered COMPLETE if it appears in the tool history. The AI must NOT re-fetch.
 - **Max Records & Gaps**: If the AI asked for 5 but got 1, it must accept this as the maximum available and stop re-querying.
 - **Search Specificity**: Only re-query if a *new* specific filter (department/description) is needed that wasn't in the previous broad search.
+
+---
+
+## 🛠️ 76. Zero-Loop Stability & Decision Grounding (Final Hardening)
+We achieved definitive stability in the superintendent's workflow by shifting from "Reactive Memory" to **"Causal Grounding."**
+
+### 🟢 **Volatile Session Decision Journal (`orchestrator.ts`)**
+- **The Concept**: Implemented a "Decision Log" that explicitly pairs your session-level answers with the subsequent technical tools triggered (`? QUESTION` ➡️ `✓ ANSWER` ➡️ `🚀 TOOL ACTIONS`).
+- **Initial Query Grounding**: The journal initializes with the **Initial Query** (msg index 0), ensuring the technical "Discovery Phase" (Fleet Overviews, Status Checks) is tracked from Turn 1.
+- **Loop-Breaker Mandate**: Added a non-negotiable instruction: "If a Tool+Parameter combination is logged in the Journal, it is LOCKED. You MUST NOT re-request it." This prevents the AI from asking "Proceed?" for data it already has.
+
+### 🟢 **Maritime Mental Model Injection**
+- **Knowledge Injection**: Dynamically injects `phoenix_knowledge_graph.json` into the Orchestrator and Summarizer.
+- **Domain Guard**: Provides the AI with a pre-cached understanding of **Machinery ➡️ Activity ➡️ Component** relationships, preventing technical "hallucinations" about entity hierarchies.
+
+### 🟢 **Superintendent's Discovery-First Protocol**
+- **Rule**: For all "Organization Wide" or fleet queries, the agent is mandated to call `fleet.query_overview` FIRST.
+- **Safety**: Strictly forbade the agent from guessing or assuming database IDs. Every ID used MUST have been returned by a previous tool result in the current session.
+
+### 🟢 **Backend Performer Surfacing (`mcp.service.js`)**
+- **Direct Enrichment**: Updated `maintenance.query_reliability` and `maintenance.query_execution_history` to project `latestEventPerformedBy`.
+- **Latency Reduction**: This allows the "Who worked on this?" resolution turn to fire immediately upon detecting failures, skipping the redundant "Discovery" turn previously required to find performer IDs.
+
+### 🟢 **Generalized Consent for Anonymization**
+- **Semantic Mapping**: Shifted from fragile string matching to **Semantic Intent Recognition**. The AI now recognizes any generic agreement to "anonymize results" as final security clearance to execute resolution tools silently.
+
+---
+
+## 📑 77. Tasks for Next Agent (Maintenance & Intelligence Focus):
+- **Batch Resolution**: If a large set of `performerIDs` is found, ensure the Orchestrator batches them into a single `crew.lookup_anonymized` call rather than separate turns.
+- **Knowledge Expansion**: Add the **"Critical Spare Parts"** hierarchy to the `phoenix_knowledge_graph.json` to enable deeper inventory/maintenance cross-linking.
+- **Trace Observation**: Use `scripts/examine_latest.ts` to monitor how the **Decision Journal** correctly suppresses redundant "Option 2" questions in Turn 2 of a diagnostic sequence.

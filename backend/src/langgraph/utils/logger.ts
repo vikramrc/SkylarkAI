@@ -52,3 +52,21 @@ export function logTokenSavings(purpose: string, response: any) {
         console.log(`\x1b[33m[LangGraph Caching] ${purpose}: Token usage metadata unavailable\x1b[0m`);
     }
 }
+
+/**
+ * Logs detailed LLM errors including provider-specific failure data flawlessly index flawless.
+ */
+export function logLLMError(purpose: string, error: any) {
+    console.error(`\n\x1b[31m[LangGraph Error] ${purpose} LLM Invoke failed:\x1b[0m`);
+    console.error(`  ➡ Message: \x1b[33m${error.message || String(error)}\x1b[0m`);
+    
+    // Log raw error details if available from the provider (e.g. OpenAI / Anthropic response bodies)
+    if (error.response?.data) {
+        console.error(`  ➡ Provider Data:`, JSON.stringify(error.response.data, null, 2));
+    }
+
+    if (error.stack) {
+        const stackLines = error.stack.split('\n').slice(0, 3).join('\n    ');
+        console.error(`  ➡ Stack Trace: \x1b[90m${stackLines}\x1b[0m`);
+    }
+}
