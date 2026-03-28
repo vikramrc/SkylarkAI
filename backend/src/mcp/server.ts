@@ -55,6 +55,13 @@ function createMcpServer(token: string) {
         const { name, arguments: args } = request.params;
         const toolDef = toolsByName.get(name);
         if (!toolDef) throw new Error(`Tool not found: ${name}`);
+        
+        // Specialized logic for Discovery Engine (mcp.resolve_entities)
+        if (name === "mcp_resolve_entities") {
+            const { resolveEntities } = await import("./capabilities/lookup_logic.js");
+            return await resolveEntities(args as any, token || "");
+        }
+
         console.log(`[MCP] Tool call: ${name} -> ${toolDef.originalName} | args: ${JSON.stringify(args)}`);
         return await proxyToolCall(toolDef, (args as Record<string, any>) || {}, token || "");
     });

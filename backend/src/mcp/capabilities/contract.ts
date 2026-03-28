@@ -64,6 +64,8 @@ export function getParameterDescription(param: string, requiredFields: string[])
       return `${requiredLabel} flag. Set to true to filter for forms tied to mandatory-upon-overdue schedules.`;
     case "fieldNames":
       return `${requiredLabel} parameter: accepts an array or set (e.g., comma-separated) of field names/labels to scan inside populated form answers. Use this to find forms where specific contents have been filled out and selected.`;
+    case "searchTerm":
+      return `${requiredLabel} parameter. The human-readable label or code to resolve (e.g., 'TESTCOSTCENTER1', 'Main Engine', 'John Doe'). MUST be a string.`;
     case "costCenterID":
     case "machineryID":
     case "scheduleID":
@@ -161,6 +163,17 @@ const baseCapabilitiesContract = [
     whenNotToUse: "Do not use to infer auth details or user roles; payload is intentionally minimized.",
     typicalQuestions: ["Is the MCP up?", "Is my auth token working?"],
     responseShape: ["ok", "service", "status"]
+  },
+  {
+    name: "mcp.resolve_entities",
+    method: "POST",
+    path: "/api/mcp/resolve",
+    requiredQuery: ["organizationID", "entityType", "searchTerm"],
+    optionalQuery: ["vesselID"],
+    purpose: "Resolves human-readable names or codes (e.g., 'Main Engine', 'CC-01', 'John Doe') into 24-character hexadecimal Mongo ObjectIds. This is the mandatory 'Discovery' tool to use whenever the user provides a label instead of an ID.",
+    whenToUse: "Use this BEFORE calling any analytical or historical tool if you only have a name/code. mandatory for 'Budget Cost Centers', 'Budget Codes', 'Machinery', 'Parts', 'Crew', and 'Forms'.",
+    typicalQuestions: ["Find the ID for cost center CC-01", "Who is designated as Chief Engineer?", "Resolve 'Main Engine' to its machineryID"],
+    responseShape: ["success", "entityType", "searchTerm", "matches"]
   },
   {
     name: "mcp.capabilities",

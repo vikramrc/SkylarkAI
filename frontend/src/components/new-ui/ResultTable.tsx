@@ -75,7 +75,7 @@ const STATUS_COLORS: Record<string, string> = {
   critical:   'bg-red-200 text-red-800 border-red-300',
 };
 
-function renderCell(key: string, value: any): React.ReactNode {
+function renderCell(key: string, value: any, row?: any): React.ReactNode {
   if (value === null || value === undefined) return <span className="text-gray-300">—</span>;
 
   const kLower = key.toLowerCase();
@@ -93,7 +93,19 @@ function renderCell(key: string, value: any): React.ReactNode {
 
   // Currency
   if ((kLower.includes('price') || kLower.includes('cost') || kLower.includes('budget') || kLower.includes('value') || kLower.includes('amount')) && !isNaN(Number(value))) {
-    return <span className="font-mono text-emerald-700">${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>;
+    // Try to find currency in row
+    const currency = row?.currency || row?.CURRENCY || row?.currencyCode;
+    const currencyStr = currency ? String(currency) : '';
+    
+    // Simple symbol mapping or just use the code
+    const symbolMap: Record<string, string> = { 'USD': '$', 'JPY': '¥', 'EUR': '€', 'GBP': '£' };
+    const prefix = symbolMap[currencyStr.toUpperCase()] || (currencyStr ? `${currencyStr} ` : '');
+
+    return (
+      <span className="font-mono text-emerald-700">
+        {prefix}{Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </span>
+    );
   }
 
   // Boolean
@@ -163,7 +175,7 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
                   </td>
                   {columns.map((col, colIdx) => (
                     <td key={colIdx} className="px-4 py-2.5 whitespace-nowrap align-middle">
-                      {renderCell(col, row[col])}
+                      {renderCell(col, row[col], row)}
                     </td>
                   ))}
                 </tr>

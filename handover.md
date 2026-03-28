@@ -1290,7 +1290,138 @@ We achieved definitive stability in the superintendent's workflow by shifting fr
 
 ---
 
-## 📑 77. Tasks for Next Agent (Maintenance & Intelligence Focus):
-- **Batch Resolution**: If a large set of `performerIDs` is found, ensure the Orchestrator batches them into a single `crew.lookup_anonymized` call rather than separate turns.
-- **Knowledge Expansion**: Add the **"Critical Spare Parts"** hierarchy to the `phoenix_knowledge_graph.json` to enable deeper inventory/maintenance cross-linking.
-- **Trace Observation**: Use `scripts/examine_latest.ts` to monitor how the **Decision Journal** correctly suppresses redundant "Option 2" questions in Turn 2 of a diagnostic sequence.
+## 🛠️ 78. Budget Orchestration & Deterministic Selection Fidelity (March 28, 2026)
+
+We achieved extreme precision in financial reporting and resolved "stale UI" issues by implementing deterministic code-level guards and a budget-specific discovery protocol.
+
+### 🟢 **Deterministic Selection Fidelity Guard (`summarizer.ts`)**
+- **The Problem**: The AI (Orchestrator/Conductor) was correctly fetching data (e.g. Budget Retrieval) but occasionally "forgetting" to select it for the UI tabs using `selectedResultKeys`.
+- **The Fix (Code-Level)**: Implemented a **Deterministic Selection Guard** in `summarizer.ts`. It auto-identifies tools executed in the latest turn. If they are **RETRIEVAL** tools, it auto-promotes them to the UI, making tab visibility 100% deterministic even if the LLM has "brain fog."
+- **Discovery Tool Isolation**: Added logic to explicitly **EXCLUDE** discovery tools (like `query_overview`) from this auto-promotion. This ensures internal "Chain of Thought" turns remain hidden from the user.
+
+### 🟢 **Discovery-First Budget Protocol (`orchestrator.ts`)**
+- **The Fix**: Mandated the **Discovery-First Protocol** for all financial queries. The AI MUST call `budget.query_overview` as Turn 1 to resolve Cost Center and Budget Code IDs before analytical retrieval.
+- **Conductor Refinement**: Updated the Orchestrator rules to strictly distinguish between **RETRIEVAL** (UI Visible) and **DISCOVERY** (Internal Only).
+
+### 🟢 **Summarizer Row Isolation & "Empty Dataset" Hardening**
+- **The Fix**: Implemented **Strict Row Isolation**. The AI is now explicitly **FORBIDDEN** from re-listing item data from previous turns if the current turn is empty. Focuses the report on the *absence* of current data rather than repeating the past.
+
+### 🟢 **Strategic Diagnostic Logging**
+- **Observability**: Added high-signal color-coded logs:
+  - **`🛡️ Selection Fidelity Guard` (Purple)**: Confirms auto-promotion.
+  - **`🌫️ Discovery Isolation` (Grey)**: Confirms internal tool suppression.
+  - **`logLLMError`**: New utility added to capture provider-specific LLM error data across all nodes.
+
+---
+
+## 📑 79. Final Handover Checklist for Next Agent (Budget & UI Strategy):
+- **Verify "Topic Shifts"**: Test the transition from "Maintenance" to "Budget" in a single session. Ensure Maintenance tabs disappear and Budget appears automatically once retrieval fires.
+- **Monitor Discovery Suppression**: Ensure `fleet.query_overview` NEVER appears as a tab in the UI.
+- **Knowledge Graph Expansion**: Consider adding **"Purchase Orders"** and **"Invoicing"** hierarchy to `phoenix_knowledge_graph.json` to further harden financial discovery.
+- **Trace Observation**: Use `scripts/examine_latest.ts` to verify "Row Isolation" on empty results.
+
+## 🛠️ 45. Orchestration Hardening & Prompt Hygiene (March 28, 2026)
+
+We successfully transitioned to a high-fidelity **"Constitution-Based"** architecture, separating agentic rules from logic code to improve observability and maintainability.
+
+### 🟢 **Standalone Rule "Constitutions" (`orchestrator_rules.md` & `summarizer_rules.md`)**
+- **The Fix**: Migrated 500+ lines of monolithic system instructions into standalone Markdown files located in `backend/src/langgraph/prompts/`.
+- **Hydration**: Implemented `prompt_loader.ts` to dynamically stitch these rules with **Maritime Knowledge** and **Tool/Schema Context** at runtime via `%%TOOL_CONTEXT%%` and `%%SCHEMA_CONTEXT%%` placeholders.
+- **Result**: Enables independent auditing and editing of agentic behavior (e.g., Synthesis Mandates, PII Guards) without triggering TypeScript rebuilds.
+
+### 🟢 **Orchestration Fidelity & Confidence Scoring**
+- **Confidence Metric**: Integrated a `confidence: number (0.0 - 1.0)` field into the `orchestratorSchema`. Every tool call now carries a quantitative certainty score.
+- **Guaranteed ID Grounding**: Reinforced the **Discovery-First** rule. The AI is forbidden from "guessing" IDs; it MUST perform a discovery turn (e.g., `fleet.query_overview` or `mcp.resolve_entities`) to ground its reasoning in actual database identifiers.
+
+### 🟢 **Summarizer Synthesis & Join Mandate**
+- **Markdown Table Synthesis**: Mandated the use of `[TABLE]` tags for correlating data across tools (e.g., Budget matched to Maintenance).
+- **Row Isolation Hardening**: Fixed a "ghosting" bug where the Summarizer reported counts from previous turns. It now strictly isolates analysis to the **current turn results** only.
+
+### 🟢 **Discovery Engine Resolution (`mcp.resolve_entities`)**
+- **Observation**: Added granular logging to `lookup_logic.ts` to track field-level matching (Vessel Names, Machinery IDs).
+- **Safety**: Implemented null guards and proxy safety checks to prevent crashes when entity resolution returns ambiguous or partial matches.
+
+---
+
+## 🛠️ 46. Prompt Constitution Gap-Patch (March 28, 2026)
+
+After the initial prompt refactoring (§45), a thorough side-by-side comparison between the old inline prompts (recovered from `git show HEAD`) and the new Markdown constitutions identified **22 gaps** across both files. All gaps were patched in this session.
+
+### 🟢 **Orchestrator Constitution Gaps Patched (`orchestrator_rules.md`) — 12 Gaps**
+
+| # | Severity | Gap |
+|---|---|---|
+| 1 | 🔴 Critical | Failback Management — `direct_query_fallback` directive completely absent |
+| 2 | 🔴 Critical | Diversity Allocation — all 5 domain-specific split examples stripped |
+| 3 | 🔴 Critical | Discovery vs. Sampling Guide — entire "once IDs are in memory, proceed" section missing |
+| 4 | 🔴 Critical | Eager ID Extraction — rule to immediately use IDs found in tool results |
+| 5 | 🔴 Critical | Result Promotion Priority — "user says No / just show results → SUMMARIZE immediately" |
+| 6 | 🔴 Critical | Concrete Reasoning Examples (BAD/GOOD) — the anchoring scenarios used to fix loops |
+| 7 | 🔴 Critical | Jailbreak / Query Containment — anti-injection rules missing entirely |
+| 8 | 🟠 Significant | Selective Summary Warning — empty `selectedResultKeys` on SUMMARIZE = blank report |
+| 9 | 🟠 Significant | Fleet Discovery Mandate — explicit `fleet.query_overview` required for org-wide queries |
+| 10 | 🟠 Significant | Role Boundary — "strictly a Maritime Orchestrator, not a general AI" |
+| 11 | 🟡 Minor | Organization identifier variants — `organizationShortName` and `organizationName` removed |
+| 12 | 🟡 Minor | "DENY MCP questions" — softened from active deny to passive non-disclosure |
+
+**Files changed:** `backend/src/langgraph/prompts/orchestrator_rules.md`
+- Added §II.3 Fleet Discovery Mandate
+- Added §II.4 Discovery vs. Sampling Guide (with Eager ID Extraction)
+- Expanded §III.1 with 5 domain-specific split examples
+- Added §III.4 Failback Management (`direct_query_fallback`)
+- Updated §III.2 to recognize all 3 org identifier variants
+- Added §IV.1 ⚠️ Empty Selection Warning
+- Added §IV.7 Result Promotion Priority
+- Added §V.2 Role Boundary
+- Strengthened §V.4 System Secrets (active DENY + no "MCP" in user-facing responses)
+- Added §V.5 Query Containment (Anti-Jailbreak)
+- Added §VII Reasoning Examples (BAD/GOOD/GOOD anchors)
+
+### 🟢 **Summarizer Constitution Gaps Patched (`summarizer_rules.md`) — 10 Gaps**
+
+| # | Severity | Gap |
+|---|---|---|
+| 1 | 🔴 Critical | Empty Dataset Row Isolation — strict ban on re-listing previous turn data to prevent ghosting |
+| 2 | 🔴 Critical | Redundancy Guard for `[TABLE]` — forbidding `[TABLE]` use for single-dataset regurgitation |
+| 3 | 🟠 Significant | Anonymized Crew Formatting — dropped the exact `Masked Identity \| Rank \| Department` format instruction |
+| 4 | 🟠 Significant | Anonymized Crew Matching — dropped instruction to match maintenance IDs with crew tool results |
+| 5 | 🟠 Significant | Maritime Knowledge Failback — explaining that the Asset exists even if the Activity is empty |
+| 6 | 🟡 Minor | Prime Directive "No Hallucination" anchor — "stick tightly to the provided dataset" |
+| 7 | 🟡 Minor | The "Numbers" rule — specifying numbers are for counts/aggregations, not list indices |
+| 8 | 🟡 Minor | Empty Dataset Tone — explicit instruction to maintain a professional, proactive tone |
+| 9 | 🟡 Minor | Empty Dataset Guidance — example on how to offer expanding search scope to the user |
+| 10| 🟡 Minor | Empty Dataset Acknowledgement — explicit example of contextual filter failure reporting |
+
+**Files changed:** `backend/src/langgraph/prompts/summarizer_rules.md`
+- Added exact table redundancy guard to §II.1 (Join Rule vs. Regurgitation)
+- Restored strict ghosting protection in §V.3 (Strict Memory Isolation)
+- Rewrote §I to include "No hallucination" and "Numbers" rules
+- Expanded §III with the `Masked Identity \| Rank \| Department` mapping format
+- Re-injected Maritime Knowledge Failback into §V.2
+- Restored prompt tone and proactive suggestion anchors in §V.4
+
+---
+
+## 📑 80. Final Handover Checklist for Next Agent:
+- **Monitor Confidence Scores**: Watch for `(conf: < 0.8)` in logs. This indicates the AI is struggling to map entities and may require a `clarifyingQuestion`.
+- **Summarizer synthesis pass**: Test "Budget & Maintenance" dual queries to verify the synthesized `[TABLE]` renders accurately.
+- **Prompt Hygiene Maintenance**: ⚠️ **CRITICAL**: Any changes to Agent behavior must now be made in the `.md` rule files in `backend/src/langgraph/prompts/`. Do NOT re-add strings to the node `.ts` files.
+- **Build Integrity**: Ensure `npm run build` passes after any rule hydration changes.
+- **Gap-Patch Awareness**: The 12 orchestrator rules patched in §46 address the hardest-won loop prevention behaviors. Any future "simplification" of `orchestrator_rules.md` should be treated with extreme caution.
+
+### 🟢 **Final Orchestrator Rule Cleanups (TypeScript Boundary Patch)**
+Two last pieces of instructional logic were stripped from `orchestrator.ts` and successfully integrated into `orchestrator_rules.md` to preserve strict code/rule boundaries:
+- **Sequential Termination**: The explicit iterative wrap-up rule ("*If no further tools can help fill gaps, set SUMMARIZE*") was moved to §IV.8. The hardcoded prompt string in the node was reduced to a pure `SYSTEM FLAG`.
+- **Local Tool Guidance**: The behavioral guidance for the local `direct_query_fallback` tool ("*Limit 25 instruction*") was stripped from the TypeScript concatenator and placed under §III.4 (Failback Management). The codebase now only injects pure parameter schemas.
+
+### 🟢 **Discovery Fidelity Patch (Alphanumeric Code Hardening)**
+Resolved the regression seen in Budget queries where the LLM incorrectly passed "Codes" (e.g., `TESTCOSTCENTER1`) as database IDs.
+- **Section II.1 (Format Check)**: Added a strict 24-character hexadecimal format mandate for all ID fields.
+- **Section II.1 (Codes are Labels)**: Explicitly defined that alphanumeric strings like `CC-01` or `TESTCOSTCENTER1` are NOT IDs and must be resolved first.
+- **Section VII (Reasoning Anchors)**: Added a concrete Budget-specific "GOOD" reasoning example to anchor the AI's behavior when encountering cost center labels.
+
+### 🟢 **Structural Entity Resolution Fix (ID Collision Remediation)**
+Resolved the core architectural issue where the Orchestrator confused Budget IDs with Cost Center IDs during turn-over.
+- **Code Fix (lookup_logic.ts)**: Implemented first-class support for `entityType: "cost_center"` in the discovery engine. Refined `budget` mapping to ensure it returns its own primary `_id` during resolution.
+- **Generic Memory Guard (summarizer_rules.md)**: Added §VII mandating explicit ID labeling (e.g., `budgetID=...`) and strict isolation between human-readable labels and non-canonical database IDs.
+- **Prompt Hygiene**: Stripped all specific database examples (like `TESTCOSTCENTER1`) from the reasoning anchors, moving the logic to generic architectural patterns.

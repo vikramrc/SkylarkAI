@@ -8,44 +8,70 @@ const uri = process.env.SKYLARK_MONGODB_URI || 'mongodb://localhost:27017/Skylar
 const dbName = uri.split('/').pop()?.split('?')[0] || 'SkylarkDB';
 
 async function main() {
-  const client = new MongoClient(uri);
-  try {
-    await client.connect();
-    const db = client.db(dbName);
-    
-    // Find latest thread_id from checkpoints
-    const latestCheckpoint = await db.collection('checkpoints').findOne({}, { sort: { _id: -1 } });
-    if (!latestCheckpoint) {
-      console.log('No checkpoints found.');
-      return;
-    }
-    const threadId = latestCheckpoint.thread_id;
-    console.log(`Latest Thread ID: ${threadId}`);
-    
-    const { skylarkGraph } = await import('../src/langgraph/graph.js');
-    console.log(`🔍 Fetching state for threadId: ${threadId}`);
-    
-    const state = await skylarkGraph.getState({ configurable: { thread_id: threadId } });
-    const cv = state.values;
-    
-    if (cv) {
-        console.log(`--- STATE VALUES ---`);
-        console.log(`Iteration: ${cv.iterationCount}`);
-        console.log(`Working Memory: ${JSON.stringify(cv.workingMemory, null, 2)}`);
-        console.log(`\n--- MESSAGES ---`);
-        cv.messages.forEach((m: any, idx: number) => {
-            const role = m._getType?.() || m.role || 'unknown';
-            console.log(`[${idx}] [${role}]: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`);
-        });
-    } else {
-        console.log("⚠️ No state found for this thread.");
-    }
+    const client = new MongoClient(uri);
+    try {
+        await client.connect();
+        const db = client.db(dbName);
 
-  } catch (err) {
-    console.error(err);
-  } finally {
-    await client.close();
-  }
+        // 1. Find the absolute latest checkpoint to get the active threadId
+        const latestRaw = await db.collection('checkpoints').findOne({}, { sort: { _id: -1 } });
+        if (!latestRaw) {
+            console.log('❌ No checkpoints found in the database.');
+            return;
+        }
+
+        const threadId = latestRaw.thread_id;
+        console.log(`✅ Analyzing Thread ID: \x1b[36m${threadId}\x1b[0m`);
+
+        // 2. Fetch all checkpoints for this thread to reconstruct history
+        const checkpoints = await db.collection('checkpoints')
+            .find({ thread_id: threadId })
+            .sort({ _id: 1 }) // Chronological order
+            .toArray();
+
+        console.log(`📊 Found ${checkpoints.length} state transitions in this thread.\n`);
+
+        for (let i = 0; i < checkpoints.length; i++) {
+            const cp = checkpoints[i];
+            const cv = cp.channel_values || {};
+            
+            // Extract and summarize turns
+            if (cv.messages && cv.messages.length > 0) {
+                const latestMsg = cv.messages[cv.messages.length - 1];
+                let role = 'unknown';
+                let content = '';
+
+                if (latestMsg.lc === 1) {
+                    role = latestMsg.id[latestMsg.id.length - 1];
+                    content = latestMsg.kwargs?.content || '';
+                    if (latestMsg.kwargs?.tool_calls) {
+                      content += `\n   [TOOL CALLS]: ${JSON.stringify(latestMsg.kwargs.tool_calls)}`;
+                    }
+                } else {
+                    role = latestMsg.role || 'unknown';
+                    content = typeof latestMsg.content === 'string' ? latestMsg.content : JSON.stringify(latestMsg.content);
+                }
+
+                console.log(`--- [TURN ${i + 1}] Role: ${role} ---`);
+                console.log(`${content.substring(0, 500)}${content.length > 500 ? '...' : ''}`);
+                
+                if (cv.workingMemory?.reasoning) {
+                  console.log(`🧠 Reasoning: ${cv.workingMemory.reasoning}`);
+                }
+                
+                if (cv.toolResults) {
+                  const toolCount = Object.keys(cv.toolResults).length;
+                  console.log(`🛠️ Results: ${toolCount} tool(s) returned data.`);
+                }
+                console.log('');
+            }
+        }
+
+    } catch (err) {
+        console.error("🚨 Diagnostic Error:", err);
+    } finally {
+        await client.close();
+    }
 }
 
 main();

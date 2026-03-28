@@ -47,7 +47,7 @@ async function main() {
                 console.log(`[CONTENT]: ${typeof content === 'string' ? content.substring(0, 300) : 'Non-string content'}...`);
                 const tcalls = lastMsg.kwargs?.tool_calls || lastMsg.tool_calls;
                 if (tcalls) {
-                    console.log(`📡 TOOL CALLS (${tcalls.length}):`, JSON.stringify(tcalls.map(tc => tc.name || tc.function?.name), null, 2));
+                    console.log(`📡 TOOL CALLS (${tcalls.length}):`, JSON.stringify(tcalls.map((tc: any) => tc.name || tc.function?.name), null, 2));
                     // console.log(`ARGS SAMPLE:`, JSON.stringify(tcalls[0].args || tcalls[0].function?.arguments, null, 2));
                 }
             }

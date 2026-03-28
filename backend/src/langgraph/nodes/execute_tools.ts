@@ -12,8 +12,44 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
 
     let nodeError: string | undefined = undefined;
 
+    // ─── Dependency Gate ─────────────────────────────────────────────────────
+    // If mcp.resolve_entities is in the batch, any other tool whose args contain
+    // a placeholder value (e.g. "<resolved_id>", "<id>", "<pending>") is a
+    // dependent call that CANNOT run yet. Strip them and let the next iteration
+    // handle them once the resolved ID is in memory.
+    const PLACEHOLDER_PATTERN = /^<[^>]+>$/;
+
+    const hasDiscovery = calls.some(
+        (c: any) => (c.name || c) === "mcp.resolve_entities"
+    );
+
+    const activeCalls = hasDiscovery
+        ? calls.filter((toolCall: any) => {
+              const name = typeof toolCall === "string" ? toolCall : toolCall.name;
+              if (name === "mcp.resolve_entities") return true; // always keep discovery
+
+              // Check if any arg value looks like a placeholder
+              const args: any[] = Array.isArray(toolCall.args)
+                  ? toolCall.args
+                  : Object.entries(toolCall.args || {}).map(([key, value]) => ({ key, value }));
+
+              const hasPlaceholder = args.some(
+                  (a: any) => typeof a.value === "string" && PLACEHOLDER_PATTERN.test(a.value.trim())
+              );
+
+              if (hasPlaceholder) {
+                  console.warn(
+                      `[LangGraph DependencyGate] ⚠️ Stripping "${name}" from current turn — placeholder arg detected. Will execute next turn after resolution.`
+                  );
+              }
+              return !hasPlaceholder;
+          })
+        : calls;
+    // ─────────────────────────────────────────────────────────────────────────
+
     const executedResults = await Promise.all(
-        calls.map(async (toolCall: any, index: number) => {
+        activeCalls.map(async (toolCall: any, index: number) => {
+
             const name = typeof toolCall === "string" ? toolCall : toolCall.name;
             const args = toolCall.args || {};
 

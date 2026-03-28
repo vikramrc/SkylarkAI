@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { serviceBackedPhoenixRuntimeEngine } from '../phoenixai/index.js';
 import { capabilitiesContract, buildCapabilityDescription, getParameterDescription } from '../mcp/capabilities/contract.js';
 import { proxyToolCall } from '../mcp/proxy.js';
+import { resolveEntities } from '../mcp/capabilities/lookup_logic.js';
 import { ambiguityStore, setAmbiguity } from './ambiguity-store.js';
 
 export const directQueryFallback = createTool({
@@ -190,6 +191,12 @@ const mcpTools = capabilitiesContract.reduce((acc, cap) => {
             }
 
             console.log(`[Agent Tool] Calling ${toolId} with inputs:`, JSON.stringify(updatedInput, null, 2));
+
+            // 🟢 Generic Architectural Fix: Route to local Resolve Engine if this is mcp.resolve_entities flawlessly!
+            if (cap.name === 'mcp.resolve_entities') {
+                const result = await resolveEntities(updatedInput as any, token);
+                return result;
+            }
 
             const result = await proxyToolCall(
                 {
