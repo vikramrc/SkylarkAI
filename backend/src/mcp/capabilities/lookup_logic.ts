@@ -1,6 +1,6 @@
 import { capabilitiesContract } from "./contract.js";
 import { proxyToolCall } from "../proxy.js";
-import { MongoClient, ObjectId } from "mongodb";
+import { MongoClient } from "mongodb";
 
 export async function resolveEntities(args: { 
   entityType: string; 

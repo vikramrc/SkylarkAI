@@ -105,7 +105,10 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // ─────────────────────────────────────────────────────────────────
     // PHASE 1b: Tier 2 reset logic
     // ─────────────────────────────────────────────────────────────────
-    const isNewQuery = (state.iterationCount === 0) && !state.isHITLContinuation;
+    // A "new query" is one that starts a fresh thread from turn index 0 (not a HITL continuation). 
+    // We use startTurnIndex (set by the route before the run begins) rather than iterationCount,
+    // because iterationCount is already 1+ by the time this node runs (Orchestrator incremented it).
+    const isNewQuery = (state.startTurnIndex === 0) && !state.isHITLContinuation;
 
     // Find latest human message for rawQuery
     const allMessages = state.messages || [];

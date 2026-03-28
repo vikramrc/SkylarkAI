@@ -81,7 +81,7 @@ You MUST consult the `PREVIOUS TOOL RESULTS` and `SESSION DECISION JOURNAL` befo
 
 1.  **Selection Fidelity & Ghosting Protection**:
     *   **MANDATORY**: `selectedResultKeys` MUST only contain results relevant to the CURRENT user request. Exclude unrelated keys from previous turns.
-    *   **RETRIEVAL tools**: You MUST explicitly add their expected key (e.g. `target_tool_iterX_0`) to `selectedResultKeys` for them to appear as a UI tab.
+    *   **RETRIEVAL tools**: If you set `feedBackVerdict` to `SUMMARIZE`, any retrieval tools you call in the CURRENT turn will be automatically promoted to the UI by the system. However, you MUST explicitly add any **previous** turn results you wish to retain to `selectedResultKeys`.
     *   **DISCOVERY tools**: You SHOULD NOT add these to `selectedResultKeys` unless the user specifically asked for a lookup.
     *   **⚠️ Empty Selection Warning**: The Summarizer will ONLY see the tools you select. If you set `feedBackVerdict` to `SUMMARIZE` but leave `selectedResultKeys` empty, the final report will be blank.
 2.  **Vessel+Filter Completeness**: A (Vessel + Filter) combination is COMPLETE if it appears in the results list. **DO NOT** re-query the same vessel with the same filters unless the user explicitly asks for a refresh.

@@ -305,26 +305,47 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     }
 
 
-    console.log(`[LangGraph Orchestrator] Verdict: ${response.feedBackVerdict} | Tools Requested: ${JSON.stringify(response.tools.map((t: any) => `${t.name} (conf: ${t.confidence})`))} | Selection: ${JSON.stringify(response.selectedResultKeys)}`);
-
+    const nextIterationCount = (state.iterationCount || 0) + 1;
     const updates: Partial<SkylarkState> = {
         toolCalls: response.tools,
         feedBackVerdict: response.feedBackVerdict,
-        reasoning: response.reasoning, // 🟢 Save technical reasoning for diagnostics flawlessly!
-        iterationCount: (state.iterationCount || 0) + 1,
-        hitl_required: undefined, // 🟢 Clear previous checkpoints flags breakouts!
-        error: undefined, // 🟢 Clear previous turn errors carry over flawless flawlessly index flaws!
-        selectedResultKeys: response.selectedResultKeys || [] // 🟢 Save Conductor's tool choices flawlessly!
+        reasoning: response.reasoning,
+        iterationCount: nextIterationCount,
+        hitl_required: undefined,
+        error: undefined,
+        selectedResultKeys: response.selectedResultKeys || []
     };
+
+
+    // 🟢 SMART PROMOTION BRIDGE: If we are summarizing WITH actual retrieval tools (no HITL interrupt),
+    // automatically promote all current-turn tools to selectedResultKeys.
+    // Guard: skip if clarifyingQuestion is set — that path zeroes out toolCalls and goes to HITL.
+    if (response.feedBackVerdict === 'SUMMARIZE' && response.tools.length > 0 && !response.clarifyingQuestion) {
+        console.log(`[LangGraph Orchestrator] 🚀 Smart Promotion Active: Verifying UI visibility for ${response.tools.length} current tools...`);
+        response.tools.forEach((t: any, idx: number) => {
+            // Skip discovery/infrastructure tools in the UI unless explicitly named
+            if (t.name === 'mcp.resolve_entities') return;
+            
+            // Generate the prospective keys that execute_tools will use
+            const baseKey = `${t.name}_iter${nextIterationCount}`;
+            const indexedKey = `${baseKey}_${idx}`;
+            
+            if (!updates.selectedResultKeys!.includes(baseKey)) updates.selectedResultKeys!.push(baseKey);
+            if (!updates.selectedResultKeys!.includes(indexedKey)) updates.selectedResultKeys!.push(indexedKey);
+        });
+        console.log(`[LangGraph Orchestrator] 🎯 Promoted Keys:`, JSON.stringify(updates.selectedResultKeys));
+    }
 
     // If there is a clarifying question, append it to messages so the Summarizer can look at it
     if (response.clarifyingQuestion) {
         updates.messages = [new AIMessage(response.clarifyingQuestion)];
         updates.feedBackVerdict = 'SUMMARIZE';
         updates.hitl_required = true;
-        updates.isHITLContinuation = true; // Preserve Tier 2 when user answers this question
+        updates.isHITLContinuation = true;
         updates.toolCalls = [];
     }
+
+    console.log(`[LangGraph Orchestrator] Verdict: ${updates.feedBackVerdict} | Tools Requested: ${JSON.stringify(response.tools.map((t: any) => `${t.name} (conf: ${t.confidence})`))} | Selection: ${JSON.stringify(updates.selectedResultKeys)}`);
 
     return updates;
 }
