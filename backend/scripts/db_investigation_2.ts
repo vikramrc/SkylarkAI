@@ -20,7 +20,7 @@ async function run() {
     
     console.log("Matches for 'TESTCOSTCENTER':", JSON.stringify(matches, null, 2));
 
-    if (matches.length > 0) {
+    if (matches.length > 0 && matches[0]) {
       const realCcId = matches[0]._id;
       const txCount = await db.collection("BudgetTransaction").countDocuments({ costCenterID: realCcId });
       console.log("\nTransactions for first match (" + matches[0].name + " / " + realCcId + "):", txCount);

@@ -33,7 +33,7 @@ async function main() {
 
         for (let i = 0; i < checkpoints.length; i++) {
             const cp = checkpoints[i];
-            const cv = cp.channel_values || {};
+            const cv = (cp as any)?.channel_values || {};
             
             // Extract and summarize turns
             if (cv.messages && cv.messages.length > 0) {
