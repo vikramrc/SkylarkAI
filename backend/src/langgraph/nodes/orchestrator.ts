@@ -58,15 +58,20 @@ async function getCapabilitiesCached(backendUrl: string, params: any): Promise<a
 export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<SkylarkState>> {
     console.log(`[LangGraph] ▶ Orchestrator Node invoked (Iteration: ${state.iterationCount || 0})`);
     
+    // Use OpenAI's native Structured Outputs API (jsonSchema method).
+    // This is the correct binding for models that output JSON as text content rather than tool calls.
+    // It guarantees schema-conformant output deterministically, unlike the default function-calling binding.
     const model = new ChatOpenAI({
         modelName: process.env.MASTRA_ORCHESTRATOR_QUERY_MODEL || "gpt-5-mini",
-    }).withStructuredOutput(orchestratorSchema, { includeRaw: true } as any);
+    }).withStructuredOutput(orchestratorSchema, { name: "orchestrator_plan", method: "jsonSchema", includeRaw: true } as any);
 
-    const memoryBuffer = state.workingMemory?.summaryBuffer || "";
+
+
+
+    // Compute currentTurns (used in both resultsContext and decisionJournal building)
     const history = Array.isArray(state.toolResults) ? state.toolResults : (state.toolResults ? [state.toolResults] : []);
     const currentTurns = history.slice(state.startTurnIndex || 0);
 
-    // 🟢 CONDUCTOR CONTEXT: Show the LLM a history of ALL tools fetched in this request so it can 'Point' to them.
     let resultsContext = "";
     const toolLines: string[] = [];
     
@@ -110,7 +115,9 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     });
 
     if (toolLines.length > 0) {
-        resultsContext = `\n\n### PREVIOUS TOOL RESULTS IN THIS REQUEST:\n${toolLines.join('\n')}\n\n(Consult the 'DEDUPLICATION & CONDUCTOR RULES' in your system instructions for how to handle these results.)`;
+        // 🟢 Inject exact key list to prevent LLM from guessing key names with wrong suffixes (e.g., _0)
+        const allAvailableKeys = currentTurns.flatMap((turn: any) => Object.keys(turn || {}));
+        resultsContext = `\n\n### PREVIOUS TOOL RESULTS IN THIS REQUEST:\n${toolLines.join('\n')}\n\n⚠️ EXACT KEY REFERENCE (Copy verbatim into selectedResultKeys — do NOT add or remove suffixes):\n${allAvailableKeys.map(k => `  "${k}"`).join('\n')}\n\n(Consult the 'DEDUPLICATION & CONDUCTOR RULES' in your system instructions for how to handle these results.)`;
     }
 
     // 🟢 SESSION DECISION JOURNAL: Parse messages and tool results to create a causal log of THIS query cycle only.
@@ -165,9 +172,32 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         ? `\n\n### 📓 SESSION DECISION JOURNAL (Current Query Only):\n${journalEntries.join('\n---\n')}\n\n**MANDATE**: You MUST consult this Journal. If a question was answered or a Tool+Parameter combination was already executed, you are FORBIDDEN from repeating it.`
         : "";
 
-    const memoryContext = memoryBuffer || resultsContext || decisionJournal
-        ? `\n[Context from Previous Moves]: ${memoryBuffer}${resultsContext}${decisionJournal}` 
+    // ─── TWO-TIER MEMORY CONTEXT ASSEMBLY (after all components are declared) ─────
+    const session = state.workingMemory?.sessionContext;
+    const query = state.workingMemory?.queryContext;
+
+    const ledgerLines: string[] = [];
+    const resolvedEntities = session?.resolvedEntities || {};
+    for (const [key, entry] of Object.entries(resolvedEntities)) {
+        ledgerLines.push(`  - ${key} → ID = "${entry.id}" (${entry.label})`);
+    }
+    const scopeLine = session?.scope
+        ? `Org: ${session.scope.organizationShortName || session.scope.organizationName || session.scope.organizationID || "(unknown)"}`
+            + (session.scope.organizationID ? ` (ID: ${session.scope.organizationID})` : "")
         : "";
+
+    const memoryContext = [
+        `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
+        scopeLine,
+        ledgerLines.length > 0
+            ? `Resolved Entities:\n${ledgerLines.join('\n')}\n⚠️ MANDATE: If an entity is listed above, use its ID directly. DO NOT call mcp.resolve_entities for already-resolved entities.`
+            : `Resolved Entities: None yet.`,
+        query?.rawQuery
+            ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query.rawQuery}"\nPending: ${JSON.stringify(query.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query.activeFilters || {})}\nLast Turn: "${query.lastTurnInsight || ""}"` 
+            : "",
+        resultsContext,
+        decisionJournal,
+    ].filter(Boolean).join('\n');
 
 
     const systemInstruction = loadOrchestratorPrompt();
@@ -217,10 +247,10 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         { role: "system", content: formattedInstruction } as any, 
     ];
 
-    if (memoryContext || sequentialInstruction || decisionJournal) {
+    if (memoryContext || sequentialInstruction) {
         promptMessages.push({ 
             role: "system", 
-            content: `\n### OBSERVATIONAL MEMORY CONTEXT\n${memoryContext}${sequentialInstruction}${decisionJournal}` 
+            content: `\n### OBSERVATIONAL MEMORY CONTEXT\n[Context from Previous Moves]: ${memoryContext}${sequentialInstruction}` 
         } as any);
     }
 
@@ -263,11 +293,17 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     }
 
     console.log(`[LangGraph Orchestrator Output]`, JSON.stringify(response, null, 2));
-    
+
     if (!response) {
-        console.error(`[LangGraph Orchestrator] 🚨 LLM returned null or invalid structured data. Check prompt and token limits.`);
-        return { error: `Orchestrator failed to generate a valid plan. This often happens on very long conversations or when token limits are reached. Please try clearing the chat or asking a simpler question.` };
+        console.error(`[LangGraph Orchestrator] 🚨 LLM returned null — the model did not produce a valid structured response.`);
+        if (result?.raw) {
+            console.error(`[LangGraph Orchestrator] 📄 Raw LLM Response:`, JSON.stringify(result.raw, null, 2));
+            const refusal = result.raw.response_metadata?.refusal || (result.raw as any).refusal;
+            if (refusal) console.error(`[LangGraph Orchestrator] 🛑 LLM Refusal: ${refusal}`);
+        }
+        return { error: `Orchestrator failed to generate a valid plan. The model did not return a conformant response. Please try again.` };
     }
+
 
     console.log(`[LangGraph Orchestrator] Verdict: ${response.feedBackVerdict} | Tools Requested: ${JSON.stringify(response.tools.map((t: any) => `${t.name} (conf: ${t.confidence})`))} | Selection: ${JSON.stringify(response.selectedResultKeys)}`);
 
@@ -284,10 +320,10 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     // If there is a clarifying question, append it to messages so the Summarizer can look at it
     if (response.clarifyingQuestion) {
         updates.messages = [new AIMessage(response.clarifyingQuestion)];
-        // Force verdict to SUMMARIZE if we are asking a question to break execution loop
         updates.feedBackVerdict = 'SUMMARIZE';
-        updates.hitl_required = true; // 🟢 MARK HITL REQUIRED execution pauses breakouts flawless!
-        updates.toolCalls = []; // empty tools so conditional edge jumps to summarizer
+        updates.hitl_required = true;
+        updates.isHITLContinuation = true; // Preserve Tier 2 when user answers this question
+        updates.toolCalls = [];
     }
 
     return updates;

@@ -1,5 +1,6 @@
 import { capabilitiesContract } from "./contract.js";
 import { proxyToolCall } from "../proxy.js";
+import { MongoClient, ObjectId } from "mongodb";
 
 export async function resolveEntities(args: { 
   entityType: string; 
@@ -25,7 +26,7 @@ export async function resolveEntities(args: {
     cost_center: { 
       toolName: "budget_query_overview", 
       searchFields: ["costCenter.code", "costCenter.name"], 
-      idField: "costCenter._id", // budget.query_overview nests cost center as costCenter.{_id, code, name}
+      idField: "costCenterID",
       labelField: "costCenter.name" 
     },
 
@@ -96,8 +97,71 @@ export async function resolveEntities(args: {
     };
   }
 
-  // 2. Proxy the call to get the data
-  // We remove the specific ID from args to get the broad list
+  // ── DIRECT DB RESOLUTION for entities that have their own collections ────────
+  // cost_center and budget_code have dedicated collections (CostCenter, BudgetCode).
+  // Going through budget_query_overview is wrong — Budget docs reference costCenterID
+  // via FK; they don't embed cost center data reliably.
+  if (entityType === 'cost_center' || entityType === 'budget_code') {
+    const mongoUri = process.env.PHOENIX_MONGO_URI || process.env.SKYLARK_MONGODB_URI || 'mongodb://localhost:27017/ProductsDB';
+    const dbName = mongoUri.split('/').pop()?.split('?')[0] || 'ProductsDB';
+    const client = new MongoClient(mongoUri);
+    try {
+      await client.connect();
+      const db = client.db(dbName);
+      const collectionName = entityType === 'cost_center' ? 'CostCenter' : 'BudgetCode';
+      const codeField = 'code';
+      const nameField = 'name';
+
+      // Build org filter if we have one
+      const orgFilter: Record<string, any> = {};
+      if (organizationID) orgFilter.organizationID = organizationID;
+      else if (organizationShortName || organizationName) {
+        // Resolve org by shortName/name first
+        const org = await db.collection('Organization').findOne(
+          organizationShortName
+            ? { shortName: new RegExp(organizationShortName, 'i') }
+            : { name: new RegExp(organizationName!, 'i') },
+          { projection: { _id: 1 } }
+        );
+        if (org) orgFilter.organizationID = org._id;
+      }
+
+      const regex = new RegExp(searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      const docs = await db.collection(collectionName).find({
+        ...orgFilter,
+        $or: [
+          { [codeField]: regex },
+          { [nameField]: regex },
+        ],
+      }).limit(5).toArray();
+
+      if (docs.length === 0) {
+        console.warn(`[Discovery Engine] ⚠️ No ${collectionName} matches found for "${searchTerm}"`);
+        return { content: [{ type: 'text', text: `No matches found for "${searchTerm}". Please try a different term.` }] };
+      }
+
+      const matches = docs.map(doc => ({
+        id: String(doc._id),
+        label: doc[nameField] || doc[codeField] || 'Unnamed',
+        type: entityType,
+        matchField: codeField,
+      }));
+
+      console.log(`[Discovery Engine] ✅ Direct DB: Found ${matches.length} ${collectionName} match(es) for "${searchTerm}"`);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          capability: 'mcp.resolve_entities',
+          appliedFilters: { entityType, searchTerm },
+          items: matches,
+        }) }],
+      };
+    } finally {
+      await client.close();
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // 2. Proxy the call to get the data for all other entity types
   const proxyArgs = { organizationID, organizationShortName, organizationName, vesselID, vesselName, limit: "100" };
   const proxyResult = await proxyToolCall(
     {
@@ -157,10 +221,9 @@ export async function resolveEntities(args: {
     console.log(`[Discovery Engine] ✅ Found ${matches.length} matches for "${searchTerm}"`);
     return {
       content: [{ type: "text", text: JSON.stringify({
-        success: true,
-        entityType,
-        searchTerm,
-        matches: matches.slice(0, 5) // Limit to top 5 hits
+        capability: "mcp.resolve_entities",
+        appliedFilters: { entityType, searchTerm },
+        items: matches.slice(0, 5) // Standard MCP envelope — 'items' not 'matches'
       }) }]
     };
 

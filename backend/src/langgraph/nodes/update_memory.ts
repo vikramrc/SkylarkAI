@@ -66,7 +66,7 @@ Your output will form the entire rolling Observational Memory buffer for subsequ
 
     const promptMessages = [
         { role: "system", content: systemPrompt } as any,
-        { role: "user", content: `[Previous Memory]:\n${state.workingMemory?.summaryBuffer || "None"}\n\n[Latest Tool Results]:\n${resultsStr}` }
+        { role: "user", content: `[Previous Memory]:\n${state.workingMemory?.queryContext?.lastTurnInsight || "None"}\n\n[Latest Tool Results]:\n${resultsStr}` }
     ];
 
     console.log(`\x1b[33m${ts()} [LangGraph UpdateMemory] --- PROMPT SENT TO LLM ---\x1b[0m`);
@@ -81,11 +81,14 @@ Your output will form the entire rolling Observational Memory buffer for subsequ
 
         console.log(`[LangGraph UpdateMemory Output]`, response.content);
 
-        const updatedBuffer = response.content ? String(response.content) : state.workingMemory?.summaryBuffer;
+        const updatedBuffer = response.content ? String(response.content) : state.workingMemory?.queryContext?.lastTurnInsight;
         
         const updatedMemory = {
-            ...(state.workingMemory || { activeTopics: [], extractedEntities: {} }),
-            summaryBuffer: updatedBuffer
+            ...(state.workingMemory || { sessionContext: { scope: {}, resolvedEntities: {} }, queryContext: { rawQuery: "", pendingIntents: [], activeFilters: {}, lastTurnInsight: "" } }),
+            queryContext: {
+                ...(state.workingMemory?.queryContext || {}),
+                lastTurnInsight: updatedBuffer || "",
+            }
         };
 
         return { workingMemory: updatedMemory };

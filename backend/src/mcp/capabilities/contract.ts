@@ -173,7 +173,7 @@ const baseCapabilitiesContract = [
     purpose: "Resolves human-readable names or codes (e.g., 'Main Engine', 'CC-01', 'John Doe') into 24-character hexadecimal Mongo ObjectIds. This is the mandatory 'Discovery' tool to use whenever the user provides a label instead of an ID.",
     whenToUse: "Use this BEFORE calling any analytical or historical tool if you only have a name/code. mandatory for 'Budget Cost Centers', 'Budget Codes', 'Machinery', 'Parts', 'Crew', and 'Forms'.",
     typicalQuestions: ["Find the ID for cost center CC-01", "Who is designated as Chief Engineer?", "Resolve 'Main Engine' to its machineryID"],
-    responseShape: ["success", "entityType", "searchTerm", "matches"]
+    responseShape: ["capability", "appliedFilters", "items"]
   },
   {
     name: "mcp.capabilities",

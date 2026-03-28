@@ -4,7 +4,7 @@ import { MongoClient } from "mongodb";
 import type { SkylarkState } from "./state.js";
 import { nodeOrchestrator } from "./nodes/orchestrator.js";
 import { nodeExecuteTools } from "./nodes/execute_tools.js";
-import { nodeUpdateMemory } from "./nodes/update_memory.js";
+import { nodeUpdateMemory2 } from "./nodes/update_memory2.js";
 import { nodeSummarizer } from "./nodes/summarizer.js";
 
 import { nodeError } from "./nodes/error.js";
@@ -19,8 +19,25 @@ const workflow = new StateGraph<SkylarkState>({
       default: () => [],
     },
     workingMemory: {
-        reducer: (x: any, y: any) => y ?? x, // 🟢 Keep old memory if a node doesn't return it
-        default: () => ({ activeTopics: [], extractedEntities: {}, summaryBuffer: "" }),
+        // Deep-merge: incoming y wins for scalar fields, but resolvedEntities accumulates (never wipes)
+        reducer: (x: any, y: any) => {
+            if (!y) return x;
+            return {
+                sessionContext: {
+                    scope: { ...x?.sessionContext?.scope, ...y?.sessionContext?.scope },
+                    resolvedEntities: { ...x?.sessionContext?.resolvedEntities, ...y?.sessionContext?.resolvedEntities },
+                },
+                queryContext: y?.queryContext ?? x?.queryContext,
+            };
+        },
+        default: () => ({
+            sessionContext: { scope: {}, resolvedEntities: {} },
+            queryContext: { rawQuery: "", pendingIntents: [], activeFilters: {}, lastTurnInsight: "" },
+        }),
+    },
+    isHITLContinuation: {
+        reducer: (x: boolean, y: boolean) => y ?? x,
+        default: () => false,
     },
     toolCalls: { default: () => [] },
     toolResults: { 
@@ -54,7 +71,7 @@ const workflow = new StateGraph<SkylarkState>({
 // 2. Add Nodes
 workflow.addNode("orchestrator", nodeOrchestrator as any);
 workflow.addNode("execute_tools", nodeExecuteTools as any);
-workflow.addNode("update_memory", nodeUpdateMemory as any);
+workflow.addNode("update_memory", nodeUpdateMemory2 as any);
 workflow.addNode("summarizer", nodeSummarizer as any);
 workflow.addNode("errorNode", nodeError as any);
 

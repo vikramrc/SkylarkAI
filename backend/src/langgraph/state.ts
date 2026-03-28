@@ -7,40 +7,54 @@ export interface SkylarkState {
   // 1. Thread Message History (Back-fed Automatically by Checkpointer)
   messages: BaseMessage[];
 
-  // 2. Observational & Working Memory Context
+  // 2. Two-Tier Agent Memory
   workingMemory: {
-    activeTopics: string[];
-    summaryBuffer: string;
-    extractedEntities: {
-      userPreferences?: { role?: string; timezone?: string; currentFocusedVessel?: string };
-      organization?: { id?: string; name?: string; shortName?: string };
-      vessel?: { id?: string; name?: string };
-      maintenance?: Record<string, any>;
-      procurement?: Record<string, any>;
-      inventory?: Record<string, any>;
-      budget?: Record<string, any>;
-      crew?: Record<string, any>;
-      fleet?: Record<string, any>;
-      documents?: Record<string, any>;
+    // TIER 1: Session-scoped. Persists across ALL queries in a conversation. Code-written. Never reset.
+    sessionContext: {
+      scope: {
+        organizationID?: string;
+        organizationShortName?: string;
+        organizationName?: string;
+      };
+      // Key = "entityType:humanLabel" (e.g. "cost_center:TESTCOSTCENTER1")
+      // Value = resolved DB ID and metadata
+      resolvedEntities: Record<string, {
+        id: string;
+        label: string;
+        entityType: string;
+      }>;
+    };
+
+    // TIER 2: Query-scoped. Reset on every new user question. LLM-written (Zod structured output, NOT prose).
+    queryContext: {
+      rawQuery: string;              // Verbatim user question for this current query cycle
+      pendingIntents: string[];      // What from rawQuery remains unanswered (max 5 items)
+      activeFilters: Record<string, string>; // Current active tool filters (dateRange, statusCode, etc.)
+      lastTurnInsight: string;       // ONE sentence max 120 chars. What just happened this turn.
     };
   };
 
-  // 3. Execution Control & Data Outputs
-  toolCalls: any[]; // The parallel tools listed by the Orchestrator
-  toolResults: Record<string, any>[]; // execution outputs mapped by tool name (Array of turns)
-  feedBackVerdict: 'SUMMARIZE' | 'FEED_BACK_TO_ME'; // Prompt decisions
-  reasoning?: string; // 🟢 Captured thought process from the Orchestrator flawlessly!
+  // 3. HITL Continuation Flag
+  // Set to true by Orchestrator when returning hitl_required=true.
+  // Prevents Tier 2 reset when the user answers a clarifying question (iterationCount=0 but same logical query).
+  isHITLContinuation: boolean;
 
-  // 4. Safety Loop Safeguard
+  // 4. Execution Control & Data Outputs
+  toolCalls: any[];
+  toolResults: Record<string, any>[];
+  feedBackVerdict: 'SUMMARIZE' | 'FEED_BACK_TO_ME';
+  reasoning?: string;
+
+  // 5. Safety Loop Safeguard
   iterationCount: number;
 
-  // 5. Graceful Error Handling
-  error: string | undefined; // Descriptive explanation for breakouts flawless!
-  hitl_required: boolean | undefined; // 🟢 MARK HITL REQUIRED execution pauses breakouts flawless!
+  // 6. Graceful Error Handling
+  error: string | undefined;
+  hitl_required: boolean | undefined;
 
-  // 6. Request Isolation
-  startTurnIndex: number; // 🟢 Snapshot of toolResults.length when the request started flawless!
+  // 7. Request Isolation
+  startTurnIndex: number;
 
-  // 7. Conductor Result Selection
-  selectedResultKeys?: string[]; // 🟢 Explicit tool result keys to promote to final UI/Summary flawless!
+  // 8. Conductor Result Selection
+  selectedResultKeys?: string[];
 }

@@ -53,15 +53,25 @@ async function main() {
                 }
 
                 console.log(`--- [TURN ${i + 1}] Role: ${role} ---`);
-                console.log(`${content.substring(0, 500)}${content.length > 500 ? '...' : ''}`);
+                const contentPrefix = (latestMsg.kwargs?.refusal) ? `[REFUSAL]: ` : "";
+                const displayContent = contentPrefix + content;
+                console.log(`${displayContent.substring(0, 1000)}${displayContent.length > 1000 ? '...' : ''}`);
                 
+                // 🟢 Token Metadata Extraction flawlessly triggers flaws trigger
+                const usage = latestMsg.kwargs?.response_metadata?.token_usage || latestMsg.kwargs?.usage_metadata;
+                if (usage) {
+                  const p = usage.prompt_tokens ?? usage.input_tokens ?? 0;
+                  const c = usage.completion_tokens ?? usage.output_tokens ?? 0;
+                  console.log(`\x1b[90m📊 Tokens: Prompt=${p}, Completion=${c}\x1b[0m`);
+                }
+
                 if (cv.workingMemory?.reasoning) {
                   console.log(`🧠 Reasoning: ${cv.workingMemory.reasoning}`);
                 }
                 
                 if (cv.toolResults) {
-                  const toolCount = Object.keys(cv.toolResults).length;
-                  console.log(`🛠️ Results: ${toolCount} tool(s) returned data.`);
+                  const toolCount = Array.isArray(cv.toolResults) ? cv.toolResults.length : Object.keys(cv.toolResults).length;
+                  console.log(`🛠️ Results: ${toolCount} turn(s) of tool data.`);
                 }
                 console.log('');
             }

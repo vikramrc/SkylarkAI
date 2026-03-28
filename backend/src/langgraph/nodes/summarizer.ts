@@ -107,8 +107,15 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
             
             currentQueryTurns.forEach((turn: any) => {
                 Object.keys(turn).forEach(k => {
-                    // 🟢 Discovery Isolation: We do NOT auto-promote 'Overview' or 'Status' discovery tools.
-                    const isDiscovery = k.includes('query_overview') || k.includes('query_status') || k.includes('health') || k.includes('capabilities') || k.includes('resolve_entities');
+                    // 🟢 Discovery Isolation: ONLY suppress true internal/discovery tools, NOT retrieval tools.
+                    // Use precise prefix matching: mcp.resolve_entities, *.query_overview, fleet.*, *.health, *.capabilities
+                    // ⚠️ CRITICAL: DO NOT match 'query_status' generically — maintenance.query_status is a RETRIEVAL tool!
+                    const isDiscovery = 
+                        k.includes('resolve_entities') ||
+                        k.includes('query_overview') ||
+                        k.includes('fleet.query') ||
+                        k.includes('health') ||
+                        k.includes('capabilities');
                     if (!isDiscovery && !state.selectedResultKeys?.includes(k)) {
                         const entry = unpackedEntries.find(e => e.key === k);
                         if (entry) {
@@ -215,10 +222,11 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         { role: "system", content: systemPrompt } as any,
     ];
 
-    if (state.workingMemory?.summaryBuffer) {
+    const legacySummaryBuffer = (state.workingMemory as any)?.summaryBuffer;
+    if (legacySummaryBuffer) {
         promptMessages.push({
             role: "system",
-            content: `\n### OBSERVATIONAL STATUS CONTEXT (FROM PREVIOUS TURN)\nUse this to understand active filters/focus:\n${state.workingMemory.summaryBuffer}\n\n⚠️ IMPORTANT: This memory summary is from the PREVIOUS loop. If the active filters or scope changed, the raw INPUT DATA array (provided below) always overrides this memory. Do NOT trust this memory for exact row counts or statuses if they contradict the raw INPUT DATA array you are receiving now!`
+            content: `\n### OBSERVATIONAL STATUS CONTEXT (FROM PREVIOUS TURN)\nUse this to understand active filters/focus:\n${legacySummaryBuffer}\n\n⚠️ IMPORTANT: This memory summary is from the PREVIOUS loop. If the active filters or scope changed, the raw INPUT DATA array (provided below) always overrides this memory. Do NOT trust this memory for exact row counts or statuses if they contradict the raw INPUT DATA array you are receiving now!`
         } as any);
     }
 
