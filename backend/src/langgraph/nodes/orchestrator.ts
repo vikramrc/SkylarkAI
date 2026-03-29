@@ -181,14 +181,33 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     for (const [key, entry] of Object.entries(resolvedEntities)) {
         ledgerLines.push(`  - ${key} → ID = "${entry.id}" (${entry.label})`);
     }
-    const scopeLine = session?.scope
-        ? `Org: ${session.scope.organizationShortName || session.scope.organizationName || session.scope.organizationID || "(unknown)"}`
-            + (session.scope.organizationID ? ` (ID: ${session.scope.organizationID})` : "")
-        : "";
+    // ─── ORG CONTEXT GUARD (replaces passive scopeLine) ──────────────────────
+    // When no org is in memory AND it's not a HITL continuation (user answering
+    // a previous clarifying question), we inject a hard mandatory block so the
+    // LLM cannot "decide" to proceed without org context.
+    const hasOrgContext = !!(
+        session?.scope?.organizationID ||
+        session?.scope?.organizationShortName
+    );
+    // isHITLContinuation = true means the user just replied to our clarifying
+    // question — suppress the warning so the LLM reads the answer from history.
+    const shouldShowOrgWarning = !hasOrgContext && !state.isHITLContinuation;
+
+    const orgContextBlock = shouldShowOrgWarning
+        ? `⚠️ ORG CONTEXT MISSING — MANDATORY CHECK ⚠️
+No organization is currently set in session memory. 
+You MUST check the user's current query:
+- IF the user PROVIDED an organization short name in their query, you have permission to proceed with Resolution or Discovery using that name. HOWEVER, if the request implies a "per-vessel" or "fleet-wide" scope, you must comply with the Discovery-First Mandate: do NOT call data-retrieval tools directly at the organization level. You MUST use a tool like fleet.query_overview to resolve the vessels first, ensuring that subsequent turns have the canonical Vessel IDs needed for parallel investigation.
+- IF the user DID NOT provide an organization short name, you are FORBIDDEN from calling tools. You MUST set \`clarifyingQuestion\` to ask for their organization short name only, set \`tools\` to [], and set \`feedBackVerdict\` to SUMMARIZE.`
+        : hasOrgContext
+            // Scope is populated — show the confirmed org for grounding
+            ? `✅ Org confirmed: ${session?.scope?.organizationShortName || session?.scope?.organizationID}${session?.scope?.organizationID ? ` (ID: ${session.scope.organizationID})` : ""}`
+            // isHITLContinuation=true but scope not yet persisted — LLM must read org from conversation
+            : `✅ HITL Continuation Active: The user has just answered your clarifying question. The organization name and any other context are in their latest message in the conversation thread above. Extract the organization from there and proceed with the appropriate tool calls.`;
 
     const memoryContext = [
         `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
-        scopeLine,
+        orgContextBlock,
         ledgerLines.length > 0
             ? `Resolved Entities:\n${ledgerLines.join('\n')}\n⚠️ MANDATE: If an entity is listed above, use its ID directly. DO NOT call mcp.resolve_entities for already-resolved entities.`
             : `Resolved Entities: None yet.`,
@@ -243,16 +262,18 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 
     const formattedInstruction = systemInstruction.replace("%%TOOL_CONTEXT%%", finalToolDetails);
 
-    const promptMessages = [
-        { role: "system", content: formattedInstruction } as any, 
-    ];
+    // 🟢 FIX: Inline memory context into the single system message.
+    // Previously this was a second system message block, which caused OpenAI's jsonSchema
+    // structured output mode to double-emit the response (the model re-applies its schema
+    // binding on each system-role boundary). Inlining into one system message restores
+    // the pre-MD-migration prompt structure and eliminates the double-emit trigger.
+    const memoryBlock = (memoryContext || sequentialInstruction)
+        ? `\n\n### OBSERVATIONAL MEMORY CONTEXT\n${memoryContext}${sequentialInstruction}`
+        : "";
 
-    if (memoryContext || sequentialInstruction) {
-        promptMessages.push({ 
-            role: "system", 
-            content: `\n### OBSERVATIONAL MEMORY CONTEXT\n[Context from Previous Moves]: ${memoryContext}${sequentialInstruction}` 
-        } as any);
-    }
+    const promptMessages = [
+        { role: "system", content: `${formattedInstruction}${memoryBlock}` } as any,
+    ];
 
     promptMessages.push(...state.messages);
 
@@ -271,9 +292,9 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         );
 
     const coloredLogs = consoleFormatted
-        .replace(/"### OBSERVATIONAL MEMORY CONTEXT\\n"/g, `"\x1b[35m### OBSERVATIONAL MEMORY CONTEXT\x1b[0m\\n"`)
-        .replace(/\\n\[Context from Previous Moves\]:/g, `\\n\x1b[36m[Context from Previous Moves]\x1b[0m:`)
-        .replace(/### 🔄 SEQUENTIAL INVESTIGATION/g, `\x1b[35m### 🔄 SEQUENTIAL INVESTIGATION\x1b[0m`);
+        .replace(/### OBSERVATIONAL MEMORY CONTEXT/g, `\x1b[35m### OBSERVATIONAL MEMORY CONTEXT\x1b[0m`)
+        .replace(/### 🗂️ SESSION CONTEXT/g, `\x1b[36m### 🗂️ SESSION CONTEXT\x1b[0m`)
+        .replace(/### 🔄 SYSTEM FLAG: ITERATIVE TURN/g, `\x1b[35m### 🔄 SYSTEM FLAG: ITERATIVE TURN\x1b[0m`);
     
     console.log(coloredLogs);
 
@@ -295,13 +316,68 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     console.log(`[LangGraph Orchestrator Output]`, JSON.stringify(response, null, 2));
 
     if (!response) {
-        console.error(`[LangGraph Orchestrator] 🚨 LLM returned null — the model did not produce a valid structured response.`);
+        console.error(`[LangGraph Orchestrator] 🚨 LLM returned null — attempting defensive JSON recovery...`);
+
+        // 🟢 DEFENSIVE RECOVERY: The LLM can occasionally double-emit its JSON output
+        // (e.g. "JSON\nJSON") under certain multi-system-message prompt conditions,
+        // causing structured output parsing to fail. Before crashing, attempt to
+        // extract and validate the FIRST valid JSON chunk from the raw content string.
+        let recovered = false;
         if (result?.raw) {
-            console.error(`[LangGraph Orchestrator] 📄 Raw LLM Response:`, JSON.stringify(result.raw, null, 2));
-            const refusal = result.raw.response_metadata?.refusal || (result.raw as any).refusal;
-            if (refusal) console.error(`[LangGraph Orchestrator] 🛑 LLM Refusal: ${refusal}`);
+            const rawContent: string | undefined = (result.raw as any)?.kwargs?.content ?? (result.raw as any)?.content;
+            if (rawContent) {
+                try {
+                    // Safe formatting: wrap in array and replace boundaries to safely parse double-JSON arrays
+                    const arrayWrapped = `[${rawContent.replace(/}\s*{/g, '},{')}]`;
+                    const parsedArray = JSON.parse(arrayWrapped);
+                    if (Array.isArray(parsedArray) && parsedArray.length > 0) {
+                        const validation = orchestratorSchema.safeParse(parsedArray[0]);
+                        if (validation.success) {
+                            console.warn(`[LangGraph Orchestrator] ⚠️ Recovered valid structured output from raw double-emit (array wrap).`);
+                            response = validation.data;
+                            recovered = true;
+                        }
+                    }
+                } catch {
+                    // Fallback: try parsing assuming trailing garbage
+                    try {
+                        // Extract first JSON object using simple brace counting if regex/array fails
+                        let braceCount = 0;
+                        let endIndex = -1;
+                        const start = rawContent.indexOf('{');
+                        if (start !== -1) {
+                            for (let i = start; i < rawContent.length; i++) {
+                                if (rawContent[i] === '{') braceCount++;
+                                else if (rawContent[i] === '}') braceCount--;
+                                if (braceCount === 0) {
+                                    endIndex = i;
+                                    break;
+                                }
+                            }
+                            if (endIndex !== -1) {
+                                const parsed = JSON.parse(rawContent.substring(start, endIndex + 1));
+                                const validation = orchestratorSchema.safeParse(parsed);
+                                if (validation.success) {
+                                     console.warn(`[LangGraph Orchestrator] ⚠️ Recovered valid structured output via brace counting.`);
+                                     response = validation.data;
+                                     recovered = true;
+                                }
+                            }
+                        }
+                    } catch {}
+                }
+            }
+
+            if (!recovered) {
+                console.error(`[LangGraph Orchestrator] 📄 Raw LLM Response:`, JSON.stringify(result.raw, null, 2));
+                const refusal = result.raw.response_metadata?.refusal || (result.raw as any).refusal;
+                if (refusal) console.error(`[LangGraph Orchestrator] 🛑 LLM Refusal: ${refusal}`);
+            }
         }
-        return { error: `Orchestrator failed to generate a valid plan. The model did not return a conformant response. Please try again.` };
+
+        if (!recovered) {
+            return { error: `Orchestrator failed to generate a valid plan. The model did not return a conformant response. Please try again.` };
+        }
     }
 
 

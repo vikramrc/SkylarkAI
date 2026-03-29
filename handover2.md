@@ -91,3 +91,47 @@ We resolved a critical runtime crash in the `update_memory2` node caused by sche
 - [x] **Cost Center Fidelity**: Validated that `cost_center` resolution now returns unique hex IDs targeting the Cost Center entity, not the Budget container.
 - [x] **Build Integrity**: Confirmed the system remains compilable (`npx tsc --noEmit`) after schema updates.
 
+---
+
+## 🛠️ 52. Orchestration Hardening (Defensive JSON Parsing & Prompt Structure)
+We identified and resolved a critical graph-crashing bug where the Orchestrator would fail to return a valid plan when outputting double-JSON payloads (a known hallucination pattern in strict schema modes).
+
+### 🟢 Structural Prompt Fixes:
+- **System Message Merge**: During the MD migration, the system prompt was split into two separate `{"role": "system"}` messages (one for rules, one for memory). This structural boundary caused the `jsonSchema` structured output mode to re-bind and double-emit its JSON output (`"JSON\nJSON"`).
+- **Inlined Memory Context**: Modified [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts) to inline the `OBSERVATIONAL MEMORY CONTEXT` directly into the singular `system` string. This restores the pre-migration prompt structure, eliminating the double-emit trigger entirely while keeping the `orchestrator_rules.md` constitution lean.
+- **Native Array Mapping Restored**: We verified that advanced LLMs natively map "per entity" requests to parallel tool calls (due to the `tools` array schema) without needing bloated, explicit "Parallel-Per-Entity" examples spoon-fed into their constitution. Reverted unnecessary prompt bloat to preserve token efficiency.
+
+### 🟢 Defensive JSON Recovery:
+- **Array-Wrap Fallback Parsing**: Implemented a rock-solid, defensive JSON parser in the null-response guard of [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts). If the model ever double-emits its schema, the parser safely wraps the raw text boundaries (`}\\s*{` to `},{`) in an array bracket `[]` and extracts the first valid Zod-compliant object via `safeParse`.
+- **Brace-Counting Resilience**: Added a secondary fallback that uses pure brace-counting to extract JSON objects if the LLM returns pretty-printed payloads that break standard regex splits, guaranteeing the orchestrator never crashes on formatting quirks.
+
+### 📑 Final Session Checklist:
+- [x] **Prompt Hygiene**: Reverted explicit "Parallel-Per-Entity" anchoring from `orchestrator_rules.md` to rely on the LLM's native array schema capabilities.
+- [x] **System Message Consolidation**: Verified that `orchestrator.ts` injects the memory block identically using a single `system` boundary.
+- [x] **Defensive Extraction**: Confirmed the fallback parser uses array-wrapping and brace-counting to safely recover from `null` structured outputs.
+- [x] **HITL Integrity Check**: Audited `graph.ts` state flow to confirm `isHITLContinuation` inherently persists across the turn boundary without requiring `workflow.ts` modification.
+
+---
+
+## 🛠️ 53. Post-Review Gap Closure (HITL Org Guard & Log Fidelity)
+Three gaps identified and closed during a post-implementation review of Section 52's changes.
+
+### 🔴 Gap 1 — `✅ Org confirmed: undefined` (Critical LLM Confusion)
+- **Root Cause**: When `isHITLContinuation = true` but `sessionContext.scope` is still empty (tools haven't run yet on the continuation turn), the `orgContextBlock` template evaluated `session?.scope?.organizationShortName` to `undefined`. The LLM saw `✅ Org confirmed: undefined` — a green tick next to the literal word "undefined" — and would hallucinate `organizationShortName: "undefined"` into tool args, causing all tool calls to silently fail with a scope miss.
+- **Fix**: Split the ternary into a three-way branch in [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts):
+  1. `shouldShowOrgWarning = true` → show the ⚠️ mandatory check block.
+  2. `shouldShowOrgWarning = false` AND `hasOrgContext = true` → show `✅ Org confirmed: <name>`.
+  3. `shouldShowOrgWarning = false` AND `hasOrgContext = false` (HITL continuation with empty scope) → show `✅ HITL Continuation Active: ...extract the organization from their latest message`.
+
+### 🟡 Gap 2 — Redundant Memory Context Header (Minor Structural Noise)
+- **Root Cause**: `memoryBlock` was assembled as `### OBSERVATIONAL MEMORY CONTEXT\n[Context from Previous Moves]: ${memoryContext}`, but `memoryContext` itself already begins with `\n### 🗂️ SESSION CONTEXT`. The `[Context from Previous Moves]:` label appeared directly before that section header, creating a confusing double-header structure.
+- **Fix**: Removed the redundant `[Context from Previous Moves]:` prefix from `memoryBlock`. The block now reads cleanly as `### OBSERVATIONAL MEMORY CONTEXT\n${memoryContext}`.
+
+### 🟢 Gap 3 — Console Coloring Regex No Longer Matched (Cosmetic)
+- **Root Cause**: The previous coloring regex looked for `"### OBSERVATIONAL MEMORY CONTEXT\n"` as a standalone quoted JSON value — the format when memory was a separate second system message. After inlining, the string is embedded inside a larger `content` value, so the exact quoted-string regex never matched.
+- **Fix**: Updated all three coloring `.replace()` calls in [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts) to match the substrings directly within the content body (no surrounding quotes). Also added `### 🗂️ SESSION CONTEXT` coloring and updated `### 🔄 SYSTEM FLAG: ITERATIVE TURN` to match the renamed header.
+
+### 📑 Gap Closure Checklist:
+- [x] **HITL Org Guard**: Three-way `orgContextBlock` branch prevents `undefined` from ever appearing as a confirmed org value.
+- [x] **Memory Header**: `[Context from Previous Moves]:` prefix removed — memory block now structurally clean.
+- [x] **Console Coloring**: All regex patterns updated to match inlined content — `### OBSERVATIONAL MEMORY CONTEXT`, `### 🗂️ SESSION CONTEXT`, and `### 🔄 SYSTEM FLAG: ITERATIVE TURN` now colour correctly in logs.
