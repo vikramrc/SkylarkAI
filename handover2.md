@@ -135,3 +135,94 @@ Three gaps identified and closed during a post-implementation review of Section 
 - [x] **HITL Org Guard**: Three-way `orgContextBlock` branch prevents `undefined` from ever appearing as a confirmed org value.
 - [x] **Memory Header**: `[Context from Previous Moves]:` prefix removed — memory block now structurally clean.
 - [x] **Console Coloring**: All regex patterns updated to match inlined content — `### OBSERVATIONAL MEMORY CONTEXT`, `### 🗂️ SESSION CONTEXT`, and `### 🔄 SYSTEM FLAG: ITERATIVE TURN` now colour correctly in logs.
+
+---
+
+## 🛠️ 54. Constitution Re-Anchoring: Entity Distribution & Org Strictness
+
+### 1. Removing Org Name LLM Hallucinations
+- **Problem**: In the `⚠️ ORG CONTEXT MISSING` warning, the prompt literally told the Orchestrator `- IF the user DID NOT provide an organization name... You MUST set clarifyingQuestion to ask for their organization name`, driving the LLM to use the invalid DB schema key `organizationName`.
+- **Fix**: Replaced all instances of "organization name" in the guard fallback text with strictly `"organization short name"`. Also scrubbed `"for <OrgName>"` examples to prevent the LLM from trying to populate the wrong JSON parameter key.
+- **Result**: The LLM securely asks solely for the short name, and `mcp.service.js` validation natively routes the correct query mapping.
+
+### 2. Restoring the 'Parallel-Per-Entity' Anchor (Lightweight)
+- **Problem**: Earlier, we stripped the heavy `Parallel-Per-Entity Pattern` block under the assumption it was prompt bloat. Without it, when the user asked for `"fleetships, show me top 5 per vessel"`, the LLM noticed `maintenance.query_status` accepted an `organizationShortName` with a `limit` and assumed the backend supported an SQL-like "Group By" execution. It skipped discovery and fired a single org-level call in an attempt to pull grouped items efficiently.
+- **Fix**: Injected a lightweight one-line rule under `III. OPERATIONAL DISCIPLINE -> 1. Diversity Allocation`: 
+  > *** Entity Distribution**: If the user asks for data across multiple specific entities (e.g., "for Vessel A and Vessel B") or uses a distribution phrase (e.g., "Top 5 per vessel"), you MUST execute **separate parallel tool calls** for EACH target entity. If you do not know the entities (e.g., "per vessel"), call `fleet.query_overview` ONLY in this turn (no other data retrieval tools) to get vessel IDs. In the NEXT turn, use those IDs to make parallel per-vessel data retrieval calls.
+- **Result**: Restores the structural awareness that MCP REST endpoints are "flat," forcing the LLM back to executing parallel API calls and honoring the Discovery-First mandate.
+
+### 3. Closing the 'Sequential Flow' Loophole
+- **Problem**: In the previous test, the LLM reasoned that because `maintenance.query_status` strictly allowed an `organizationShortName` without a `vesselID`, it didn't *depend* on the `fleet.query_overview` discovery call. Therefore, it decided it was "legal" to call `fleet.query_overview` AND `maintenance.query_status` at the exact same time in Turn 1, completely defeating the purpose of discovering vessels to make parallel calls.
+- **Fix**: Extended `II.5 The Sequential Turn Mandate` with a specific `Fleet Discovery Exception (CRITICAL)` rule: when calling `fleet.query_overview` to fulfill a per-entity discovery mandate, the LLM is **FORBIDDEN** from making any data retrieval tool calls in that exact same turn.
+- **Result**: Forces the LLM to yield the floor after extracting Fleet IDs, so that on Turn 2, it actually iterates over them in parallel.
+
+### 4. Enforcing 'FEED_BACK_TO_ME' on Discovery
+- **Problem**: Even with the prompt fixing the sequence (discover first, fetch later), the LLM was emitting the tools and setting `feedBackVerdict: "SUMMARIZE"` because it didn't intuitively map "fetch later" to the backend LangGraph multi-turn router mechanism. Because it outputted `SUMMARIZE`, the backend immediately killed the thread and sent the output to the UI, effectively preventing the "Next Turn" from ever happening.
+- **Fix**: Added `"FEED_BACK_TO_ME" Required` anchor in the constitution. Any time a discovery tool is used to prepare for a "Next Turn", the LLM MUST set the verdict to `FEED_BACK_TO_ME`.
+- **Result**: LangGraph now successfully orbits back to the Orchestrator on Turn 2 allowing the LLM to execute the parallel loop.
+
+### 5. Unified Memory Ledger Extraction
+- **Problem**: Once `FEED_BACK_TO_ME` was fixed, the orchestrator successfully looped to Turn 2, but it got stuck in an infinite loop redundantly calling `fleet.query_overview` over and over again. Why? Because `UpdateMemory2` only extracted entity IDs from `mcp.resolve_entities`. It was completely ignoring the results from `fleet.query_overview`. Since the raw JSON is hollowed out of the memory block (to save tokens), the LLM essentially saw "I ran the query, it returned 7 items, but I still have NO vessel IDs in memory".
+- **Fix**: Upgraded `update_memory2.ts` to automatically populate `sessionContext.resolvedEntities` directly from the payloads of all 4 foundational discovery tools:
+  - `mcp.resolve_entities` (Fuzzy Search Base)
+  - `fleet.query_overview` (Extracts Vessel IDs and Names)
+  - `fleet.query_machinery_status` (Extracts Machinery IDs and Names)
+  - `crew.query_members` (Extracts Crew IDs and Designations)
+  - `budget.query_overview` (Extracts Budget IDs and Names)
+- **Result**: The LLM will now instantly see distinct Canonical Entity IDs sitting directly in its `Resolved Entities` ledger after calling any top-level discovery tool, and can seamlessly orchestrate parallel downstream operations without blindspot loops.
+
+### 6. Strict Two-Step Entity Distribution Mandate
+- **Problem**: Even after the Vessel IDs appeared flawlessly in the `Resolved Entities:` ledger in Turn 2, the LLM *still* decided to re-run `fleet.query_overview`. Its reasoning log stated: *"The user requested a per-vessel distribution ('top 5 per vessel')... so I must first use fleet overview to discover the vessel IDs"*. It hit the algorithmic trigger "per vessel" leading strictly to the action "call fleet.query_overview" and completely bypassed the fact that the actual IDs were already sitting in the memory ledger above.
+- **Fix**: Rewrote the `Entity Distribution` ruleset in `orchestrator_rules.md` to break the behavior into a rigid **Step 1 (Check Memory)** and **Step 2 (Discover)** loop. The LLM is now explicitly mandated to check the "Resolved Entities" ledger *first*, and only if the subset is missing should it fall back to Step 2 (Discovery).
+- **Result**: The LLM will now properly map the phrase "per vessel" to the 5 distinct vessel IDs listed in its prompt and fire off the required parallel `maintenance.query_status` requests.
+
+---
+
+## 🛠️ 55. HITL Context Collapse Remediation
+
+We identified and fixed a critical bug where the `UpdateMemory2` node was discarding the original query topic whenever a HITL (clarifying question) exchange occurred, causing the Orchestrator to enter an infinite `fleet.query_overview` discovery loop.
+
+### Root Cause Analysis
+
+The bug was **entirely deterministic code** — not an LLM failure. Three compounding issues in `update_memory2.ts`:
+
+1. **`rawQuery` was always set to `lastHumanMessage`** — After a HITL exchange, the last human message is the user's *reply* (e.g. `"fleetships, show me top 5 per vessel"`). The original topic (`"Show me all overdue maintenance activities"`) was silently discarded.
+
+2. **`isNewQuery` guard was too broad** — `isNewQuery = (startTurnIndex===0) && !isHITLContinuation`. Once `isHITLContinuation` reset to `false` after iteration 1, subsequent iterations (iter=2, 3...) within the *same* request all evaluated to `isNewQuery=true`, nuking Tier 2 each time with the wrong rawQuery.
+
+3. **Phase 2 LLM context was incomplete** — The HITL reply was invisible to Phase 2. It saw `rawQuery="fleetships, show me top 5 per vessel"` in isolation and correctly (but fatally) generated `pendingIntents: ["Clarify what metric defines 'top'"]` — which the Orchestrator then treated as an unresolved blocking ambiguity.
+
+### 🟢 Three Fixes Applied (`update_memory2.ts`)
+
+**Fix 1 — `rawQuery` Preservation:**
+- `rawQuery` is now only sourced from `lastHumanMessage` on a genuinely new request (`isNewQuery=true`)
+- On ALL continuation turns (HITL or iterative), `rawQuery` is preserved from `existingMemory.queryContext.rawQuery`
+- The HITL reply's scoping refinements ("top 5 per vessel") are captured as `activeFilters` by Phase 2 — not as topic replacement
+
+**Fix 2 — `isNewQuery` Guard Hardening (Revised & Validated):**
+- **Amendment 55.2:** Scrapped `startTurnIndex === 0` and `!existingRawQuery` entirely. 
+- A genuinely new query is now strictly defined as: `(iter <= 1) && !isHITLContinuation`.
+- This ensures Tier 2 Memory correctly wipes and restarts when the user asks a follow-up question later in the same message thread, preventing the agent from being permanently locked into the very first question's context.
+
+**Fix 3 — HITL Q→A Context Injection to Phase 2:**
+- Detects the last AI clarifying question + human reply from `messages[]`
+- Injects a `CONTEXT REFINEMENT` block into the Phase 2 user prompt explicitly stating the reply narrows the original query rather than replacing it
+- Phase 2 now generates `pendingIntents: []` + `activeFilters: {limit: "5", distributionScope: "per_vessel"}` after fleet discovery completes
+
+### 🟢 Rich Diagnostic Logs Added
+- `🔀 Tier 2 Reset Decision` block — logs every condition (`isFirstEverTurn`, `isHITLContinuation`, `existingRawQuery`) with final verdict
+- `📊 State snapshot` — logs `startTurnIndex`, `iter`, `isHITL`, `existingRawQuery` on every invocation
+- `📦 Tool turns` summary — logs turn counts and latest turn keys
+- `📒 Tier 1 Ledger` count — logs how many entities are in the ledger after Phase 1
+- `♻️ rawQuery PRESERVED` / `🔄 New query` — makes rawQuery source explicit
+- `💬 HITL Q→A pair detected` — logs the exact Q→A when injected into Phase 2
+- `🚀 No pending intents` / `⏳ N intent(s) still pending` — makes next expected Orchestrator action explicit
+
+### 📑 Key Invariant for Next Agent
+**`orchestrator_rules.md` was NOT changed.** The constitution is correct. The bug was purely in the memory node's deterministic code. Do NOT add ambiguity-related rules to the constitution — the fix is structural.
+
+### Files Changed
+| File | Change |
+|---|---|
+| `backend/src/langgraph/nodes/update_memory2.ts` | 3 targeted fixes + rich diagnostic logging |
+| `orchestrator_rules.md` | **No changes** |
