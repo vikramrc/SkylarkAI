@@ -104,7 +104,24 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
                 ? `total available: overdue=${data.summary.overdueCount} upcoming=${data.summary.upcomingCount}`
                 : '';
 
-            let line = `- Key: "${key}" | Label: "${label}"${fLabel} | Count: ${count} items (Turn ${iterNum})`;
+            // 🟢 Generic ID Sniffer: Extract ANY database IDs for the Orchestrator to use in chained calls without guessing
+            let extractedIds: string[] = [];
+            items.forEach((item: any) => {
+                Object.entries(item).forEach(([k, v]) => {
+                    // Extract any string field ending in 'ID' or exactly '_id'
+                    if (typeof v === 'string' && (k.endsWith('ID') || k === '_id' || k.endsWith('Id'))) {
+                        // Skip organizationID to prevent noise, only harvest relational IDs
+                        if (k !== 'organizationID' && k !== 'organizationId') {
+                            const pair = `${k}:${v}`;
+                            if (!extractedIds.includes(pair)) extractedIds.push(pair);
+                        }
+                    }
+                });
+            });
+            // Limit to 15 to prevent context window explosion on massive arrays
+            const idPreview = extractedIds.length > 0 ? ` | Extracted Keys: [${extractedIds.slice(0, 15).join(', ')}]` : '';
+
+            let line = `- Key: "${key}" | Label: "${label}"${fLabel} | Count: ${count} items (Turn ${iterNum})${idPreview}`;
             if (count === 0) {
                 line += ` | ⚠️ EMPTY — no matching records exist for this vessel+filter`;
             } else {
