@@ -281,7 +281,7 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
   Original question: "${rawQuery}"
   AI asked: "${clarifyingQuestion.substring(0, 200)}"
   User replied: "${lastHumanContent}"
-  CRITICAL INSTRUCTION: The user's reply contains BOTH a scope parameter (e.g. org name) AND a query refinement (e.g. "top 5 per vessel"). Treat the reply as narrowing/refining the original question — NOT as a replacement. Extract refinements as activeFilters. The rawQuery topic remains "${rawQuery}".`;
+  CRITICAL INSTRUCTION: The user's reply contains BOTH the answer to the clarifying question (e.g. org name) AND potentially a query refinement. Treat the reply as narrowing/refining the original question — NOT as a replacement. Extract any refinements (like limits, status, dates) as activeFilters. The rawQuery topic remains "${rawQuery}".`;
                     console.log(`\x1b[35m[UpdateMemory2] 💬 HITL Q→A pair detected and injected into Phase 2 context:\x1b[0m`);
                     console.log(`\x1b[35m   Q: "${clarifyingQuestion.substring(0, 80)}"\x1b[0m`);
                     console.log(`\x1b[35m   A: "${lastHumanContent.substring(0, 80)}"\x1b[0m`);
@@ -350,7 +350,7 @@ Rules:
    - IMPORTANT: If a discovery tool ran (e.g. fleet overview returning vessel IDs), the discovery intent is NOW COMPLETE. Do NOT keep "discover vessels" as a pending intent.
    - IMPORTANT: If entity IDs are now known (from discovery), the retrieval step is the ONLY remaining intent.
 2. activeFilters: Extract all filters that are scoping the current query (e.g. statusCode, startDate, limit, distributionScope like "per vessel"). 
-   - If the user said "top 5 per vessel", add limit=5 and distributionScope=per_vessel.
+   - If the user specifies a limit or distribution scope, add them here. Do NOT hallucinate filters that are not clearly requested.
 3. lastTurnInsight: One sentence only. Focus on what was resolved or found. If entities were resolved, mention the count. Max 150 chars.`;
 
     const userContent = `rawQuery: "${rawQuery}"

@@ -10,6 +10,7 @@ import { getParameterDescription } from "../../mcp/capabilities/contract.js";
 
 // 1. Define Structured Output Schema
 export const orchestratorSchema = z.object({
+    currentScope: z.array(z.string()).describe("Identify the specific Entity IDs from your ledger that map to the user's requested scope. If they say 'all vessels/fleet-wide', list EVERY discovered vessel ID here. If they say 'just XXX1', list only XXX1's ID. If the query does not target specific entities, return an empty array.").nullable(),
     tools: z.array(z.object({
         name: z.string().describe("The dot-separated tool name (e.g., maintenance.query_status)"),
         uiTabLabel: z.string().describe("A short, user-friendly title for this tool's UI tab, summarizing the context or specific filters applied (e.g., 'Overdue Tasks', 'Global Checklists', 'Deck Operations')."),
@@ -21,6 +22,7 @@ export const orchestratorSchema = z.object({
     })).describe("List of MCP tool names and their arguments to execute in parallel."),
     feedBackVerdict: z.enum(['SUMMARIZE', 'FEED_BACK_TO_ME']).describe("Decide whether the results should be fed back for sequential chain investigation or passed straight to the Summarizer."),
     clarifyingQuestion: z.string().describe("Use this to Ask the user a question if mandatory parameters (e.g., Organization ID/Name) are missing and no tools can be called.").nullable(),
+    reformulatedQuery: z.string().describe("Synthesize the entire conversational history (the original request plus any subsequent clarifications or filters) into a single, comprehensive goal statement. This should reflect your complete understanding of the user's final intent and parameters without assuming any missing constraints.").nullable(),
     reasoning: z.string().describe("Your internal technical thought process. If you pick FEED_BACK_TO_ME, explain exactly what gap you are trying to fill (e.g., 'Fetched Job IDs, now need to fetch their specific form contents' or 'Direct query failed, trying standard tool fallback')."),
     selectedResultKeys: z.array(z.string()).describe("A list of specific tool result keys (e.g., 'maintenance.query_status_iter2_0') from previous turns that you want to promote to the final answer and UI. If provided, the system will ONLY summarize and show these tools. Use this to skip re-running tools you already have data for.")
 });
@@ -203,7 +205,7 @@ You MUST check the user's current query:
             // Scope is populated — show the confirmed org for grounding
             ? `✅ Org confirmed: ${session?.scope?.organizationShortName || session?.scope?.organizationID}${session?.scope?.organizationID ? ` (ID: ${session.scope.organizationID})` : ""}`
             // isHITLContinuation=true but scope not yet persisted — LLM must read org from conversation
-            : `✅ HITL Continuation Active: The user has just answered your clarifying question. The organization name and any other context are in their latest message in the conversation thread above. Extract the organization from there and proceed with the appropriate tool calls.`;
+            : `✅ HITL Continuation Active: The user has just answered your clarifying question. Extract the organization from their latest message. ⚠️ CRITICAL MANDATE: The Discovery-First Mandate still applies! If the request implies a "per-vessel" or "fleet-wide" scope, you MUST use fleet.query_overview first to resolve the vessels. DO NOT call data-retrieval tools directly at the organization level without vessel IDs.`;
 
     const memoryContext = [
         `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
@@ -275,7 +277,31 @@ You MUST check the user's current query:
         { role: "system", content: `${formattedInstruction}${memoryBlock}` } as any,
     ];
 
-    promptMessages.push(...state.messages);
+    if (iterationCount > 0) {
+        // Option C: Passing the Full QnA Sequence
+        const qnaTranscript = state.messages
+            .filter((m: any) => m.content && typeof m.content === 'string')
+            .map((m: any) => {
+                const type = m._getType?.() || m.role || 'human';
+                return `${type.toUpperCase()}: ${m.content}`;
+            })
+            .join('\n\n');
+        
+        const syntheticBody = `🎯 CURRENT INVESTIGATION CONTEXT
+Review the conversation history below to understand the final unified goal.
+
+--- CONVERSATION HISTORY ---
+${qnaTranscript}
+--- END HISTORY ---
+
+Instruction: Proceed with your investigation based on the complete context provided above.`;
+
+        promptMessages.push({ role: "user", content: syntheticBody } as any);
+        console.log(`\x1b[35m[LangGraph Orchestrator] 🧠 Masking fragmented chat objects with Unified QnA Transcript prompt.\x1b[0m`);
+    } else {
+        // Turn 0: Must read raw message objects so the Orchestrator can ingest the user's latest text naturally
+        promptMessages.push(...state.messages);
+    }
 
     console.log(`\x1b[36m[LangGraph Orchestrator] --- PROMPT SENT TO LLM ---\x1b[0m`);
     const promptJson = JSON.stringify(promptMessages, null, 2);
@@ -419,6 +445,14 @@ You MUST check the user's current query:
         updates.hitl_required = true;
         updates.isHITLContinuation = true;
         updates.toolCalls = [];
+    }
+
+    if (response.currentScope && response.currentScope.length > 0) {
+        console.log(`\x1b[35m[LangGraph Orchestrator] 🔍 Derived currentScope: [${response.currentScope.length} entities]\x1b[0m`);
+    }
+
+    if (response.reformulatedQuery) {
+        console.log(`\x1b[33m[LangGraph Orchestrator] 🔄 Reformulated Ask: "${response.reformulatedQuery}"\x1b[0m`);
     }
 
     console.log(`[LangGraph Orchestrator] Verdict: ${updates.feedBackVerdict} | Tools Requested: ${JSON.stringify(response.tools.map((t: any) => `${t.name} (conf: ${t.confidence})`))} | Selection: ${JSON.stringify(updates.selectedResultKeys)}`);

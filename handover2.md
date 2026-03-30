@@ -204,10 +204,11 @@ The bug was **entirely deterministic code** — not an LLM failure. Three compou
 - A genuinely new query is now strictly defined as: `(iter <= 1) && !isHITLContinuation`.
 - This ensures Tier 2 Memory correctly wipes and restarts when the user asks a follow-up question later in the same message thread, preventing the agent from being permanently locked into the very first question's context.
 
-**Fix 3 — HITL Q→A Context Injection to Phase 2:**
+**Fix 3 — HITL Q→A Context Injection & Token Metrics Fix:**
 - Detects the last AI clarifying question + human reply from `messages[]`
 - Injects a `CONTEXT REFINEMENT` block into the Phase 2 user prompt explicitly stating the reply narrows the original query rather than replacing it
-- Phase 2 now generates `pendingIntents: []` + `activeFilters: {limit: "5", distributionScope: "per_vessel"}` after fleet discovery completes
+- Added `{ includeRaw: true }` to `withStructuredOutput` so the raw AIMessage containing `usage_metadata` is available to the `logTokenSavings` utility.
+- Phase 2 now generates `pendingIntents: []` + `activeFilters: {limit: "5", distributionScope: "per_vessel"}` after fleet discovery completes.
 
 ### 🟢 Rich Diagnostic Logs Added
 - `🔀 Tier 2 Reset Decision` block — logs every condition (`isFirstEverTurn`, `isHITLContinuation`, `existingRawQuery`) with final verdict
@@ -218,11 +219,49 @@ The bug was **entirely deterministic code** — not an LLM failure. Three compou
 - `💬 HITL Q→A pair detected` — logs the exact Q→A when injected into Phase 2
 - `🚀 No pending intents` / `⏳ N intent(s) still pending` — makes next expected Orchestrator action explicit
 
+### 🟢 Final Revisions (Amendment 55.3)
+1. **Orchestrator Mandate Override Prevented**: 
+   - Found that `orchestrator.ts` swapped out the strict `Discovery-First Mandate` block for a generic "proceed with the appropriate tool calls" message when `isHITLContinuation === true`.
+   - The prompt was amended to forcefully re-inject the `Discovery-First Mandate` into the HITL continuation block so the LLM cannot bypass `fleet.query_overview`.
+2. **Phase 2 Hallucination Removed**: 
+   - Found that `update_memory2.ts` was poisoning its own `activeFilters` output because the CRITICAL INSTRUCTION string contained a hardcoded example: `(e.g. "top 5 per vessel")`. 
+   - When the user asked `"for all vessels, top 5 only"`, the LLM latched onto our example and hallucinated `distributionScope: "per_vessel"`. All hardcoded filter examples have been removed from the prompt.
+
 ### 📑 Key Invariant for Next Agent
-**`orchestrator_rules.md` was NOT changed.** The constitution is correct. The bug was purely in the memory node's deterministic code. Do NOT add ambiguity-related rules to the constitution — the fix is structural.
+**`orchestrator_rules.md` was NOT changed.** The constitution is correct. The bug was purely in the memory node's deterministic code and prompt injections. Do NOT add ambiguity-related rules to the constitution — the fix is structural.
 
 ### Files Changed
 | File | Change |
 |---|---|
-| `backend/src/langgraph/nodes/update_memory2.ts` | 3 targeted fixes + rich diagnostic logging |
+| `backend/src/langgraph/nodes/update_memory2.ts` | 3 targeted fixes, token logging, hallucination prompt removed |
+| `backend/src/langgraph/nodes/orchestrator.ts` | Discovery-First mandate enforced during HITL continuations |
 | `orchestrator_rules.md` | **No changes** |
+
+---
+
+## 🏗️ 56. The "Math Optimization" Loophole & The `currentScope` Architecture
+
+### The Problem: The Intelligent Shortcut
+After removing the hallucinations from the Memory Node, we discovered a new Orchestrator behavior: when asked for `"top 5 only, for all vessels"`, the LLM aggressively bypassed our parallelization mandates. 
+
+Instead of mapping 7 discovered vessel IDs to 7 parallel calls of `maintenance.query_status`, it simply made **1 global API call** using `organizationShortName`. 
+**Root Cause**: The LLM recognized a mathematical constraint conflict. It calculated that `5 calls * limit: 5 = 25 results`, which violates the human's strict `"top 5 only"` constraint. Because the tool signature allowed `vesselID` to be optional, the LLM optimized the query to a single global call to strictly enforce the math limit.
+
+### Failed Attempts
+1. **Prompt Whack-a-Mole**: We temporarily added explicit string checks (e.g. `"for all vessels"`, `"fleet-wide"`) to the `Entity Distribution` rules. This was reverted as it polluted the generalized Constitution and failed to fix the core math disagreement.
+2. **Synthetic Goal Extraction**: We attempted to strip the Orchestrator's access to the raw QnA history, feeding it only the computed `activeFilters`. This was reverted because hiding the true human conversation crippled the Orchestrator's context. 
+3. **Unified QnA**: We flattened the fragmented message array into a single, clean `CONVERSATION HISTORY` block to fix API fragmentation limits, but the LLM still took the generalized shortcut.
+
+### The Solution Design: Chain-of-Thought `currentScope` 
+Instead of fighting the LLM's mathematical logic or writing overly specific rules, we identified that the Orchestrator must be structurally locked into its entity targets BEFORE it generates tool calls.
+
+We are proposing the addition of a `currentScope: string[]` field to the Orchestrator's structured JSON output schema (placed directly above the `tools` array).
+- **The Mechanism**: The LLM must explicitly evaluate the `Resolved Entities` ledger against the human's request and output the specific IDs it targets (e.g., `["XXX1_ID", "YYY2_ID"]` or `["ALL_7_IDS..."]`) *before* selecting tools.
+- **The Mandate (`Principle of Specific Parallelization`)**: If the Orchestrator populates its own `currentScope` array with multiple IDs, it is **strictly forbidden** from generating a generalized, organization-wide query. It MUST generate a 1:1 parallel tool call array for every ID it just listed.
+
+#### Why this handles "Narrow Follow-ups" perfectly:
+Because the Orchestrator executes purely on a per-turn basis, `currentScope` is inherently ephemeral. 
+- Turn 1: User says *"all vessels"*. `currentScope` = `[7 IDs]`. Result: 7 parallel calls.
+- Turn 2: User says *"Now just XXX1"*. `currentScope` = `[1 ID]`. Result: 1 call.
+
+This mirrors human "General → Specific" reasoning and shifts the burden from brittle prompt rules to structural JSON schemas.
