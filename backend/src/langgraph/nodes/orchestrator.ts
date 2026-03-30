@@ -171,7 +171,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     }
 
     const decisionJournal = journalEntries.length > 0 
-        ? `\n\n### 📓 SESSION DECISION JOURNAL (Current Query Only):\n${journalEntries.join('\n---\n')}\n\n**MANDATE**: You MUST consult this Journal. If a question was answered or a Tool+Parameter combination was already executed, you are FORBIDDEN from repeating it.`
+        ? `\n\n### 📓 SESSION DECISION JOURNAL (Current Query Only):\n${journalEntries.join('\n---\n')}\n\n**MANDATE**: You MUST consult this Journal to avoid redundant work. Do NOT repeat the exact same Tool+Parameter combination unless requested. HOWEVER, if the user asks a follow-up question requiring new or related data (e.g., asking for Invoices linked to prior POs), you MUST proactively execute the relevant new tool calls to continue the investigation.`
         : "";
 
     // ─── TWO-TIER MEMORY CONTEXT ASSEMBLY (after all components are declared) ─────

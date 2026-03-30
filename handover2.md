@@ -294,3 +294,22 @@ We bridged the gap between historical maintenance analysis and real-time status 
 - [x] **Org Hallucination Fix**: Verified that removing "fleetships" documentation forces the LLM to follow the `⚠️ ORG CONTEXT MISSING` mandatory guardrail.
 - [x] **Journal Logic**: Confirmed `Awaiting Execution` status prevents Turn 0 tool skipping, ensuring reliable new searches.
 - [x] **currentScope Architecture**: Confirmed the LLM produces a target ID list before executing parallel tool arrays, enforcing the specific parallelization mandate.
+
+---
+
+## 🛠️ 58. Orchestration Softening (Intent-Based Heuristics)
+We resolved a critical "Rule-Induced Hesitation" bug where the Orchestrator refused to fetch related data (e.g., Invoices for POs) due to overly aggressive deduplication and anti-loop mandates.
+
+### 🟢 Remediation Strategy:
+- **From Mandates to Heuristics**: Replaced rigid "FORBIDDEN" constraints with intent-based heuristics. The system now distinguishes between a redundant loop (useless repetition) and a **proactive investigation** (fetching related entities to complete a human's request).
+- **Code-Level Mandate Update (`orchestrator.ts`)**: Rewrote the `SESSION DECISION JOURNAL` suffix. Removed the hard ban on repeating tool+parameter combinations. Injected a new mandate: *"If the user asks a follow-up question requiring new or related data... you MUST proactively execute the relevant new tool calls to continue the investigation."*
+- **Constitution Softening (`orchestrator_rules.md`)**:
+  - **Rule IV.2 & IV.7**: Softened the "Vessel+Filter Completeness" and "Result Promotion" rules to allow re-querying when the user's follow-up request implies expanded bounds or related entities.
+  - **Rule IV.9 (Proactive Investigation)**: Added a dedicated rule mandating that the AI fetch missing details proactively instead of reporting memory limitations to the user.
+- **Reasoning**: This transition shifts the model's behavior from a "defensive" posture (fear of loops) to an "offensive" posture (eager fulfillment), mirroring natural human reasoning while maintaining the `currentScope` and `Discovery-First` safety invariants.
+
+### 📑 Final Session Checklist:
+- [x] **Journal Softening**: Verified `orchestrator.ts` mandate encourages relational follow-ups.
+- [x] **Constitution Alignment**: Confirmed `orchestrator_rules.md` Section IV grants permission for proactive investigation.
+- [x] **Conversational Flow**: Validated that follow-on requests (e.g., PO -> Invoices) no longer trigger "memory gap" refusals.
+- [x] **Build Integrity**: Confirmed the system remains compilable (`npx tsc --noEmit`) after prompt/logic adjustments.

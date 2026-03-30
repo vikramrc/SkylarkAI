@@ -499,7 +499,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/procurement/invoice-logistics-returns",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "invoiceStatus", "landingStatus", "returnStatus", "startDate", "endDate", "limit"],
+    optionalQuery: ["vesselID", "invoiceStatus", "landingStatus", "returnStatus", "startDate", "endDate", "searchTerm", "limit"],
     purpose: "Integrated view of invoices, landing orders, and return orders.",
     whenToUse: "Correlating the end of the supply chain—shipping, port landings, returns, and invoice matching.",
     whenNotToUse: "Not meant to guarantee exact 1:1 linkage if schemas do not support it; provides side-by-side visibility.",
