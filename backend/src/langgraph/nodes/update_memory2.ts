@@ -207,7 +207,7 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // ─────────────────────────────────────────────────────────────────
     // FIX §55 — rawQuery resolution: PRESERVE original query topic across HITL turns
     //
-    // The HITL reply (e.g. "fleetships, show me top 5 per vessel") is a SCOPING REFINEMENT
+    // The HITL reply (e.g. "myco, show me top 5 per vessel") is a SCOPING REFINEMENT
     // of the original question ("Show me all overdue maintenance activities"). It contains:
     //   (a) The answer to the clarifying question (org name → captured by Phase 1 scope extraction)
     //   (b) A query refinement ("top 5 per vessel" → captured as activeFilters by Phase 2)
@@ -233,7 +233,7 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     } else {
         // Edge case: first HITL continuation turn — memory exists but rawQuery was never set yet.
         // Use the FIRST HumanMessage in the thread (the original question), NOT the last one
-        // (which would be the HITL reply like "fleetships, show me top 5 per vessel").
+        // (which would be the HITL reply like "myco, show me top 5 per vessel").
         const firstHumanMsg = allMessages.find((m: any) => {
             const type = m._getType?.() || m.role;
             return type === 'human';

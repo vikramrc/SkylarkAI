@@ -43,7 +43,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
 
   switch (param) {
     case "organizationShortName":
-      return `${requiredLabel} friendly organization identifier. Prefer this when the user gives an org short name such as \"fleetships\". Alternative to organizationName or organizationID.`;
+      return `${requiredLabel} friendly organization identifier. Prefer this when the user explicitly provides an org short name in their query. Alternative to organizationName or organizationID.`;
     case "organizationName":
       return `${requiredLabel} full organization name. Alternative to organizationShortName or organizationID.`;
     case "organizationID":
