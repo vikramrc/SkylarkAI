@@ -4,23 +4,12 @@ import { loadSummarizerPrompt } from "../utils/prompt_loader.js";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { SkylarkState } from "../state.js";
 import { prepareMongoForLLM } from "../../phoenixai/runtime/executor.js";
-import fs from "fs"; // 🟢 Import for contract schemas
-import { activeStreams } from "../utils/stream_manager.js"; // 🟢 Import active streams for cancellation
+import { activeStreams } from "../utils/stream_manager.js"; 
+import { capabilitiesContract } from "../../mcp/capabilities/contract.js";
 
 // 🟢 Pre-load Capabilities Contract once at startup to optimize node performance
-const CONTRACT_PATH = process.env.PHOENIX_CONTRACT_PATH || '/home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js';
-let contractStrCache = "";
-
-try {
-    if (fs.existsSync(CONTRACT_PATH)) {
-        contractStrCache = fs.readFileSync(CONTRACT_PATH, 'utf-8');
-        console.log(`\x1b[36m[Startup] 📄 Preloaded capabilities contract into memory cache\x1b[0m`);
-    } else {
-        console.warn(`\x1b[33m[Startup] ⚠️ Contract path not found: ${CONTRACT_PATH}\x1b[0m`);
-    }
-} catch (e: any) {
-    console.error(`[Summarizer] Failed to preload capabilities contract`, e.message || e);
-}
+// 🟢 Contract Shape caching is now handled by importing the local contract.ts directly.
+// No physical file reading required.
 
 
 /**
@@ -191,18 +180,15 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         const injectedCapabilities = new Set<string>();
         for (const entry of unpackedEntries) {
             const capabilityName = entry.data?.capability;
-            if (capabilityName && contractStrCache && !injectedCapabilities.has(capabilityName)) {
+            if (capabilityName && !injectedCapabilities.has(capabilityName)) {
                 injectedCapabilities.add(capabilityName);
-                try {
-                    const blockRegex = new RegExp(`name:\\s*"${capabilityName}"[\\s\\S]*?responseShape:\\s*(\\[[\\s\\S]*?\\])`);
-                    const match = contractStrCache.match(blockRegex);
-                    if (match && match[1]) {
-                        const staticShape = match[1].replace(/\\s+/g, ' ');
-                        schemaHint = `Contract Keys (${capabilityName}): ${staticShape}\n` + schemaHint;
-                        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📄 Injected contract shape for capability: ${capabilityName}\x1b[0m`);
-                    }
-                } catch (e) {
-                    console.warn(`[Summarizer] Failed to read static contract shape for ${capabilityName}`, e);
+                
+                // 🟢 Find capability in local contract
+                const capDef = capabilitiesContract.find(c => c.name === capabilityName);
+                if (capDef && capDef.responseShape) {
+                    const staticShape = JSON.stringify(capDef.responseShape);
+                    schemaHint = `Contract Keys (${capabilityName}): ${staticShape}\n` + schemaHint;
+                    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📄 Injected local contract shape for: ${capabilityName}\x1b[0m`);
                 }
             }
         }

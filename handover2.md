@@ -313,3 +313,33 @@ We resolved a critical "Rule-Induced Hesitation" bug where the Orchestrator refu
 - [x] **Constitution Alignment**: Confirmed `orchestrator_rules.md` Section IV grants permission for proactive investigation.
 - [x] **Conversational Flow**: Validated that follow-on requests (e.g., PO -> Invoices) no longer trigger "memory gap" refusals.
 - [x] **Build Integrity**: Confirmed the system remains compilable (`npx tsc --noEmit`) after prompt/logic adjustments.
+---
+
+## 🛠️ 59. Production Environment Access (Azure VM)
+
+We have standardized the production environment access and deployment configuration to ensure seamless handovers and diagnostic capabilities.
+
+### 🟢 Connection Details:
+- **Environment**: Azure VM
+- **IP Address**: `20.169.48.27`
+- **User**: `azureuser`
+- **SSH Key**: `/home/phantom/Downloads/seikaizen_key.pem`
+- **Root Path**: `/home/azureuser/maximapmx/skylark`
+- **Nginx Subpath**: `/phoenixai/` (Proxied to `localhost:4000`)
+
+### 🟢 Diagnostic Commands:
+- **SSH Access**:
+  ```bash
+  ssh -i /home/phantom/Downloads/seikaizen_key.pem azureuser@20.169.48.27
+  ```
+- **Logging (PM2)**:
+  ```bash
+  pm2 logs skylark-backend
+  ```
+- **Log Rotation**: The environment is equipped with `pm2-logrotate`. Logs are rotated at **10MB** intervals to prevent disk saturation.
+  ```bash
+  pm2 conf pm2-logrotate
+  ```
+
+### 🟢 Nginx Routing:
+The application is mounted under `/phoenixai/` on the primary reverse proxy. Ensure `VITE_API_BASE_URL` in the frontend and `API_BASE_URL` in the backend are aligned with this subpath.

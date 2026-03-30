@@ -1,4 +1,4 @@
-{
+export const KNOWLEDGE_GRAPH = {
   "system": "Phoenix PMS (Planned Maintenance System)",
   "version": "1.1",
   "domains": [
@@ -87,4 +87,4 @@
       }
     }
   ]
-}
+};

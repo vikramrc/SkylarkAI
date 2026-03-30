@@ -1,21 +1,12 @@
-import fs from 'fs';
-import path from 'path';
+import { KNOWLEDGE_GRAPH } from '../knowledge/phoenix_knowledge_graph.js';
 
 /**
  * Loads the Phoenix PMS Knowledge Graph and formats it for LLM consumption.
  * Decided: Markdown format for better reasoning accuracy.
  */
 export function injectMaritimeKnowledge(): string {
-    const KNOWLEDGE_PATH = path.join(process.cwd(), 'src/langgraph/knowledge/phoenix_knowledge_graph.json');
-    
     try {
-        if (!fs.existsSync(KNOWLEDGE_PATH)) {
-            console.warn(`[KnowledgeLoader] ⚠️ Knowledge graph not found at ${KNOWLEDGE_PATH}`);
-            return "";
-        }
-
-        const rawData = fs.readFileSync(KNOWLEDGE_PATH, 'utf-8');
-        const knowledge = JSON.parse(rawData);
+        const knowledge = KNOWLEDGE_GRAPH;
 
         let markdown = `\n### 🏗️ PHOENIX PMS KNOWLEDGE GRAPH (Mental Model)\n`;
         markdown += `*System: ${knowledge.system} | Version: ${knowledge.version}*\n\n`;

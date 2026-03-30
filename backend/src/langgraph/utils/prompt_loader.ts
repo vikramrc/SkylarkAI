@@ -1,21 +1,14 @@
-import fs from 'fs';
-import path from 'path';
 import { injectMaritimeKnowledge } from './knowledge_loader.js';
+import { ORCHESTRATOR_RULES } from '../prompts/orchestrator_rules.js';
+import { SUMMARIZER_RULES } from '../prompts/summarizer_rules.js';
 
 /**
- * Loads the orchestrator rules from the standalone Markdown file
+ * Loads the orchestrator rules from the standalone configuration
  * and injects dynamic maritime knowledge.
  */
 export function loadOrchestratorPrompt(): string {
-    const PROMPT_PATH = path.join(process.cwd(), 'src/langgraph/prompts/orchestrator_rules.md');
-    
     try {
-        if (!fs.existsSync(PROMPT_PATH)) {
-            console.warn(`[PromptLoader] ⚠️ Orchestrator rules not found at ${PROMPT_PATH}. Falling back to minimal prompt.`);
-            return "You are a professional maritime operations orchestrator. Use available tools to answer queries.";
-        }
-
-        const rawRules = fs.readFileSync(PROMPT_PATH, 'utf-8');
+        const rawRules = ORCHESTRATOR_RULES;
         const maritimeKnowledge = injectMaritimeKnowledge();
 
         // Stitch them together with clear separation
@@ -27,19 +20,12 @@ export function loadOrchestratorPrompt(): string {
 }
 
 /**
- * Loads the summarizer rules from the standalone Markdown file
+ * Loads the summarizer rules from the standalone configuration
  * and injects dynamic maritime knowledge.
  */
 export function loadSummarizerPrompt(): string {
-    const PROMPT_PATH = path.join(process.cwd(), 'src/langgraph/prompts/summarizer_rules.md');
-    
     try {
-        if (!fs.existsSync(PROMPT_PATH)) {
-            console.warn(`[PromptLoader] ⚠️ Summarizer rules not found at ${PROMPT_PATH}. Falling back to minimal prompt.`);
-            return "You are a professional maritime operations analyst. Summarize tool results for the user.";
-        }
-
-        const rawRules = fs.readFileSync(PROMPT_PATH, 'utf-8');
+        const rawRules = SUMMARIZER_RULES;
         const maritimeKnowledge = injectMaritimeKnowledge();
 
         // Stitch them together with clear separation
