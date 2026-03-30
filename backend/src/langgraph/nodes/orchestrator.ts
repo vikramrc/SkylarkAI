@@ -144,7 +144,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
             // A clarifying question usually contains a "?" or marks a new conversational turn
             if (content.includes("?") || idx > 0) {
                 if (currentEntry) {
-                    journalEntries.push(`? Q: ${currentEntry.question || 'Initial Query'}\n✓ A: ${currentEntry.answer || 'Proceeding'}\n🚀 Actions: ${currentEntry.tools.join(', ') || 'None'}`);
+                    journalEntries.push(`? Q: ${currentEntry.question || 'Initial Query'}\n✓ A: ${currentEntry.answer || 'Awaiting User Reply'}\n🚀 Actions: ${currentEntry.tools.join(', ') || 'None'}`);
                 }
                 currentEntry = { question: content, tools: [] };
             }
@@ -167,7 +167,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     });
 
     if (currentEntry) {
-        journalEntries.push(`? Q: ${currentEntry.question || 'Query Content'}\n✓ A: ${currentEntry.answer || 'Finalizing'}\n🚀 Actions: ${currentEntry.tools.length > 0 ? currentEntry.tools.join(', ') : 'None'}`);
+        journalEntries.push(`? Q: ${currentEntry.question || 'Query Content'}\n✓ A: ${currentEntry.answer || 'Awaiting Execution'}\n🚀 Actions: ${currentEntry.tools.length > 0 ? currentEntry.tools.join(', ') : 'None yet'}`);
     }
 
     const decisionJournal = journalEntries.length > 0 

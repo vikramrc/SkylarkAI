@@ -252,11 +252,11 @@ Instead of mapping 7 discovered vessel IDs to 7 parallel calls of `maintenance.q
 2. **Synthetic Goal Extraction**: We attempted to strip the Orchestrator's access to the raw QnA history, feeding it only the computed `activeFilters`. This was reverted because hiding the true human conversation crippled the Orchestrator's context. 
 3. **Unified QnA**: We flattened the fragmented message array into a single, clean `CONVERSATION HISTORY` block to fix API fragmentation limits, but the LLM still took the generalized shortcut.
 
-### The Solution Design: Chain-of-Thought `currentScope` 
+### 🟢 The Implementation: `currentScope` Architecture
+
 Instead of fighting the LLM's mathematical logic or writing overly specific rules, we identified that the Orchestrator must be structurally locked into its entity targets BEFORE it generates tool calls.
 
-We are proposing the addition of a `currentScope: string[]` field to the Orchestrator's structured JSON output schema (placed directly above the `tools` array).
-- **The Mechanism**: The LLM must explicitly evaluate the `Resolved Entities` ledger against the human's request and output the specific IDs it targets (e.g., `["XXX1_ID", "YYY2_ID"]` or `["ALL_7_IDS..."]`) *before* selecting tools.
+- **The Mechanism**: Added a `currentScope: string[]` field to the Orchestrator's structured JSON output schema (placed directly above the `tools` array). The LLM must explicitly evaluate the `Resolved Entities` ledger against the human's request and output the specific IDs it targets (e.g., `["XXX1_ID", "YYY2_ID"]` or `["ALL_7_IDS..."]`) *before* selecting tools.
 - **The Mandate (`Principle of Specific Parallelization`)**: If the Orchestrator populates its own `currentScope` array with multiple IDs, it is **strictly forbidden** from generating a generalized, organization-wide query. It MUST generate a 1:1 parallel tool call array for every ID it just listed.
 
 #### Why this handles "Narrow Follow-ups" perfectly:
@@ -265,3 +265,32 @@ Because the Orchestrator executes purely on a per-turn basis, `currentScope` is 
 - Turn 2: User says *"Now just XXX1"*. `currentScope` = `[1 ID]`. Result: 1 call.
 
 This mirrors human "General → Specific" reasoning and shifts the burden from brittle prompt rules to structural JSON schemas.
+
+---
+
+## 🛠️ 57. Native Failure Filtering & Orchestration Logic Hardening
+
+We bridged the gap between historical maintenance analysis and real-time status tracking by enabling native failure-event filtering and resolving a critical "early termination" bug in the Orchestrator's status journal.
+
+### 🟢 Native Failure Event Filtering:
+- **Service Implementation**: Updated `getMaintenanceExecutionHistory` and `getMaintenanceStatus` in [mcp.service.js](file:///home/phantom/testcodes/PhoenixCloudBE/services/mcp.service.js) to support the `isFailureEvent` boolean. The flag is injected directly into the MongoDB aggregation pipeline, ensuring the LLM receives only "true" failure events rather than performing unreliable post-retrieval filtering.
+- **Contract Parity**: Synchronized [mcp.capabilities.contract.js](file:///home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js) (Backend) and [contract.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/mcp/capabilities/contract.ts) (Orchestrator). The `isFailureEvent` parameter is now a standard, documented part of the MCP capability advertisement.
+
+### 🟢 Orchestration State Machine ("Finalizing" Bug):
+- **Problem**: We identified a logic bug where a brand-new query would pre-populate the `SESSION DECISION JOURNAL` with the status `✓ A: Finalizing`. Because the LLM is mandated to *never repeat actions*, it saw "Finalizing" and "Actions: None" and assumed the search was already finished with zero results, leading it to skip tool calls entirely.
+- **Fix**: Replaced the optimistic placeholders in [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts) with active-state indicators:
+  - `Finalizing` → `Awaiting Execution`
+  - `Proceeding` → `Awaiting User Reply`
+  - `Actions: None` → `Actions: None yet`
+- **Result**: The LLM now correctly recognizes that a new query is "unfilled" and immediately proceeds to tool selection.
+
+### 🟢 Prompt Hygiene (Hallucination Prevention):
+- **Scrubbing "fleetships"**: Removed all hardcoded instances of the example organization name "fleetships" from the [contract.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/mcp/capabilities/contract.ts) parameter descriptions.
+- **Result**: This prevents a "prompt-injection-by-example" where the LLM would steal the word "fleetships" from its own documentation to bypass the `⚠️ ORG CONTEXT MISSING` guardrail in fresh sessions.
+
+### 📑 Final Session Checklist:
+- [x] **Failure Filtering**: Confirmed `isFailureEvent` support across historical and status toolsets via direct DB verification scripts.
+- [x] **Contract Sync**: Verified 100% parameter parity between Backend and Orchestrator contracts for the new failure filter.
+- [x] **Org Hallucination Fix**: Verified that removing "fleetships" documentation forces the LLM to follow the `⚠️ ORG CONTEXT MISSING` mandatory guardrail.
+- [x] **Journal Logic**: Confirmed `Awaiting Execution` status prevents Turn 0 tool skipping, ensuring reliable new searches.
+- [x] **currentScope Architecture**: Confirmed the LLM produces a target ID list before executing parallel tool arrays, enforcing the specific parallelization mandate.
