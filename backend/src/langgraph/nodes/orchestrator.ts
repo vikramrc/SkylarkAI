@@ -81,12 +81,24 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         const iterNum = (state.startTurnIndex || 0) + tIdx + 1; // 1-indexed human turn count flawless!
         Object.entries(turn || {}).forEach(([key, res]) => {
             let data: any = res;
+            let errorMsg = "";
+            let isError = !!data?.isError;
+
             if (data?.content?.[0]?.text) {
-                try { 
-                    const text = data.content[0].text;
-                    if (text.trim().startsWith('{')) data = JSON.parse(text); 
-                } catch {}
+                const text = data.content[0].text;
+                if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
+                    try { 
+                        data = JSON.parse(text); 
+                        isError = isError || !!data?.isError;
+                    } catch {}
+                } else if (isError) {
+                    errorMsg = text;
+                }
             }
+            if (isError && !errorMsg) {
+                errorMsg = data?.error || data?.message || "Unknown tool execution error";
+            }
+
             const label = data?.uiTabLabel || key;
             const items = Array.isArray(data?.items) ? data.items : [];
             const count = items.length;
@@ -122,7 +134,9 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
             const idPreview = extractedIds.length > 0 ? ` | Extracted Keys: [${extractedIds.slice(0, 15).join(', ')}]` : '';
 
             let line = `- Key: "${key}" | Label: "${label}"${fLabel} | Count: ${count} items (Turn ${iterNum})${idPreview}`;
-            if (count === 0) {
+            if (isError) {
+                line = `- Key: "${key}" | Label: "${label}"${fLabel} | Turn ${iterNum} | ❌ TOOL FAILED WITH ERROR: ${errorMsg}`;
+            } else if (count === 0) {
                 line += ` | ⚠️ EMPTY — no matching records exist for this vessel+filter`;
             } else {
                 if (overdue > 0 || upcoming > 0) line += ` | returned: overdue=${overdue}, upcoming=${upcoming}`;
@@ -200,6 +214,18 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     for (const [key, entry] of Object.entries(resolvedEntities)) {
         ledgerLines.push(`  - ${key} → ID = "${entry.id}" (${entry.label})`);
     }
+
+    // 🟢 Secondary Scope Injection
+    const secondaryLines: string[] = [];
+    const secondaryScope = session?.secondaryScope || [];
+    const convCount = session?.humanConversationCount ?? 0;
+    for (const entry of secondaryScope) {
+        secondaryLines.push(`  - ${entry.id} (Conv ${entry.conversationIndex})`);
+    }
+    const secondaryStr = secondaryLines.length > 0
+        ? `\n### 🔄 secondaryScope (Short-Term Memory - Last 4 Conversations, current Conv ${convCount})\n${secondaryLines.join('\n')}`
+        : "";
+
     // ─── ORG CONTEXT GUARD (replaces passive scopeLine) ──────────────────────
     // When no org is in memory AND it's not a HITL continuation (user answering
     // a previous clarifying question), we inject a hard mandatory block so the
@@ -230,6 +256,7 @@ You MUST check the user's current query:
         ledgerLines.length > 0
             ? `Resolved Entities:\n${ledgerLines.join('\n')}\n⚠️ MANDATE: If an entity is listed above, use its ID directly. DO NOT call mcp.resolve_entities for already-resolved entities.`
             : `Resolved Entities: None yet.`,
+        secondaryStr,
         query?.rawQuery
             ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query.rawQuery}"\nPending: ${JSON.stringify(query.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query.activeFilters || {})}\nLast Turn: "${query.lastTurnInsight || ""}"` 
             : "",
@@ -321,25 +348,17 @@ Instruction: Proceed with your investigation based on the complete context provi
     }
 
     console.log(`\x1b[36m[LangGraph Orchestrator] --- PROMPT SENT TO LLM ---\x1b[0m`);
-    const promptJson = JSON.stringify(promptMessages, null, 2);
     
-    // 🟢 Console Visibility Optimization: Hollow out stagnant system instructions flawlessly!
-    const consoleFormatted = promptJson
-        .replace(
-            /"# 🏗️ THE MARITIME SUPERINTENDENT[\s\S]*?### 🛠️ AVAILABLE MCP TOOLS/g,
-            `"[... Stagnant System Instructions Hidden for Brevity ...]\n\n### 🛠️ AVAILABLE MCP TOOLS`
-        )
-        .replace(
-            /### 🛠️ AVAILABLE MCP TOOLS[\s\S]*?### OBSERVATIONAL MEMORY CONTEXT/g,
-            `### 🛠️ AVAILABLE MCP TOOLS\n\n[... ${baseCapabilitiesContract.length} Tool Descriptions Hidden for Brevity ...]\n\n### OBSERVATIONAL MEMORY CONTEXT`
-        );
-
-    const coloredLogs = consoleFormatted
-        .replace(/### OBSERVATIONAL MEMORY CONTEXT/g, `\x1b[35m### OBSERVATIONAL MEMORY CONTEXT\x1b[0m`)
-        .replace(/### 🗂️ SESSION CONTEXT/g, `\x1b[36m### 🗂️ SESSION CONTEXT\x1b[0m`)
-        .replace(/### 🔄 SYSTEM FLAG: ITERATIVE TURN/g, `\x1b[35m### 🔄 SYSTEM FLAG: ITERATIVE TURN\x1b[0m`);
+    // 🟢 Console Visibility Optimization: Dump only the critical debugging objects
+    const debugDump = {
+        sessionContext: state.workingMemory?.sessionContext,
+        queryContext: state.workingMemory?.queryContext,
+        toolResults: state.toolResults,
+        activeMessages: promptMessages.filter(m => m.role !== 'system')
+    };
     
-    console.log(coloredLogs);
+    console.log(`\x1b[35m[DEBUG] State & Scope Context:\x1b[0m`);
+    console.dir(debugDump, { depth: null, colors: true });
 
     let response: any;
     let result: any;
@@ -424,9 +443,26 @@ Instruction: Proceed with your investigation based on the complete context provi
     }
 
 
+    // 🟢 ANTI-PLACEHOLDER GUARD: Strictly enforce the Sequential Turn Mandate.
+    // If the LLM ignored Rule II.5 and emitted a tool call with a placeholder like "<from_...>",
+    // we MUST strip it out before execution to prevent validation errors.
+    // NOTE: t.args is [{key, value}] — NOT a plain object. Object.values() would return the
+    // pair objects themselves (never strings). We must check arg.value directly.
+    const filteredTools = (response.tools || []).filter((t: any) => {
+        const hasPlaceholder = (t.args || []).some((arg: any) =>
+            typeof arg.value === 'string' && (arg.value.includes('<') || arg.value.includes('>'))
+        );
+        if (hasPlaceholder) {
+            const offenders = (t.args || []).filter((a: any) => typeof a.value === 'string' && (a.value.includes('<') || a.value.includes('>')));
+            console.warn(`\x1b[33m[LangGraph Orchestrator] 🛡️ Anti-Placeholder Guard: Stripped tool "${t.name}" — placeholder args: ${offenders.map((a: any) => `${a.key}="${a.value}"`).join(', ')}\x1b[0m`);
+            return false;
+        }
+        return true;
+    });
+
     const nextIterationCount = (state.iterationCount || 0) + 1;
     const updates: Partial<SkylarkState> = {
-        toolCalls: response.tools,
+        toolCalls: filteredTools,
         feedBackVerdict: response.feedBackVerdict,
         reasoning: response.reasoning,
         iterationCount: nextIterationCount,
@@ -453,6 +489,57 @@ Instruction: Proceed with your investigation based on the complete context provi
             if (!updates.selectedResultKeys!.includes(indexedKey)) updates.selectedResultKeys!.push(indexedKey);
         });
         console.log(`[LangGraph Orchestrator] 🎯 Promoted Keys:`, JSON.stringify(updates.selectedResultKeys));
+    }
+
+    // 🟢 SECONDARY SCOPE ACCUMULATION: Reliably store any 'currentScope' ID output by the LLM
+    // across all iterations, so it's not lost if the final SUMMARIZE turn outputs []
+    const incomingIds: string[] = (response.currentScope || []).filter((id: any) => typeof id === 'string' && id.length > 0);
+    const previouslyAccumulated = state.workingMemory?.queryContext?.accumulatedScope || [];
+    const finalIdsToPromote = [...new Set([...previouslyAccumulated, ...incomingIds])];
+
+    if (!updates.workingMemory) updates.workingMemory = { 
+        sessionContext: state.workingMemory?.sessionContext || { scope: {}, resolvedEntities: {} },
+        queryContext: state.workingMemory?.queryContext || { rawQuery: '', pendingIntents: [], activeFilters: {}, lastTurnInsight: '' }
+    };
+    updates.workingMemory.queryContext = {
+        ...updates.workingMemory.queryContext,
+        accumulatedScope: finalIdsToPromote
+    } as any;
+
+    // 🟢 SECONDARY SCOPE LOCK-IN: Promote accumulatedScope → secondaryScope at the SUMMARIZE finish line.
+    // This is the ONLY place that writes secondaryScope. update_memory2 does NOT touch it.
+    // Runs on every SUMMARIZE verdict (including multi-turn ones), never on FEED_BACK_TO_ME.
+    if (response.feedBackVerdict === 'SUMMARIZE' && !response.clarifyingQuestion) {
+        const currentSession = state.workingMemory?.sessionContext;
+        const currentConvCount = currentSession?.humanConversationCount ?? 0;
+
+        // Step B+C: Wrap each new ID with this conversation's index (deduplicate against existing entries)
+        const existingSecondary = currentSession?.secondaryScope || [];
+        const newEntries = finalIdsToPromote
+            .filter(id => !existingSecondary.some(e => e.id === id))
+            .map(id => ({ id, label: id, conversationIndex: currentConvCount }));
+
+        // Step D: Prune — rolling window keeps Current + Last 3 finalized conversations
+        const pruneThreshold = currentConvCount - 3;
+        const prunedSecondary = [...existingSecondary, ...newEntries]
+            .filter(e => e.conversationIndex >= pruneThreshold);
+
+        // Step E: Tick the conversation counter (marks this investigation as finalized)
+        const updatedSession = {
+            ...(currentSession || { scope: {}, resolvedEntities: {} }),
+            secondaryScope: prunedSecondary,
+            humanConversationCount: currentConvCount + 1,
+        };
+
+        updates.workingMemory.sessionContext = updatedSession;
+        updates.workingMemory.queryContext.accumulatedScope = []; // Reset after lock-in
+
+        console.log(`\x1b[35m[Orchestrator] 🔒 Conv ${currentConvCount} locked-in: +${newEntries.length} IDs promoted, ${prunedSecondary.length} active in window (pruneThreshold=${pruneThreshold}), counter → ${currentConvCount + 1}\x1b[0m`);
+        if (finalIdsToPromote.length > 0) {
+            console.log(`\x1b[35m[Orchestrator]    Scope IDs: [${finalIdsToPromote.join(', ')}]\x1b[0m`);
+        } else {
+            console.log(`\x1b[35m[Orchestrator]    currentScope was empty across all turns — no new IDs added to secondaryScope this conversation.\x1b[0m`);
+        }
     }
 
     // If there is a clarifying question, append it to messages so the Summarizer can look at it

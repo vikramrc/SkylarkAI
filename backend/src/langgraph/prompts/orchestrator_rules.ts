@@ -38,7 +38,7 @@ If the user asks for a **Fleet-Wide** or **Org-Wide** query, you MUST call \`fle
 
 ### 5. The Sequential Turn Mandate (Dependency Gate)
 You are STRICTLY FORBIDDEN from attempting to chain a discovery tool (e.g., \`mcp.resolve_entities\`) and a retrieval tool (e.g., \`budget.query_cost_analysis\`) in the SAME turn if the retrieval tool depends on the ID being resolved.
-*   **No Placeholders**: Never use placeholders like \`"<resolved_id>"\`, \`"pending"\`, or \`"<id>"\` in tool arguments.
+*   **No Placeholders**: Never use placeholders like \`"<resolved_id>"\`, \`"pending"\`, \`"<id>"\`, or \`"<from_..._results>"\` in tool arguments. If a dependent tool requires an ID that you do not yet have, you MUST omit the dependent tool entirely in the current turn. Wait for the first tool to return the real IDs, and call the dependent tool in the NEXT turn.
 *   **Turn Cycle**: Turn N MUST be for Resolution. Turn N+1 MUST be for Retrieval using the discovered ID. 
 *   **FEED_BACK_TO_ME Required**: Whenever you perform a resolution/discovery tool call in Turn N with the intention of using its results in Turn N+1, you **MUST** set \`feedBackVerdict\` to \`"FEED_BACK_TO_ME"\`. If you set it to \`"SUMMARIZE"\`, the graph will terminate and you will never get your Turn N+1.
 *   **Exception**: Independent tools (e.g., "Overdue" vs "Upcoming") SHOULD still be called in parallel.
@@ -148,11 +148,11 @@ For every tool you select, you must provide a **Confidence Score (0.0 - 1.0)**:
 ## VIII. THE SPECIFICITY & PARALLELIZATION MANDATE (CRITICAL)
 When the user requests data across multiple specific entities (e.g., "Vessel A and Vessel B") OR uses a distributed scope (e.g., "for all vessels", "per entity"), you **MUST** fetch data at the most specific level possible.
 
-1. **Identify the Target Scope (\`currentScope\`)**: You MUST determine exactly which entity IDs from your \`Resolved Entities\` ledger match the user's current request, and output them in your \`currentScope\` array.
+1. **Identify the Target Scope (\`currentScope\`)**: You MUST determine exactly which entity IDs from your \`Resolved Entities\` ledger AND your \`secondaryScope\` (entity IDs you explicitly committed in \`currentScope\` at the end of prior finalized conversations) match the user's current request, and output them in your \`currentScope\` array.
 2. **Rule of Specificity**: If a data retrieval tool accepts a specific entity ID parameter (e.g., \`vesselID\`, \`costCenterID\`), you **MUST** provide it if that ID exists in your \`currentScope\`. You are strictly forbidden from taking a shortcut by omitting the optional ID parameter to run a generalized, organization-wide query.
 3. **Mathematical Parallelization**: Because data retrieval tools only accept one ID per call, you MUST generate separate parallel tool calls—passing exactly ONE specific ID into each call—for every single entity listed in your \`currentScope\`.
 
-- **Step 1 (Check Memory):** ALWAYS check your \`Resolved Entities\` ledger first to build your \`currentScope\`. If the subset is ALREADY listed there, you MUST instantly use those IDs to make your parallel data retrieval calls in the CURRENT turn.
+- **Step 1 (Check Ledger & Short-Term Memory):** ALWAYS check your \`Resolved Entities\` ledger AND your \`secondaryScope\` to build your \`currentScope\`. Your \`secondaryScope\` is a curated rolling window (last 4 conversations) of entity IDs that YOU explicitly targeted in past investigations — treat these with the same confidence as ledger entries. If the user's follow-up clearly refers to entities from a recent investigation (e.g., "show me more for those vessels", "drill into those same machines"), map that reference to the IDs in your \`secondaryScope\` and use them to build parallel tool calls in the CURRENT turn.
 - **Step 2 (Discover):** If the user's request targets entities (e.g., "Vessel A") OR implies a distributed scope (e.g., "all vessels", "per vessel", "fleet-wide") and those entity IDs are MISSING from your memory block, you **MUST** call a discovery tool (e.g., \`fleet.query_overview\`) to find them BEFORE you call any data retrieval tools. You are strictly forbidden from bypassing this discovery step by defaulting to a generalized organization-wide query. When doing this, call the discovery tool ONLY in this turn, and set \`feedBackVerdict: "FEED_BACK_TO_ME"\`. In the NEXT turn, your ledger will be populated, and you MUST proceed to Step 1.
 \`;
 `

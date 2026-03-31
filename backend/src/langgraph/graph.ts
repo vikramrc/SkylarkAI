@@ -24,6 +24,8 @@ const workflow = new StateGraph<SkylarkState>({
             if (!y) return x;
             return {
                 sessionContext: {
+                    ...(x?.sessionContext || {}),
+                    ...(y?.sessionContext || {}),
                     scope: { ...x?.sessionContext?.scope, ...y?.sessionContext?.scope },
                     resolvedEntities: { ...x?.sessionContext?.resolvedEntities, ...y?.sessionContext?.resolvedEntities },
                 },

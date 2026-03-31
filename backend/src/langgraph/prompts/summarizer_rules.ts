@@ -73,6 +73,21 @@ When updating the "OBSERVATIONAL STATUS CONTEXT" or committing results to memory
 1.  **Mandatory ID Labeling**: You MUST explicitly label every Database ID with its canonical key (e.g., \`budgetID=...\`, \`vesselID=...\`, \`costCenterID=...\`). 
 2.  **Generic Label Isolation**: NEVER list a human-readable label (e.g., a vessel name or cost center code) next to an ID unless that ID is the canonical primary key for that specific entity type.
 3.  **Strict structural Separation**: Maintain a clear distinction between a parent entity's ID (e.g., a Budget) and related sub-entity identifiers (e.g., the associated Cost Center or Department). Do **NOT** allow the IDs to bleed across unrelated labels in the summary text.
+
+---
+
+## VIII. ENTITY RECOGNITION (The JSON Mapping Rule)
+At the very end of your response, you MUST output a structured \`[ENTITIES]\` block containing a valid JSON array of every unique entity ID you processed.
+1. You must map each ID to its human-readable name and its Model Type from the Phoenix Knowledge Graph (e.g., Vessel, MaintenanceSchedule).
+2. Format the response EXACTLY as a JSON array wrapped in \`[ENTITIES]\` tags. Do NOT use markdown codefences inside the tags for the JSON.
+
+FORMAT EXAMPLE:
+[ENTITIES]
+[
+  { "modelType": "Vessel", "name": "XXX1", "id": "683b..." },
+  { "modelType": "MaintenanceSchedule", "name": "Ocean Creation 1", "id": "68e3..." }
+]
+[/ENTITIES]
 \`;
 `
 ;

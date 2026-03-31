@@ -49,8 +49,9 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
         queryContext: { rawQuery: "", pendingIntents: [], activeFilters: {}, lastTurnInsight: "" },
     };
 
-    // Clone Tier 1 for mutation
+    // Clone Tier 1 for mutation (preserving secondaryScope, humanConversationCount, etc)
     const sessionContext = {
+        ...existingMemory.sessionContext,
         scope: { ...existingMemory.sessionContext?.scope },
         resolvedEntities: { ...existingMemory.sessionContext?.resolvedEntities },
     };
@@ -143,6 +144,24 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                 }
             }
 
+            // 🟢 Extract schedule entities from maintenance.query_schedules results
+            if (data?.capability === "maintenance.query_schedules" && Array.isArray(data?.items)) {
+                for (const item of data.items) {
+                    const fallbackName = item.shortName || item.name || item.scheduleName || item.title || item._id;
+                    if (item._id) { 
+                        const ledgerKey = `schedule:${fallbackName}`;
+                        if (!sessionContext.resolvedEntities[ledgerKey]) {
+                            sessionContext.resolvedEntities[ledgerKey] = {
+                                id: item._id,
+                                label: fallbackName,
+                                entityType: "schedule",
+                            };
+                            console.log(`\x1b[32m[UpdateMemory2] ✅ Schedule Ledger Extracted: "${ledgerKey}" → "${item._id}"\x1b[0m`);
+                        }
+                    }
+                }
+            }
+
             // 🟢 Extract crew member entities from crew.query_members
             if (data?.capability === "crew.query_members" && Array.isArray(data?.items)) {
                 for (const item of data.items) {
@@ -182,6 +201,11 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     const ledgerCount = Object.keys(sessionContext.resolvedEntities).length;
     console.log(`\x1b[36m[UpdateMemory2] 📒 Tier 1 Ledger now has ${ledgerCount} resolved entit${ledgerCount === 1 ? 'y' : 'ies'}.\x1b[0m`);
 
+    // ─────────────────────────────────────────────────────────────────
+    // NOTE: secondaryScope is intentionally NOT written here.
+    // Its promotion (currentScope → secondaryScope with conversationIndex tagging
+    // and 4-conversation rolling pruning) is handled deterministically in
+    // orchestrator.ts at the SUMMARIZE "finish line", keeping this node clean.
     // ─────────────────────────────────────────────────────────────────
     // PHASE 1b: Tier 2 reset logic
     // ─────────────────────────────────────────────────────────────────

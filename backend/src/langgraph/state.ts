@@ -23,6 +23,15 @@ export interface SkylarkState {
         label: string;
         entityType: string;
       }>;
+      // 🟢 Rolling short-term memory: IDs locked-in at the end of each finalized conversation.
+      // Tagged with conversationIndex so we can prune to a 4-conversation sliding window.
+      secondaryScope?: {
+        id: string;
+        label: string;
+        conversationIndex: number;
+      }[];
+      // Counts ONLY finalized conversations (incremented on every SUMMARIZE verdict).
+      humanConversationCount?: number;
     };
 
     // TIER 2: Query-scoped. Reset on every new user question. LLM-written (Zod structured output, NOT prose).
@@ -31,6 +40,7 @@ export interface SkylarkState {
       pendingIntents: string[];      // What from rawQuery remains unanswered (max 5 items)
       activeFilters: Record<string, string>; // Current active tool filters (dateRange, statusCode, etc.)
       lastTurnInsight: string;       // ONE sentence max 120 chars. What just happened this turn.
+      accumulatedScope?: string[];   // All IDs listed in currentScope across all turns of this query
     };
   };
 
