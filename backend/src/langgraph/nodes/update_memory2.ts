@@ -43,17 +43,15 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // ─────────────────────────────────────────────────────────────────
     // PHASE 1: Code-driven — deterministic extraction, zero LLM cost
     // ─────────────────────────────────────────────────────────────────
-
     const existingMemory = state.workingMemory || {
-        sessionContext: { scope: {}, resolvedEntities: {} },
+        sessionContext: { scope: {} },
         queryContext: { rawQuery: "", pendingIntents: [], activeFilters: {}, lastTurnInsight: "" },
     };
 
-    // Clone Tier 1 for mutation (preserving secondaryScope, humanConversationCount, etc)
-    const sessionContext = {
-        ...existingMemory.sessionContext,
+    // Return ONLY the nested scope mutation to allow flawless parallel deep-merging.
+    // Do NOT spread existing session state to avoid overwriting Summarizer's parallel buffer commits!
+    const sessionStateCommit = {
         scope: { ...existingMemory.sessionContext?.scope },
-        resolvedEntities: { ...existingMemory.sessionContext?.resolvedEntities },
     };
 
     // Flatten latest tool results
@@ -80,126 +78,16 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
             }
 
             // Extract org scope from any tool result
-            if (data?.organizationID && !sessionContext.scope.organizationID) {
-                sessionContext.scope.organizationID = data.organizationID;
+            if (data?.organizationID && !sessionStateCommit.scope.organizationID) {
+                sessionStateCommit.scope.organizationID = data.organizationID;
                 console.log(`\x1b[33m[UpdateMemory2] 🏢 Captured orgID: ${data.organizationID}\x1b[0m`);
             }
-            if (data?.appliedFilters?.organizationShortName && !sessionContext.scope.organizationShortName) {
-                sessionContext.scope.organizationShortName = data.appliedFilters.organizationShortName;
+            if (data?.appliedFilters?.organizationShortName && !sessionStateCommit.scope.organizationShortName) {
+                sessionStateCommit.scope.organizationShortName = data.appliedFilters.organizationShortName;
                 console.log(`\x1b[33m[UpdateMemory2] 🏢 Captured orgShortName: ${data.appliedFilters.organizationShortName}\x1b[0m`);
-            }
-
-            // Extract resolved entities from mcp.resolve_entities results
-            if (data?.capability === "mcp.resolve_entities" && Array.isArray(data?.items)) {
-                const entityType = data.appliedFilters?.entityType || "unknown";
-                const searchTerm = data.appliedFilters?.searchTerm || "unknown";
-                for (const item of data.items) {
-                    if (item.id && item.id.length === 24) { // Must be a valid 24-char hex ID
-                        const ledgerKey = `${entityType}:${searchTerm}`;
-                        if (!sessionContext.resolvedEntities[ledgerKey]) {
-                            sessionContext.resolvedEntities[ledgerKey] = {
-                                id: item.id,
-                                label: item.label || searchTerm,
-                                entityType,
-                            };
-                            console.log(`\x1b[32m[UpdateMemory2] ✅ Entity Ledger: "${ledgerKey}" → "${item.id}"\x1b[0m`);
-                        } else {
-                            console.log(`\x1b[33m[UpdateMemory2] ⚠️ Entity Ledger: "${ledgerKey}" already resolved to "${sessionContext.resolvedEntities[ledgerKey].id}" — skipping duplicate ID "${item.id}"\x1b[0m`);
-                        }
-                    }
-                }
-            }
-
-            // 🟢 Extract vessel entities explicitly from fleet.query_overview results
-            if (data?.capability === "fleet.query_overview" && Array.isArray(data?.items)) {
-                for (const item of data.items) {
-                    if (item._id && item.vesselName) { 
-                        const ledgerKey = `vessel:${item.vesselName}`;
-                        if (!sessionContext.resolvedEntities[ledgerKey]) {
-                            sessionContext.resolvedEntities[ledgerKey] = {
-                                id: item._id,
-                                label: item.vesselName,
-                                entityType: "vessel",
-                            };
-                            console.log(`\x1b[32m[UpdateMemory2] ✅ Fleet Ledger Extracted: "${ledgerKey}" → "${item._id}"\x1b[0m`);
-                        }
-                    }
-                }
-            }
-
-            // 🟢 Extract machinery entities from fleet.query_machinery_status results
-            if (data?.capability === "fleet.query_machinery_status" && Array.isArray(data?.items)) {
-                for (const item of data.items) {
-                    if (item._id && item.machineryName) { 
-                        const ledgerKey = `machinery:${item.machineryName}`;
-                        if (!sessionContext.resolvedEntities[ledgerKey]) {
-                            sessionContext.resolvedEntities[ledgerKey] = {
-                                id: item._id,
-                                label: item.machineryName,
-                                entityType: "machinery",
-                            };
-                            console.log(`\x1b[32m[UpdateMemory2] ✅ Machinery Ledger Extracted: "${ledgerKey}" → "${item._id}"\x1b[0m`);
-                        }
-                    }
-                }
-            }
-
-            // 🟢 Extract schedule entities from maintenance.query_schedules results
-            if (data?.capability === "maintenance.query_schedules" && Array.isArray(data?.items)) {
-                for (const item of data.items) {
-                    const fallbackName = item.shortName || item.name || item.scheduleName || item.title || item._id;
-                    if (item._id) { 
-                        const ledgerKey = `schedule:${fallbackName}`;
-                        if (!sessionContext.resolvedEntities[ledgerKey]) {
-                            sessionContext.resolvedEntities[ledgerKey] = {
-                                id: item._id,
-                                label: fallbackName,
-                                entityType: "schedule",
-                            };
-                            console.log(`\x1b[32m[UpdateMemory2] ✅ Schedule Ledger Extracted: "${ledgerKey}" → "${item._id}"\x1b[0m`);
-                        }
-                    }
-                }
-            }
-
-            // 🟢 Extract crew member entities from crew.query_members
-            if (data?.capability === "crew.query_members" && Array.isArray(data?.items)) {
-                for (const item of data.items) {
-                    if (item.crewMemberID && item.designation) { 
-                        const ledgerKey = `crew:${item.designation}`;
-                        if (!sessionContext.resolvedEntities[ledgerKey]) {
-                            sessionContext.resolvedEntities[ledgerKey] = {
-                                id: item.crewMemberID,
-                                label: item.designation,
-                                entityType: "crew",
-                            };
-                            console.log(`\x1b[32m[UpdateMemory2] ✅ Crew Ledger Extracted: "${ledgerKey}" → "${item.crewMemberID}"\x1b[0m`);
-                        }
-                    }
-                }
-            }
-
-            // 🟢 Extract budgets from budget.query_overview
-            if (data?.capability === "budget.query_overview" && Array.isArray(data?.items)) {
-                for (const item of data.items) {
-                    if (item._id && item.name) { 
-                        const ledgerKey = `budget:${item.name}`;
-                        if (!sessionContext.resolvedEntities[ledgerKey]) {
-                            sessionContext.resolvedEntities[ledgerKey] = {
-                                id: item._id,
-                                label: item.name,
-                                entityType: "budget",
-                            };
-                            console.log(`\x1b[32m[UpdateMemory2] ✅ Budget Ledger Extracted: "${ledgerKey}" → "${item._id}"\x1b[0m`);
-                        }
-                    }
-                }
             }
         }
     }
-
-    const ledgerCount = Object.keys(sessionContext.resolvedEntities).length;
-    console.log(`\x1b[36m[UpdateMemory2] 📒 Tier 1 Ledger now has ${ledgerCount} resolved entit${ledgerCount === 1 ? 'y' : 'ies'}.\x1b[0m`);
 
     // ─────────────────────────────────────────────────────────────────
     // NOTE: secondaryScope is intentionally NOT written here.
@@ -241,19 +129,18 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // to declare "metric is unknown" → stall → discovery loop.
     // ─────────────────────────────────────────────────────────────────
     const allMessages = state.messages || [];
-    let rawQuery: string;
-    if (isNewQuery) {
+    let rawQuery = existingRawQuery; 
+    
+    if (!rawQuery && isNewQuery) {
         // Genuinely new request — use the latest human message
         const lastHumanMsg = [...allMessages].reverse().find((m: any) => {
-            const type = m._getType?.() || m.role;
+            const type = m._getType?.() || m.role || 'human';
             return type === 'human';
         });
         rawQuery = (lastHumanMsg as any)?.content || "";
-        console.log(`\x1b[33m[UpdateMemory2] 🔄 New query — rawQuery set from last human message: "${rawQuery.substring(0, 80)}"\x1b[0m`);
-    } else if (existingRawQuery) {
-        // Continuation with established rawQuery — preserve it
-        rawQuery = existingRawQuery;
-        console.log(`\x1b[32m[UpdateMemory2] ♻️  Continuation — rawQuery PRESERVED from memory: "${rawQuery.substring(0, 80)}"\x1b[0m`);
+        console.log(`\x1b[33m[UpdateMemory2] ⚓ Anchoring rawQuery from last human message: "${rawQuery.substring(0, 80)}"\x1b[0m`);
+    } else if (rawQuery) {
+        console.log(`\x1b[33m[UpdateMemory2] ♻️ Using existing rawQuery anchor: "${rawQuery.substring(0, 80)}"\x1b[0m`);
     } else {
         // Edge case: first HITL continuation turn — memory exists but rawQuery was never set yet.
         // Use the FIRST HumanMessage in the thread (the original question), NOT the last one
@@ -320,7 +207,7 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
 
     // Build previous query context for Phase 2
     let previousQueryContext = isNewQuery
-        ? { rawQuery, pendingIntents: [], activeFilters: {}, lastTurnInsight: "" }
+        ? { rawQuery, pendingIntents: [], activeFilters: {}, lastTurnInsight: "", accumulatedScope: [] }
         : { ...existingMemory.queryContext, rawQuery }; // rawQuery always comes from our resolved value above
 
     // ─────────────────────────────────────────────────────────────────
@@ -374,6 +261,7 @@ Rules:
    - IMPORTANT: If a discovery tool ran (e.g. fleet overview returning vessel IDs), the discovery intent is NOW COMPLETE. Do NOT keep "discover vessels" as a pending intent.
    - IMPORTANT: If entity IDs are now known (from discovery), the retrieval step is the ONLY remaining intent.
 2. activeFilters: Extract all filters that are scoping the current query (e.g. statusCode, startDate, limit, distributionScope like "per vessel"). 
+   - ENTITY PRESERVATION: If the original 'rawQuery' contains a specific label (e.g. 'XXX1', 'DFGRE') that is NOT yet a canonical 24-char hex ID, you MUST preserve it in 'activeFilters' even if the user provides a different piece of info (like an Organization). Do NOT allow a context refinement to delete an unresolved label.
    - If the user specifies a limit or distribution scope, add them here. Do NOT hallucinate filters that are not clearly requested.
 3. lastTurnInsight: One sentence only. Focus on what was resolved or found. If entities were resolved, mention the count. Max 150 chars.`;
 
@@ -408,6 +296,7 @@ ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.
         }
 
         const updatedQueryContext = {
+            ...previousQueryContext,
             rawQuery,   // Always use our deterministically resolved rawQuery, not whatever the LLM might output
             pendingIntents: response.pendingIntents || [],
             activeFilters: activeFiltersRecord,
@@ -429,7 +318,7 @@ ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.
 
         return {
             workingMemory: {
-                sessionContext,
+                sessionContext: sessionStateCommit,
                 queryContext: updatedQueryContext,
             },
             isHITLContinuation: false, // Reset after processing
@@ -441,7 +330,7 @@ ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.
         // Graceful degradation: keep existing memory, don't crash the graph
         return {
             workingMemory: {
-                sessionContext,
+                sessionContext: sessionStateCommit,
                 queryContext: { ...previousQueryContext, rawQuery },
             },
             isHITLContinuation: false,

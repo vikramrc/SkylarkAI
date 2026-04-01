@@ -19,7 +19,7 @@ const workflow = new StateGraph<SkylarkState>({
       default: () => [],
     },
     workingMemory: {
-        // Deep-merge: incoming y wins for scalar fields, but resolvedEntities accumulates (never wipes)
+        // Deep-merge: incoming y wins for scalar fields
         reducer: (x: any, y: any) => {
             if (!y) return x;
             return {
@@ -27,13 +27,12 @@ const workflow = new StateGraph<SkylarkState>({
                     ...(x?.sessionContext || {}),
                     ...(y?.sessionContext || {}),
                     scope: { ...x?.sessionContext?.scope, ...y?.sessionContext?.scope },
-                    resolvedEntities: { ...x?.sessionContext?.resolvedEntities, ...y?.sessionContext?.resolvedEntities },
                 },
                 queryContext: y?.queryContext ?? x?.queryContext,
             };
         },
         default: () => ({
-            sessionContext: { scope: {}, resolvedEntities: {} },
+            sessionContext: { scope: {} },
             queryContext: { rawQuery: "", pendingIntents: [], activeFilters: {}, lastTurnInsight: "" },
         }),
     },

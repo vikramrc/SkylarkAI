@@ -327,6 +327,35 @@ We have standardized the production environment access and deployment configurat
 - **Root Path**: `/home/azureuser/maximapmx/skylark`
 - **Nginx Subpath**: `/phoenixai/` (Proxied to `localhost:4000`)
 
+---
+
+## 🛠️ 60. Relational Reasoning & Knowledge Graph (v2.3)
+We evolved the agent's internal "Mental Model" from a reactive state to a proactive, **Relational Reasoner**. This phase decoupled behavioral reasoning from data facts, creating a sturdy, human-like deduction engine.
+
+### 🟢 Knowledge Graph Refactor (Hyper-Rich v2.3):
+- **Formal Semantic Definitions**: Updated [phoenix_knowledge_graph.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/knowledge/phoenix_knowledge_graph.ts) with explicit definitions for:
+  - **DOMAIN_HIERARCHIES**: Vertical Ownership/Containment (The "Parent-Child" Stack).
+  - **ENTITY_RELATIONSHIPS**: Horizontal Bridges/Associations (The "Cross-Domain" Connectors).
+  - **REASONING_INFERENCE_MAP**: Semantic Proximity (The "Colloquial Compass").
+- **Hyper-Rich Vertical Hierarchies**: Mapped 7 deep domains (Maintenance, Procurement, Finance, Inventory, Safety, Crew, Documents) to 5-7 levels each, based on a full audit of 80+ backend models.
+- **Cross-Domain "Bridges"**: Implemented 14+ horizontal connectors (e.g., `Activity` ↔ `BudgetAllocation`, `CrewMember` ↔ `DocumentMetadata`) to enable autonomous multi-hop reasoning (e.g., tracing a technical failure to a financial invoice).
+
+### 🟢 Orchestrator Hardening (Relational Deduction Protocol II.B):
+- **The Decoupling Mandate**: Moved operational strategy out of the Knowledge Graph and into the [orchestrator_rules.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/prompts/orchestrator_rules.ts).
+- **Five-Tier Deduction Framework**:
+  - **Rule 1: Structural Inference**: AI must infer "Parent" type (e.g., Vessel) if the user requests a "Child" entity (e.g., Schedule).
+  - **Rule 2: Functional Constraint**: Unclassified labels inherit the type required by the tool's parameter signature (The "Logic Gate").
+  - **Rule 3: Contextual Anchoring**: Strictly protects Global Organization context from being substituted for sub-entities.
+  - **Rule 4: Mandatory Hard-Stop (HITL)**: If Rules 1-3 fail to resolve a label with high confidence (>0.7), the agent is **strictly forbidden from guessing**. It MUST pause and trigger a **Human-In-The-Loop (HITL)** turn via `clarifyingQuestion`.
+  - **Rule 5: Relational Persistence**: Insulates unclassified labels from being "lost" across turns when the user provides context (e.g., providing an Org name shouldn't flush the search for 'XXX1').
+
+### 📑 Final Session Checklist:
+- [x] **Hierarchy Depth**: Verified 7 domains are mapped to 5+ levels of depth.
+- [x] **Bridge Logic**: Confirmed the AI can navigate from a technical `Activity` to a financial `Invoice` via the `BudgetAllocation` bridge.
+- [x] **Prompt Hygiene**: Verified that all specific-case examples (e.g., "fleetships", "XXX1") have been removed from the core architecture, ensuring a general, scaleable mental model.
+- [x] **Ambiguity Recovery**: Verified Rule 4 (Hard-Stop) correctly triggers a clarification request for opaque labels rather than hallucinating matches.
+- [x] **Build Integrity**: Confirmed the system is fully compilable (`npx tsc --noEmit`) after the v2.3 refactor.
+
 ### 🟢 Diagnostic Commands:
 - **SSH Access**:
   ```bash

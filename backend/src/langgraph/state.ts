@@ -16,18 +16,16 @@ export interface SkylarkState {
         organizationShortName?: string;
         organizationName?: string;
       };
-      // Key = "entityType:humanLabel" (e.g. "cost_center:TESTCOSTCENTER1")
-      // Value = resolved DB ID and metadata
-      resolvedEntities: Record<string, {
-        id: string;
-        label: string;
-        entityType: string;
-      }>;
-      // 🟢 Rolling short-term memory: IDs locked-in at the end of each finalized conversation.
-      // Tagged with conversationIndex so we can prune to a 4-conversation sliding window.
+      // 🟢 Long-term infinite buffer compressed by LLM every 20 conversations
+      longTermBuffer?: string;
+      // 🟢 Exact verbatim text of Q&A for the last 7 to 20 window
+      summaryBuffer?: { q: string; a: string; conversationIndex: number }[];
+      // 🟢 Rolling short-term memory of canonical concrete IDs
+      // Tagged with conversationIndex so we can prune to the exact same 7-conversations verbatim window
       secondaryScope?: {
+        modelType: string;
+        name: string;
         id: string;
-        label: string;
         conversationIndex: number;
       }[];
       // Counts ONLY finalized conversations (incremented on every SUMMARIZE verdict).

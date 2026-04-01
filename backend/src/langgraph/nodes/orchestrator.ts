@@ -60,6 +60,23 @@ async function getCapabilitiesCached(backendUrl: string, params: any): Promise<a
 export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<SkylarkState>> {
     console.log(`[LangGraph] ▶ Orchestrator Node invoked (Iteration: ${state.iterationCount || 0})`);
     
+    // 🟢 TOPIC ANCHORING: Ensure the investigation has a stable "Notebook" entry from the very first turn.
+    // This prevents "HITL Context Collapse" where the AI forgets the original question after a clarifying loop.
+    let anchoredRawQuery = state.workingMemory?.queryContext?.rawQuery || "";
+    if (!anchoredRawQuery) {
+        // Look for the initial human message of THIS investigation cycle
+        const messages = state.messages || [];
+        const startIdx = state.startTurnIndex || 0;
+        const initialHumanMsg = messages.slice(startIdx).find((m: any) => {
+           const type = m._getType?.() || m.role || 'human';
+           return type === 'human';
+        });
+        if (initialHumanMsg) {
+            anchoredRawQuery = (initialHumanMsg as any).content || "";
+            console.log(`\x1b[35m[LangGraph Orchestrator] ⚓ Anchoring Topic: "${anchoredRawQuery.substring(0, 60)}..."\x1b[0m`);
+        }
+    }
+
     // Use OpenAI's native Structured Outputs API (jsonSchema method).
     // This is the correct binding for models that output JSON as text content rather than tool calls.
     // It guarantees schema-conformant output deterministically, unlike the default function-calling binding.
@@ -209,21 +226,27 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     const session = state.workingMemory?.sessionContext;
     const query = state.workingMemory?.queryContext;
 
-    const ledgerLines: string[] = [];
-    const resolvedEntities = session?.resolvedEntities || {};
-    for (const [key, entry] of Object.entries(resolvedEntities)) {
-        ledgerLines.push(`  - ${key} → ID = "${entry.id}" (${entry.label})`);
-    }
-
-    // 🟢 Secondary Scope Injection
-    const secondaryLines: string[] = [];
-    const secondaryScope = session?.secondaryScope || [];
     const convCount = session?.humanConversationCount ?? 0;
-    for (const entry of secondaryScope) {
-        secondaryLines.push(`  - ${entry.id} (Conv ${entry.conversationIndex})`);
-    }
+
+    // 🟢 Long Term Buffer (Deep Compression History)
+    const longTermStr = session?.longTermBuffer 
+        ? `\n### 📚 LONG TERM HISTORY\n${session.longTermBuffer}`
+        : "";
+
+    // 🟢 Summary Buffer (Verbatim Recent Q&A History)
+    const summaryLines: string[] = (session?.summaryBuffer || []).map(entry => 
+        `Q: ${entry.q}\nA: ${entry.a}\n(Conv ${entry.conversationIndex})`
+    );
+    const summaryStr = summaryLines.length > 0
+        ? `\n### 🛰️ RECENT OBSERVATIONAL MEMORY\n${summaryLines.join('\n---\n')}`
+        : "";
+
+    // 🟢 Secondary Scope (Concrete Entity IDs)
+    const secondaryLines: string[] = (session?.secondaryScope || []).map(entry => 
+        `  - [${entry.modelType}] ${entry.name} → ID = "${entry.id}" (Conv ${entry.conversationIndex})`
+    );
     const secondaryStr = secondaryLines.length > 0
-        ? `\n### 🔄 secondaryScope (Short-Term Memory - Last 4 Conversations, current Conv ${convCount})\n${secondaryLines.join('\n')}`
+        ? `\n### 🗃️ SECONDARY SCOPE (Last 7 Conversations, current Conv ${convCount})\n${secondaryLines.join('\n')}`
         : "";
 
     // ─── ORG CONTEXT GUARD (replaces passive scopeLine) ──────────────────────
@@ -253,16 +276,17 @@ You MUST check the user's current query:
     const memoryContext = [
         `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
         orgContextBlock,
-        ledgerLines.length > 0
-            ? `Resolved Entities:\n${ledgerLines.join('\n')}\n⚠️ MANDATE: If an entity is listed above, use its ID directly. DO NOT call mcp.resolve_entities for already-resolved entities.`
-            : `Resolved Entities: None yet.`,
+        longTermStr,
+        summaryStr,
         secondaryStr,
-        query?.rawQuery
-            ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query.rawQuery}"\nPending: ${JSON.stringify(query.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query.activeFilters || {})}\nLast Turn: "${query.lastTurnInsight || ""}"` 
+        query?.rawQuery || anchoredRawQuery
+            ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${(query?.accumulatedScope || []).join(', ')}]` 
             : "",
         resultsContext,
         decisionJournal,
     ].filter(Boolean).join('\n');
+
+    console.log(`\n\x1b[36m[Orchestrator] 🧠 Memory Context Injected:\x1b[0m\n${memoryContext}\n`);
 
 
     const systemInstruction = loadOrchestratorPrompt();
@@ -498,49 +522,22 @@ Instruction: Proceed with your investigation based on the complete context provi
     const finalIdsToPromote = [...new Set([...previouslyAccumulated, ...incomingIds])];
 
     if (!updates.workingMemory) updates.workingMemory = { 
-        sessionContext: state.workingMemory?.sessionContext || { scope: {}, resolvedEntities: {} },
-        queryContext: state.workingMemory?.queryContext || { rawQuery: '', pendingIntents: [], activeFilters: {}, lastTurnInsight: '' }
+        sessionContext: state.workingMemory?.sessionContext || { scope: {} },
+        queryContext: state.workingMemory?.queryContext || { rawQuery: anchoredRawQuery, pendingIntents: [], activeFilters: {}, lastTurnInsight: '' }
     };
     updates.workingMemory.queryContext = {
         ...updates.workingMemory.queryContext,
+        rawQuery: updates.workingMemory.queryContext.rawQuery || anchoredRawQuery, // Preserve anchor
         accumulatedScope: finalIdsToPromote
     } as any;
 
-    // 🟢 SECONDARY SCOPE LOCK-IN: Promote accumulatedScope → secondaryScope at the SUMMARIZE finish line.
-    // This is the ONLY place that writes secondaryScope. update_memory2 does NOT touch it.
-    // Runs on every SUMMARIZE verdict (including multi-turn ones), never on FEED_BACK_TO_ME.
+    // NOTE: secondaryScope lock-in and 7-conversation pruning is now handled natively
+    // in the summarizer node by parsing the [ENTITIES] block, eliminating Orchestrator guesswork.
+    
     if (response.feedBackVerdict === 'SUMMARIZE' && !response.clarifyingQuestion) {
-        const currentSession = state.workingMemory?.sessionContext;
-        const currentConvCount = currentSession?.humanConversationCount ?? 0;
-
-        // Step B+C: Wrap each new ID with this conversation's index (deduplicate against existing entries)
-        const existingSecondary = currentSession?.secondaryScope || [];
-        const newEntries = finalIdsToPromote
-            .filter(id => !existingSecondary.some(e => e.id === id))
-            .map(id => ({ id, label: id, conversationIndex: currentConvCount }));
-
-        // Step D: Prune — rolling window keeps Current + Last 3 finalized conversations
-        const pruneThreshold = currentConvCount - 3;
-        const prunedSecondary = [...existingSecondary, ...newEntries]
-            .filter(e => e.conversationIndex >= pruneThreshold);
-
-        // Step E: Tick the conversation counter (marks this investigation as finalized)
-        const updatedSession = {
-            ...(currentSession || { scope: {}, resolvedEntities: {} }),
-            secondaryScope: prunedSecondary,
-            humanConversationCount: currentConvCount + 1,
-        };
-
-        updates.workingMemory.sessionContext = updatedSession;
-        updates.workingMemory.queryContext.accumulatedScope = []; // Reset after lock-in
-
-        console.log(`\x1b[35m[Orchestrator] 🔒 Conv ${currentConvCount} locked-in: +${newEntries.length} IDs promoted, ${prunedSecondary.length} active in window (pruneThreshold=${pruneThreshold}), counter → ${currentConvCount + 1}\x1b[0m`);
-        if (finalIdsToPromote.length > 0) {
-            console.log(`\x1b[35m[Orchestrator]    Scope IDs: [${finalIdsToPromote.join(', ')}]\x1b[0m`);
-        } else {
-            console.log(`\x1b[35m[Orchestrator]    currentScope was empty across all turns — no new IDs added to secondaryScope this conversation.\x1b[0m`);
-        }
+        updates.workingMemory.queryContext.accumulatedScope = []; // Reset transient query scope
     }
+
 
     // If there is a clarifying question, append it to messages so the Summarizer can look at it
     if (response.clarifyingQuestion) {

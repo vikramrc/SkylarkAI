@@ -265,14 +265,92 @@ ${jsonlData}`
             fullContent += chunk.content || "";
         }
 
-        // 🟢 Log Token Caching Savings
-        const { logTokenSavings } = await import("../utils/logger.js");
-        logTokenSavings("Summarizer", { content: fullContent }); // mock structure for logger flawlessly
+        // 🟢 Extract [ENTITIES] JSON block
+        let strippedContent = fullContent;
+        let extractedEntities: any[] = [];
+        const entitiesMatch = fullContent.match(/\[ENTITIES\]([\s\S]*?)\[\/ENTITIES\]/);
+        
+        if (entitiesMatch && entitiesMatch[1]) {
+            strippedContent = fullContent.replace(entitiesMatch[0], '').trim();
+            let rawJson = entitiesMatch[1].trim();
+            if (rawJson.startsWith('```json')) rawJson = rawJson.replace(/^```json/, '');
+            if (rawJson.startsWith('```')) rawJson = rawJson.replace(/^```/, '');
+            if (rawJson.endsWith('```')) rawJson = rawJson.replace(/```$/, '');
+            try {
+                extractedEntities = JSON.parse(rawJson);
+            } catch (err) {
+                console.warn(`[LangGraph Summarizer] Failed to parse [ENTITIES] JSON block`, err);
+            }
+        }
 
-        console.log(`[LangGraph Summarizer Output]`, fullContent);
+        // 🟢 Sync 5-Tier Memory
+        const session = state.workingMemory?.sessionContext || { scope: {} };
+        const query = state.workingMemory?.queryContext || { rawQuery: '' };
+        
+        // Tick conversation counter
+        const convIndex = (session.humanConversationCount ?? 0) + 1;
+        
+        // Update secondaryScope (Last 7 Conversations)
+        const currentSecondary = session.secondaryScope || [];
+        const newSecondaryEntries = extractedEntities.map(e => ({
+            ...e,
+            conversationIndex: convIndex
+        }));
+        
+        // Prune older than count - 7 (keeps the latest 7)
+        const pruneThreshold = convIndex - 6; 
+        const updatedSecondary = [...currentSecondary, ...newSecondaryEntries]
+            .filter(e => e.conversationIndex >= pruneThreshold);
+
+        // Update summaryBuffer (Latest Verbatim Q&A)
+        let updatedSummaryBuffer = session.summaryBuffer || [];
+        updatedSummaryBuffer.push({
+            q: query.rawQuery || 'Unknown Query',
+            a: strippedContent,
+            conversationIndex: convIndex
+        });
+
+        let updatedLongTerm = session.longTermBuffer || "";
+
+        // 🟢 The 20-to-7 Compression Engine
+        if (updatedSummaryBuffer.length >= 20) {
+            console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🗜️ Triggering 20-to-7 memory reduction...\x1b[0m`);
+            // Summarize the oldest 13 conversations
+            const oldest13 = updatedSummaryBuffer.slice(0, 13);
+            const newest7 = updatedSummaryBuffer.slice(13);
+
+            const compressionPrompt = `You are a memory archivist for an AI Superintendent. Summarize the following archaic user interactions into a dense, conceptual memory block. Focus on enduring facts, entities discovered, and overarching goals. Add this to the existing long-term memory gracefully.\n\n### Existing Long Term Memory\n${updatedLongTerm}\n\n### Conversations to Compress\n${oldest13.map(c => `Q: ${c.q}\nA: ${c.a}`).join('\n---\n')}`;
+
+            try {
+                const compressionRes = await model.invoke([{ role: 'system', content: compressionPrompt }]);
+                updatedLongTerm = compressionRes.content;
+                updatedSummaryBuffer = newest7;
+                console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🗜️ Success! ${oldest13.length} turns compressed into LongTerm.\x1b[0m`);
+            } catch (err) {
+                console.warn(`\x1b[31m[LangGraph Summarizer] Compression Failed:\x1b[0m`, err);
+            }
+        }
+
+        console.log(`[LangGraph Summarizer Output]`, strippedContent);
 
         return { 
-            messages: [{ role: "assistant", content: fullContent } as any] 
+            workingMemory: {
+                sessionContext: {
+                    secondaryScope: updatedSecondary,
+                    summaryBuffer: updatedSummaryBuffer,
+                    longTermBuffer: updatedLongTerm,
+                    humanConversationCount: convIndex,
+                },
+                queryContext: { 
+                    rawQuery: "", 
+                    pendingIntents: [], 
+                    activeFilters: {}, 
+                    lastTurnInsight: "", 
+                    accumulatedScope: [] 
+                },
+            } as any,
+            iterationCount: 0,
+            messages: [{ role: "assistant", content: strippedContent } as any] 
         };
     } catch (e: any) {
         const { logLLMError } = await import("../utils/logger.js");

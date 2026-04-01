@@ -1,43 +1,42 @@
-# Handover: SkylarkAI 4-Conversation Rolling Memory Implementation
+# Handover: SkylarkAI 5-Tier Memory Architecture & Orchestration
 
 ## 🎯 Current Objective
-Stabilize the SkylarkAI orchestrator by enforcing a **4-Conversation Rolling Window** for short-term memory (discovered Entity IDs) using a deterministic accumulation and promotion model.
+Establish a deterministic, token-efficient 5-tier memory architecture that eliminates "hallucinated IDs" and brittle backend scraping. The system now balances verbatim recent history, a rolling entity scope, and infinite conceptual long-term memory.
 
-## 🟢 System State (As of Mar 31st, 19:40)
-The core architecture is now stabilized and verified across turns.
+## 🟢 System Architecture (The 5-Tier Stack)
 
-### 1. State Schema (`src/langgraph/state.ts`)
-- **`accumulatedScope`**: Added to `queryContext`. This acts as a query-scoped buffer that collects every ID discovered by the LLM during multiple iterations (FEED_BACK_TO_ME loops) before the final summary.
-- **`humanConversationCount`**: Tracks the number of completed investigations.
+Details for each tier are in [skylark_memory.md](file:///home/phantom/.gemini/antigravity/brain/f1cda7da-bcd5-4a2f-ac09-4df45fb2430e/skylark_memory.md).
 
-### 2. State Propagation (`src/langgraph/graph.ts`)
-- **FIXED**: The `workingMemory` reducer was previously dropping `secondaryScope`. It has been patched to spread the existing `sessionContext` so rolling memory actually persists in the MongoDB checkpoint.
-
-### 3. Deterministic Promotion (`src/langgraph/nodes/orchestrator.ts`)
-- **Accumulation**: Every turn, `currentScope` IDs are merged into `accumulatedScope`.
-- **Lock-In**: When the verdict is `SUMMARIZE`, the engine automatically promotes the entire `accumulatedScope` to `secondaryScope` with the current `conversationIndex`.
-- **Pruning**: `secondaryScope` is strictly pruned to a 4-turn rolling window (current + 3 previous).
-- **Debug Visibility**: Removed verbose system prompt logs; replaced with a clean `[DEBUG]` object dumping session/query context.
-
-### 4. Summarizer Mapping Rule (`src/langgraph/prompts/summarizer_rules.ts`)
-- **[NEW] Section VIII**: The Summarizer is now mandated to output a structured JSON `[ENTITIES]` block at the end of every summary.
-- **Purpose**: This creates a machine-readable ledger of (ModelType | Name | ID) that the next turn's Orchestrator can read directly from history, bypassing the need for fragile backend scrapers.
+1.  **Knowledge Graph (Static)**: Maritime schemas and SFI codes.
+2.  **`longTermBuffer` (Infinite)**: Compressed narrative of interactions older than the verbatim window.
+3.  **`summaryBuffer` (7-20 Verbatim)**: Stores exact Q&A pairs. Slices the oldest 13 conversations into `longTermBuffer` when it hits 20, resetting to the latest 7.
+4.  **`secondaryScope` (7-Conversation Rolling IDs)**: A FIFO list of (ModelType | Name | ID) parsed from the Summarizer's `[ENTITIES]` block.
+5.  **`currentScope` (Immediate Scratchpad)**: Ephemeral scratchpad for the active investigation/turn.
 
 ---
 
-## 🛠️ Next Steps (Work in Progress)
+## 🧠 Memory Persistence & Scoping Logic
 
-### 1. Refactor `UpdateMemory2`
-- **Task**: Update `src/langgraph/nodes/update_memory2.ts` to parse the new `[ENTITIES]` JSON block from the Summarizer's message.
-- **Benefit**: This allows us to delete the "custom crap" (regex extraction/hardcoded key lookups like `scheduleID` vs `_id`) in the backend code.
+### `accumulatedScope` vs `currentScope` (The "Notebook" vs the "Voice")
+There is often confusion between these two terms in the code vs. the prompt:
 
-### 2. Verification
-- **Test**: Run a multi-turn maintenance inquiry (Vessel -> Schedules -> Activities) and verify that the `[ENTITIES]` block successfully populates the Tier 1 Ledger (`resolvedEntities`) in the subsequent turn.
+*   **`currentScope` (The Voice)**: This is the field name defined in the **Orchestrator's Output Schema** (`orchestratorSchema`). When the AI discovers an ID (e.g., via `fleet.query_overview`), it "speaks" that ID back to us in the `currentScope` array in its JSON response.
+*   **`accumulatedScope` (The Notebook)**: Because the AI's output message doesn't persist across turns of the *same* conversation, we store those discovered IDs in **`workingMemory.queryContext.accumulatedScope`**. 
+*   **The Bridge**: In the next turn, the prompt injector takes the contents of `accumulatedScope` and shows it to the AI under the label: `currentScope (Organic Discoveries)`. This ensures that if it takes 3 turns to answer a question, the AI doesn't forget the ID it found in Turn 1.
 
-## 📂 Key Files Modified
-- [state.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/state.ts) (Added `accumulatedScope`)
-- [graph.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/graph.ts) (Fixed Reducer persistence)
-- [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts) (Implemented Accumulation/Promotion/Pruning)
-- [summarizer_rules.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/prompts/summarizer_rules.ts) (Added JSON [ENTITIES] block mandate)
+### The [ENTITIES] Block Extraction
+We have deleted manual regex scrapers from the backend. 
+- **summarizer.ts** now uses a hardened regex to extract a `[ENTITIES]` JSON block from the AI's final answer.
+- This block is the **Single Source of Truth** for populating `secondaryScope`.
+- It is hardened against markdown codefences (e.g., it strips ```json tags if the LLM hallucinates them).
 
-**STATUS**: Memory persistence is now **RELIABLE**. The system successfully holds the Vessel ID across conversations. The next phase is ensuring it also holds the "List" items (Schedules/Activities) via the new Summarizer JSON path.
+---
+
+## 🛠️ Status & Implementation Details
+
+1.  **State Schema**: Updated in [state.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/state.ts) to include the new buffers.
+2.  **Compression Engine**: Implemented in [summarizer.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/summarizer.ts). It triggers a native `invoke` turn to summarize history when the buffer reaches 20 items.
+3.  **Orchestrator Rules**: Updated in [orchestrator_rules.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/prompts/orchestrator_rules.ts) to enforce "The Golden Rule": consult `secondaryScope` or `currentScope` before executing discovery tools.
+4.  **State Safety**: Both `update_memory2.ts` and `summarizer.ts` have been refactored to return **Partial State Updates**. This prevent parallel branches from overwriting each other's memory modifications (e.g., `scope` vs `buffers`).
+
+**STATUS**: The architecture is **Sturdy**. Long-term, short-term, and immediate memory are now logically isolated and deterministic.
