@@ -372,3 +372,33 @@ We evolved the agent's internal "Mental Model" from a reactive state to a proact
 
 ### 🟢 Nginx Routing:
 The application is mounted under `/phoenixai/` on the primary reverse proxy. Ensure `VITE_API_BASE_URL` in the frontend and `API_BASE_URL` in the backend are aligned with this subpath.
+
+---
+
+## 🛠️ 61. Tier 5 Memory Unification (currentScope)
+We unified the transient investigation memory from `accumulatedScope` to **`currentScope`** across the entire system. This aligns the underlying state with the prompt terminology and the established 5-tier memory nomenclature.
+
+### 🟢 Unification Check:
+- **`state.ts`**: The field in `SkylarkState['workingMemory']['queryContext']` is now `currentScope`.
+- **`orchestrator.ts`**: Both the prompt injection label and the internal turn-to-turn accumulation logic use `currentScope`.
+- **Terminology**:
+    - **`currentScope`**: Transient scratchpad for the current question (Turn-to-Turn). Reset on every brand new user query.
+    - **`secondaryScope`**: Persistent ledger of entities from previous questions (Question-to-Question). Pruned after 7 conversations.
+
+### ⚠️ Mandate:
+Future agents must NOT revert this to `accumulatedScope`. The term is dead. All functional logic must treat `currentScope` as the single source of truth for "discovered entities within the current investigative loop."
+
+---
+
+## 🛠️ 62. Orchestrator Diet (Latest-Turn Results Only)
+To optimize for token efficiency and eliminate context noise, we hardened the Orchestrator's dependency on the Tier 5 Scratchpad (`currentScope`). 
+
+### 🟢 Strategic Change:
+- **`orchestrator.ts`**: The prompt now only receives the **Latest Turn's** tool results (`currentTurns.slice(-1)`) instead of the entire investigative history.
+- **Rationale**: 
+    - **Token Efficiency**: Massive reduction in prompt size for deep 3+ turn investigations.
+    - **Stateful Independence**: Forces the AI to rely on its **`currentScope`** (The Notebook) for entity IDs and its **Journal** for process history.
+    - **Summarizer Integrity**: The `Summarizer` node is **NOT** affected. It still receives the full result set from every turn to ensure final report accuracy.
+
+### ⚠️ Mandate:
+Do not revert to cumulative result injection. If the AI "loses" context, the solution is to better populate the `currentScope` (The Notebook), not to flood the prompt with old logs.

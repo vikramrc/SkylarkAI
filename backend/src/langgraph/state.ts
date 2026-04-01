@@ -38,7 +38,7 @@ export interface SkylarkState {
       pendingIntents: string[];      // What from rawQuery remains unanswered (max 5 items)
       activeFilters: Record<string, string>; // Current active tool filters (dateRange, statusCode, etc.)
       lastTurnInsight: string;       // ONE sentence max 120 chars. What just happened this turn.
-      accumulatedScope?: string[];   // All IDs listed in currentScope across all turns of this query
+      currentScope?: string[];   // All IDs listed in currentScope across all turns of this query
     };
   };
 

@@ -67,7 +67,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "isFailureEvent":
       return `${requiredLabel} flag. Set to true to filter for maintenance events that were specifically logged as failure-driven outcomes (unplanned/breakdown).`;
     case "searchTerm":
-      return `${requiredLabel} parameter. The human-readable label or code to resolve (e.g., 'TESTCOSTCENTER1', 'Main Engine', 'John Doe'). MUST be a string.`;
+      return `${requiredLabel} CRITICAL parameter. The human-readable label or code to resolve (e.g., 'TESTCOSTCENTER1', 'Main Engine', 'John Doe'). YOU MUST ALWAYS PROVIDE THIS field, even if you are also providing organizationShortName or vesselName. The value you are searching for MUST go in this field.`;
     case "costCenterID":
     case "machineryID":
     case "scheduleID":
@@ -171,10 +171,17 @@ const baseCapabilitiesContract = [
     method: "POST",
     path: "/api/mcp/resolve",
     requiredQuery: ["organizationID", "entityType", "searchTerm"],
-    optionalQuery: ["vesselID"],
+    optionalQuery: ["vesselID", "organizationShortName", "organizationName", "vesselName"],
     purpose: "Resolves human-readable names or codes (e.g., 'Main Engine', 'CC-01', 'John Doe') into 24-character hexadecimal Mongo ObjectIds. This is the mandatory 'Discovery' tool to use whenever the user provides a label instead of an ID.",
-    whenToUse: "Use this BEFORE calling any analytical or historical tool if you only have a name/code. mandatory for 'Budget Cost Centers', 'Budget Codes', 'Machinery', 'Parts', 'Crew', and 'Forms'.",
-    typicalQuestions: ["Find the ID for cost center CC-01", "Who is designated as Chief Engineer?", "Resolve 'Main Engine' to its machineryID"],
+    whenToUse: "Use this BEFORE calling any analytical or historical tool if you only have a name/code. Supported types: 'Vessel', 'Organization', 'Activity', 'ActivityWorkHistory', 'Machinery', 'Component', 'InventoryPart', 'InventoryLocation', 'MaintenanceSchedule', 'Vendor', 'CrewMember', 'FormTemplate', 'CostCenter', 'BudgetCode', 'Budget', 'PurchaseOrder', 'Invoice', 'PTW', 'DocumentMetadata', 'User'.",
+    typicalQuestions: [
+        "Find the ID for cost center CC-01", 
+        "Who is designated as Chief Engineer?", 
+        "Resolve 'Main Engine' to its machineryID", 
+        "Find the ID for vessel XXX1",
+        "What is the ID for the 'Aux Engine' maintenance schedule?",
+        "Resolve the organization 'XXX1' to an ID."
+    ],
     responseShape: ["capability", "appliedFilters", "items"]
   },
   {

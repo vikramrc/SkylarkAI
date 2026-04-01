@@ -89,7 +89,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 
     // Compute currentTurns (used in both resultsContext and decisionJournal building)
     const history = Array.isArray(state.toolResults) ? state.toolResults : (state.toolResults ? [state.toolResults] : []);
-    const currentTurns = history.slice(state.startTurnIndex || 0);
+    const currentTurns = history.slice(state.startTurnIndex || 0).slice(-1); // 🟢 Orchestrator Diet: Only see the latest turn's results
 
     let resultsContext = "";
     const toolLines: string[] = [];
@@ -280,7 +280,7 @@ You MUST check the user's current query:
         summaryStr,
         secondaryStr,
         query?.rawQuery || anchoredRawQuery
-            ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${(query?.accumulatedScope || []).join(', ')}]` 
+            ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${(query?.currentScope || []).join(', ')}]` 
             : "",
         resultsContext,
         decisionJournal,
@@ -518,7 +518,7 @@ Instruction: Proceed with your investigation based on the complete context provi
     // 🟢 SECONDARY SCOPE ACCUMULATION: Reliably store any 'currentScope' ID output by the LLM
     // across all iterations, so it's not lost if the final SUMMARIZE turn outputs []
     const incomingIds: string[] = (response.currentScope || []).filter((id: any) => typeof id === 'string' && id.length > 0);
-    const previouslyAccumulated = state.workingMemory?.queryContext?.accumulatedScope || [];
+    const previouslyAccumulated = state.workingMemory?.queryContext?.currentScope || [];
     const finalIdsToPromote = [...new Set([...previouslyAccumulated, ...incomingIds])];
 
     if (!updates.workingMemory) updates.workingMemory = { 
@@ -528,14 +528,14 @@ Instruction: Proceed with your investigation based on the complete context provi
     updates.workingMemory.queryContext = {
         ...updates.workingMemory.queryContext,
         rawQuery: updates.workingMemory.queryContext.rawQuery || anchoredRawQuery, // Preserve anchor
-        accumulatedScope: finalIdsToPromote
+        currentScope: finalIdsToPromote
     } as any;
 
     // NOTE: secondaryScope lock-in and 7-conversation pruning is now handled natively
     // in the summarizer node by parsing the [ENTITIES] block, eliminating Orchestrator guesswork.
     
     if (response.feedBackVerdict === 'SUMMARIZE' && !response.clarifyingQuestion) {
-        updates.workingMemory.queryContext.accumulatedScope = []; // Reset transient query scope
+        updates.workingMemory.queryContext.currentScope = []; // Reset transient query scope
     }
 
 

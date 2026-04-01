@@ -207,7 +207,7 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
 
     // Build previous query context for Phase 2
     let previousQueryContext = isNewQuery
-        ? { rawQuery, pendingIntents: [], activeFilters: {}, lastTurnInsight: "", accumulatedScope: [] }
+        ? { rawQuery, pendingIntents: [], activeFilters: {}, lastTurnInsight: "", currentScope: [] }
         : { ...existingMemory.queryContext, rawQuery }; // rawQuery always comes from our resolved value above
 
     // ─────────────────────────────────────────────────────────────────

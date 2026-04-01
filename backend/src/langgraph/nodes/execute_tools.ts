@@ -47,6 +47,7 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
         : calls;
     // ─────────────────────────────────────────────────────────────────────────
 
+    // 🟢 Parallel Tool Execution
     const executedResults = await Promise.all(
         activeCalls.map(async (toolCall: any, index: number) => {
 
@@ -61,7 +62,6 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                     const inputArgs: any = {};
                     if (Array.isArray(toolCall.args)) {
                         toolCall.args.forEach((arg: any) => {
-                            // Bulletproof Cast: Convert numbers or booleans into strings for strict Mastra tool schema mappings flawless!
                             inputArgs[arg.key] = arg.value !== null && arg.value !== undefined ? String(arg.value) : undefined;
                         });
                     } else if (typeof toolCall.args === "object" && toolCall.args !== null) {
@@ -80,43 +80,37 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                                 return null;
                             }
                         },
-                        workingMemory: state.workingMemory // 🟢 Auto-fill identifier support for mastra/tools.ts flawlessly!
+                        workingMemory: state.workingMemory // 🟢 Auto-fill identifier support flawless!
                     };
 
                     const result = await tool.execute(inputArgs, contextMock); 
                     console.log(`[LangGraph Execute] ${sanitizedName} Result Preview: ${JSON.stringify(result).slice(0, 251)}...`);
                     
-                    // 🟢 Inject UI Label from Orchestrator flawlessly 
                     if (result && typeof result === 'object' && toolCall.uiTabLabel) {
                         result.uiTabLabel = toolCall.uiTabLabel;
                     }
 
-                    // Breakout if payload carries error: true (Validation failures proxy layer responses flawless)
+                    // 🟢 Capture tool failures as "data" so the Orchestrator can react to them flawlessly!
                     if (result && result.__ambiguity_stop === true) {
                         return { name, result, index, ambiguity: true };
                     } else if (result && (result.error === true || result.status === 'error' || result.success === false)) {
-                        nodeError = `[Execute Tool ${sanitizedName} Failure]: ${result.message || JSON.stringify(result)}`;
-                        return { name, index, result: null };
+                        console.warn(`[LangGraph Execute] ⚠️ Tool ${sanitizedName} reported failure: ${result.message || JSON.stringify(result)}`);
+                        return { name, index, result: { isError: true, message: result.message || JSON.stringify(result) } };
                     } else {
                         return { name, index, result };
                     }
                 } catch (e: any) {
-                    nodeError = `[Execute Tool ${sanitizedName} Error]: ${e.message || String(e)}`;
-                    return { name, index, result: null };
+                    console.error(`[LangGraph Execute] 🚨 Tool ${sanitizedName} threw exception:`, e);
+                    return { name, index, result: { isError: true, message: e.message || String(e) } };
                 }
             } else {
-                nodeError = `Tool ${name} (sanitized: ${sanitizedName}) not found in skylarkTools`;
-                return { name, index, result: null };
+                return { name, index, result: { isError: true, message: `Tool ${name} not found in registry.` } };
             }
         })
     );
 
-    // Check if any tool triggered an ambiguity breakout sentinel to prioritize clarifying bubbles over hallucinatory crashes flawlessly
+    // Filter ambiguity breakouts
     const standsAmbiguous = executedResults.some((item: any) => item && item.ambiguity === true);
-
-    if (nodeError && !standsAmbiguous) {
-        return { error: nodeError };
-    }
 
     // 🟢 Stamp keys with iteration number to prevent cross-turn collisions in the accumulated toolResults dict flawlessly!
     // e.g. "maintenance_query_status_iter2_0" is unique even if Iteration 1 also ran "maintenance_query_status_0"

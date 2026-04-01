@@ -356,7 +356,7 @@ ${jsonlData}`
                     pendingIntents: [], 
                     activeFilters: {}, 
                     lastTurnInsight: "", 
-                    accumulatedScope: [] 
+                    currentScope: [] 
                 },
             } as any,
             iterationCount: 0,
