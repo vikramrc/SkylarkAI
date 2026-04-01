@@ -302,6 +302,16 @@ ${jsonlData}`
         const updatedSecondary = [...currentSecondary, ...newSecondaryEntries]
             .filter(e => e.conversationIndex >= pruneThreshold);
 
+        // 🟢 DIAGNOSTIC LOGGING: Log the final secondaryScope for the user/developer
+        console.log(`\x1b[32m${ts()} [Summarizer] 🗃️ Ledger Updated (secondaryScope):\x1b[0m`);
+        if (updatedSecondary.length === 0) {
+            console.log(`\x1b[32m  (Empty — no entities found in this turn)\x1b[0m`);
+        } else {
+            updatedSecondary.forEach(e => {
+                console.log(`\x1b[32m  - [${e.modelType}] ${e.name} (ID: ${e.id}) [Conv ${e.conversationIndex}]\x1b[0m`);
+            });
+        }
+
         // Update summaryBuffer (Latest Verbatim Q&A)
         let updatedSummaryBuffer = session.summaryBuffer || [];
         updatedSummaryBuffer.push({
