@@ -65,7 +65,23 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "fieldNames":
       return `${requiredLabel} parameter: accepts an array or set (e.g., comma-separated) of field names/labels to scan inside populated form answers. Use this to find forms where specific contents have been filled out and selected.`;
     case "isFailureEvent":
-      return `${requiredLabel} flag. Set to true to filter for maintenance events that were specifically logged as failure-driven outcomes (unplanned/breakdown).`;
+      return `${requiredLabel} flag. Set to true to filter for maintenance events that were specifically logged as failure-driven outcomes (unplanned/breakdown/CM).`;
+    case "statusCode":
+      return `${requiredLabel} status enum filter. For status queries: 'overdue', 'upcoming', 'completed', 'open'. For execution history: 'completed', 'cancelled', 'rescheduled', 'created'.`;
+    case "performedBy":
+      return `${requiredLabel} performer search. Accepts a 24-character User ID, or a human-readable rank/designation (e.g., 'Chief Engineer', 'Third Officer'). Use to see who completed a task.`;
+    case "majorJobsOnly":
+      return `${requiredLabel} flag. Set to true to filter for high-impact maintenance events like Overhauls, Replacements, or Renewals.`;
+    case "activityDescription":
+      return `${requiredLabel} partial text match filter for the activity's name or description. Use this to find jobs related to specific equipment or actions if you don't have an ID.`;
+    case "attachmentsOnly":
+      return `${requiredLabel} evidence flag. Set to true to return only work history records that have uploaded files or manual attachments.`;
+    case "partsUsedOnly":
+      return `${requiredLabel} inventory flag. Set to true to return only work history records where spare parts consumption was logged.`;
+    case "riskAssessmentOnly":
+      return `${requiredLabel} safety flag. Set to true to return only records where a risk assessment was explicitly attached or filled.`;
+    case "maintenanceType":
+      return `${requiredLabel} category filter for the type of maintenance work (e.g., 'Preventative', 'Corrective').`;
     case "searchTerm":
       return `${requiredLabel} CRITICAL parameter. The human-readable label or code to resolve (e.g., 'TESTCOSTCENTER1', 'Main Engine', 'John Doe'). YOU MUST ALWAYS PROVIDE THIS field, even if you are also providing organizationShortName or vesselName. The value you are searching for MUST go in this field.`;
     case "costCenterID":
