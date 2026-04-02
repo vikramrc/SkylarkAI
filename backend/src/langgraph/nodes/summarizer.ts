@@ -283,61 +283,109 @@ ${jsonlData}`
             }
         }
 
+
         // 🟢 Sync 5-Tier Memory
         const session = state.workingMemory?.sessionContext || { scope: {} };
-        const query = state.workingMemory?.queryContext || { rawQuery: '' };
-        
-        // Tick conversation counter
-        const convIndex = (session.humanConversationCount ?? 0) + 1;
-        
-        // Update secondaryScope (Last 7 Conversations)
-        const currentSecondary = session.secondaryScope || [];
-        const newSecondaryEntries = extractedEntities.map(e => ({
-            ...e,
-            conversationIndex: convIndex
-        }));
-        
-        // Prune older than count - 7 (keeps the latest 7)
-        const pruneThreshold = convIndex - 6; 
-        const updatedSecondary = [...currentSecondary, ...newSecondaryEntries]
-            .filter(e => e.conversationIndex >= pruneThreshold);
 
-        // 🟢 DIAGNOSTIC LOGGING: Log the final secondaryScope for the user/developer
-        console.log(`\x1b[32m${ts()} [Summarizer] 🗃️ Ledger Updated (secondaryScope):\x1b[0m`);
-        if (updatedSecondary.length === 0) {
-            console.log(`\x1b[32m  (Empty — no entities found in this turn)\x1b[0m`);
-        } else {
-            updatedSecondary.forEach(e => {
-                console.log(`\x1b[32m  - [${e.modelType}] ${e.name} (ID: ${e.id}) [Conv ${e.conversationIndex}]\x1b[0m`);
-            });
+        // 🟢 GAP-2 FIX: The summarizer MUST NOT write queryContext. update_memory2.ts is the sole
+        // owner of queryContext (rawQuery, pendingIntents, activeFilters, lastTurnInsight, currentScope).
+        // Writing queryContext here from the summarizer creates a parallel-branch race condition:
+        // when execute_tools routes to both update_memory AND summarizer simultaneously, whichever
+        // node finishes last wins — and the summarizer's wipe of activeFilters would silently undo
+        // the filter-inheritance logic in update_memory2.ts. By removing it here, we guarantee soft
+        // persistence of activeFilters across query pivots. The reset on new queries is handled by
+        // update_memory2's isNewQuery logic.
+        //
+        // 🟢 GAP-4 FIX: Skip convIndex increment and summaryBuffer write when all tools returned errors.
+        // An error-only turn should not advance the conversation counter or pollute the Q&A buffer.
+        const hasRealData = allItems.length > 0 || (noToolsCalled && !emptyDataset);
+        const convIndex = hasRealData ? (session.humanConversationCount ?? 0) + 1 : (session.humanConversationCount ?? 0);
+
+        
+        // Update secondaryScope (Last 7 Conversations) — only when we have real data
+        const currentSecondary = session.secondaryScope || [];
+        let updatedSecondary = currentSecondary;
+
+        if (hasRealData) {
+            const newSecondaryEntries = extractedEntities.map(e => ({
+                ...e,
+                conversationIndex: convIndex
+            }));
+            
+            // Prune older than count - 7 (keeps the latest 7)
+            const pruneThreshold = convIndex - 6; 
+            updatedSecondary = [...currentSecondary, ...newSecondaryEntries]
+                .filter(e => e.conversationIndex >= pruneThreshold);
+
+            // 🟢 DIAGNOSTIC LOGGING: Log the final secondaryScope for the user/developer
+            console.log(`\x1b[32m${ts()} [Summarizer] 🗃️ Ledger Updated (secondaryScope):\x1b[0m`);
+            if (updatedSecondary.length === 0) {
+                console.log(`\x1b[32m  (Empty — no entities found in this turn)\x1b[0m`);
+            } else {
+                updatedSecondary.forEach(e => {
+                    console.log(`\x1b[32m  - [${e.modelType}] ${e.name} (ID: ${e.id}) [Conv ${e.conversationIndex}]\x1b[0m`);
+                });
+            }
         }
 
-        // Update summaryBuffer (Latest Verbatim Q&A)
+        // Update summaryBuffer (Latest Verbatim Q&A) — only when we have real data
         let updatedSummaryBuffer = session.summaryBuffer || [];
-        updatedSummaryBuffer.push({
-            q: query.rawQuery || 'Unknown Query',
-            a: strippedContent,
-            conversationIndex: convIndex
-        });
-
         let updatedLongTerm = session.longTermBuffer || "";
+        const query = state.workingMemory?.queryContext || { rawQuery: '' };
 
-        // 🟢 The 20-to-7 Compression Engine
-        if (updatedSummaryBuffer.length >= 20) {
-            console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🗜️ Triggering 20-to-7 memory reduction...\x1b[0m`);
-            // Summarize the oldest 13 conversations
-            const oldest13 = updatedSummaryBuffer.slice(0, 13);
-            const newest7 = updatedSummaryBuffer.slice(13);
+        if (hasRealData) {
+            const messages = state.messages || [];
+            
+            // 🟢 GAP-3 FIX: PERSISTENCE CONSOLIDATION
+            // Scan current request history for HITL Q&A pairs to ensure they aren't "blind spots" in memory.
+            const startIdx = state.startTurnIndex || 0;
+            const requestMessages = messages.slice(startIdx);
+            
+            const hitlEntries: any[] = [];
+            requestMessages.forEach((msg: any, idx: number) => {
+               const type = msg._getType?.() || msg.role || 'human';
+               if (type === 'human' && idx > 0) {
+                   const prev = requestMessages[idx-1] as any;
+                   const prevType = prev?._getType?.() || prev?.role || 'ai';
+                   if (prevType === 'ai' && prev.content && prev.content.length < 400 && prev.content.includes('?')) {
+                       // This looks like a clarifying question exchange
+                       hitlEntries.push({
+                          q: `[Clarification] ${query.rawQuery || 'Investigation'}`,
+                          a: `Scoping Exchange:\nAI: "${prev.content}"\nUser: "${msg.content}"`,
+                          conversationIndex: convIndex
+                       });
+                   }
+               }
+            });
 
-            const compressionPrompt = `You are a memory archivist for an AI Superintendent. Summarize the following archaic user interactions into a dense, conceptual memory block. Focus on enduring facts, entities discovered, and overarching goals. Add this to the existing long-term memory gracefully.\n\n### Existing Long Term Memory\n${updatedLongTerm}\n\n### Conversations to Compress\n${oldest13.map(c => `Q: ${c.q}\nA: ${c.a}`).join('\n---\n')}`;
+            // Add any detected HITL pairs, then the final answer
+            updatedSummaryBuffer = [
+                ...updatedSummaryBuffer, 
+                ...hitlEntries,
+                {
+                    q: query.rawQuery || 'Unknown Query',
+                    a: strippedContent,
+                    conversationIndex: convIndex
+                }
+            ];
 
-            try {
-                const compressionRes = await model.invoke([{ role: 'system', content: compressionPrompt }]);
-                updatedLongTerm = compressionRes.content;
-                updatedSummaryBuffer = newest7;
-                console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🗜️ Success! ${oldest13.length} turns compressed into LongTerm.\x1b[0m`);
-            } catch (err) {
-                console.warn(`\x1b[31m[LangGraph Summarizer] Compression Failed:\x1b[0m`, err);
+            // 🟢 The 20-to-7 Compression Engine
+            if (updatedSummaryBuffer.length >= 20) {
+                console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🗄️ Triggering 20-to-7 memory reduction...\x1b[0m`);
+                // Summarize the oldest 13 conversations
+                const oldest13 = updatedSummaryBuffer.slice(0, 13);
+                const newest7 = updatedSummaryBuffer.slice(13);
+
+                const compressionPrompt = `You are a memory archivist for an AI Superintendent. Summarize the following archaic user interactions into a dense, conceptual memory block. Focus on enduring facts, entities discovered, and overarching goals. Add this to the existing long-term memory gracefully.\n\n### Existing Long Term Memory\n${updatedLongTerm}\n\n### Conversations to Compress\n${oldest13.map(c => `Q: ${c.q}\nA: ${c.a}`).join('\n---\n')}`;
+
+                try {
+                    const compressionRes = await model.invoke([{ role: 'system', content: compressionPrompt }]);
+                    updatedLongTerm = compressionRes.content;
+                    updatedSummaryBuffer = newest7;
+                    console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🗄️ Success! ${oldest13.length} turns compressed into LongTerm.\x1b[0m`);
+                } catch (err) {
+                    console.warn(`\x1b[31m[LangGraph Summarizer] Compression Failed:\x1b[0m`, err);
+                }
             }
         }
 
@@ -345,19 +393,17 @@ ${jsonlData}`
 
         return { 
             workingMemory: {
+                // 🟢 GAP-2: ONLY write sessionContext. queryContext is owned exclusively by update_memory2.ts.
+                // This eliminates the parallel-branch race condition.
                 sessionContext: {
                     secondaryScope: updatedSecondary,
                     summaryBuffer: updatedSummaryBuffer,
                     longTermBuffer: updatedLongTerm,
                     humanConversationCount: convIndex,
                 },
-                queryContext: { 
-                    rawQuery: "", 
-                    pendingIntents: [], 
-                    activeFilters: {}, 
-                    lastTurnInsight: "", 
-                    currentScope: [] 
-                },
+                // ❌ INTENTIONALLY OMITTED: queryContext is NOT written here.
+                // update_memory2.ts handles all queryContext updates (rawQuery, pendingIntents,
+                // activeFilters, lastTurnInsight, currentScope) to guarantee soft persistence.
             } as any,
             iterationCount: 0,
             messages: [{ role: "assistant", content: strippedContent } as any] 

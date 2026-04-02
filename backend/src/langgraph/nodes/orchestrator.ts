@@ -31,7 +31,10 @@ export const orchestratorSchema = z.object({
     })).describe("Identify any strings in the user query for which you lack a verified 24-char ID or current memory mapping. Provide your best-guess types for them.")
 });
 
-// 🟢 Global Module-Level Cache for multitenant startup-once speedups
+// 🟢 Global Module-Level Cache for startup-once speedups
+// ⚠️ GAP-17 NOTE: This cache is loaded once per process lifetime using the default organization ID from .env.
+// In a true multi-tenant deployment where different orgs have different capability sets (feature flags),
+// this cache should be keyed by organizationID. For a single-tenant deployment this is correct as-is.
 let capabilitiesCache: any[] = [];
 let capabilitiesLoadPromise: Promise<any[]> | null = null;
 
@@ -259,8 +262,9 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         });
     });
 
+    // 🟢 GAP-8 FIX: Explicitly mandate a clarifying question when all resolution guesses fail
     const deadEndStr = failedSessionLabels.size > 0 
-        ? `\n\n🛡️ DEAD-END LABELS (Verified NOT FOUND This Turn):\n${Array.from(failedSessionLabels).map(l => `- "${l}": Checked multiple entity types. No matches found. Do NOT retry resolution for this label. Inform the user it does not exist.`).join('\n')}`
+        ? `\n\n🛡️ DEAD-END LABELS (Verified NOT FOUND This Turn):\n${Array.from(failedSessionLabels).map(l => `- "${l}": Checked multiple entity types. No matches found. Do NOT retry resolution for this label.`).join('\n')}\n⚠️ MANDATORY ACTION: Since the entity could not be found, you MUST set \`clarifyingQuestion\` to ask the user in plain language (e.g., "I couldn't find 'XXX1' — could you double-check the name, or tell me what type of record it is?"). Set \`tools\` to []  and \`feedBackVerdict\` to SUMMARIZE.`
         : "";
 
     // ─── TWO-TIER MEMORY CONTEXT ASSEMBLY (after all components are declared) ─────
@@ -293,8 +297,10 @@ ${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matches: ${m.
     const secondaryLines: string[] = (session?.secondaryScope || []).map(entry => 
         `  - [${entry.modelType}] ${entry.name} → ID = "${entry.id}" (Conv ${entry.conversationIndex})`
     );
+    // 🟢 GAP-1 FIX: Explicitly tell the LLM that resolvedLabels takes precedence over secondaryScope
+    // This prevents cross-session ID conflicts if a label was re-seeded between conversations.
     const secondaryStr = secondaryLines.length > 0
-        ? `\n### 🗃️ SECONDARY SCOPE (Last 7 Conversations, current Conv ${convCount})\n${secondaryLines.join('\n')}`
+        ? `\n### 🗃️ SECONDARY SCOPE (Last 7 Conversations, current Conv ${convCount})\n${secondaryLines.join('\n')}\n⚠️ PRECEDENCE RULE: If the same entity appears in both SECONDARY SCOPE and RESOLVED ENTITIES below, the RESOLVED ENTITIES entry is newer and takes priority.`
         : "";
 
     // ─── RESOLVED LABELS (Current Conversation Mappings)
@@ -366,7 +372,8 @@ You MUST check the user's current query:
     const toolDetails = baseCapabilitiesContract.map((c: any) => {
         // Fetch canonical required/optional queries before normalization just to render detail
         const reqStr = (c.requiredQuery || []).map((p: string) => `${p}: ${getParameterDescription(p, c.requiredQuery || [])}`).join("\n    ");
-        const optStr = (c.optionalQuery || []).map((p: string) => `${p}: ${getParameterDescription(p, c.requiredQuery || [])}`).join("\n    ");
+        // 🟢 GAP-13 FIX: Must pass c.optionalQuery (not c.requiredQuery) for correct descriptions
+        const optStr = (c.optionalQuery || []).map((p: string) => `${p}: ${getParameterDescription(p, c.optionalQuery || [])}`).join("\n    ");
 
         return `- **${c.name}**
   * Purpose: ${c.purpose}
@@ -605,16 +612,12 @@ Instruction: Proceed with your investigation based on the complete context provi
                 // but for now, we'll look at the messages directly for broader coverage.
             }
 
-            // 3. Scan the LATEST human message (The most reliable source for Turn 1 resolution)
-            const humanMsgs = state.messages.filter((m: any) => (m._getType?.() || m.role) === 'human');
-            const lastHuman = humanMsgs[humanMsgs.length - 1];
-            if (lastHuman && typeof lastHuman.content === 'string') {
-                const content = lastHuman.content.toLowerCase();
-                // Simple keyword extraction for common org words or the very first word if it looks like a name
-                // In this system, 'fleetships' is the standard test org.
-                if (content.includes('fleetships')) orgShortName = 'fleetships';
-                // Note: More complex parsing can be added here, but the AI usually puts it in reformulatedQuery helpfully.
-            }
+            // 3. Scan the LATEST human message as last resort — trust the AI's reformulated query first
+            // 🟢 GAP-5 FIX: REMOVED hardcoded 'fleetships' test-org heuristic. Production orgs have
+            // arbitrary names, so a hardcoded check would silently fail for all non-test environments.
+            // The AI's own tool args (step 1) are the reliable extraction path. If org is still
+            // missing after all checks, let the ORG CONTEXT MISSING guardrail handle it cleanly.
+            // (No action needed here — the HITL clarifying question path will ask the user.)
         }
 
         const orgKey = orgID ? "organizationID" : (orgShortName ? "organizationShortName" : null);

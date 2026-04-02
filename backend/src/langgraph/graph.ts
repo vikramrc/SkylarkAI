@@ -15,7 +15,10 @@ import { nodeError } from "./nodes/error.js";
 const workflow = new StateGraph<SkylarkState>({
   channels: {
     messages: {
-      reducer: (x: any[], y: any[]) => x.concat(y).slice(-6), // 🟢 Keep last 6 items (3 full turns)
+      // 🟢 GAP-9 FIX: Increased from 6 to 10 (5 full turns).
+      // The 6-message window was too small for multi-HITL chains: the original human message
+      // could slide off and break the rawQuery anchor fallback in update_memory2.ts.
+      reducer: (x: any[], y: any[]) => x.concat(y).slice(-10),
       default: () => [],
     },
     workingMemory: {
@@ -26,7 +29,7 @@ const workflow = new StateGraph<SkylarkState>({
                 sessionContext: {
                     ...(x?.sessionContext || {}),
                     ...(y?.sessionContext || {}),
-                    scope: { ...x?.sessionContext?.scope, ...y?.sessionContext?.scope },
+                    scope: { ...(x?.sessionContext?.scope || {}), ...(y?.sessionContext?.scope || {}) },
                 },
                 queryContext: y?.queryContext ?? x?.queryContext,
             };
@@ -46,8 +49,17 @@ const workflow = new StateGraph<SkylarkState>({
           console.log(`[LangGraph Reducer] toolResults input:`, { x_type: typeof x, x_isArray: Array.isArray(x), y_present: !!y });
           const current = Array.isArray(x) ? x : [];
           if (!y) return current;
-          // Store each turn's results as a new entry in the array to prevent overwriting parallel tool outputs flawlessly!
-          return [...current, y];
+          const appended = [...current, y];
+          // 🟢 GAP-15 FIX: Cap toolResults at 30 turns to prevent the MongoDB checkpoint document
+          // from hitting the 16MB BSON limit in long sessions. The existing 15MB pre-validation
+          // guard in execute_tools.ts protects PAYLOADS, but accumulated state can also grow
+          // unboundedly. Pruning old turns here keeps the checkpoint lean.
+          if (appended.length > 30) {
+            const pruned = appended.slice(appended.length - 30);
+            console.warn(`[LangGraph Reducer] ⚠️ toolResults pruned from ${appended.length} to 30 turns to prevent BSON overflow.`);
+            return pruned;
+          }
+          return appended;
         },
         default: () => [] 
     },
@@ -60,8 +72,17 @@ const workflow = new StateGraph<SkylarkState>({
         reducer: (x: number, y: number) => y ?? x,
         default: () => 0
     },
-    error: { default: () => undefined }, // Optional error string
-    hitl_required: { default: () => undefined }, // 🟢 Add this to preserve state update mechanics flawless!
+    error: { default: () => undefined },
+    // 🟢 GAP-16 FIX: Added explicit reducer for hitl_required.
+    // Without a reducer, LangGraph uses the default "last-write-wins" strategy which is
+    // non-deterministic in parallel branches (update_memory + summarizer). If one branch
+    // writes true and the other writes undefined, the winner is random.
+    // With this reducer, an explicit true always wins over undefined, and the most recent
+    // explicit value (true or false) always takes priority.
+    hitl_required: {
+        reducer: (x: boolean | undefined, y: boolean | undefined) => y !== undefined ? y : x,
+        default: () => undefined as any,
+    },
     selectedResultKeys: { 
         reducer: (x: string[], y: string[]) => y?.length ? y : (x || []), // 🟢 Latest decision wins flawless!
         default: () => [] 

@@ -258,9 +258,28 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
     }
 
     // Build previous query context for Phase 2
+    // 🟢 SOFT PERSISTENCE: Instead of wiping activeFilters on a new human message, we carry them forward 
+    // to the LLM as context so it can decide which ones remain relevant to the ongoing investigation.
     let previousQueryContext = isNewQuery
-        ? { rawQuery, pendingIntents: [], activeFilters: {}, lastTurnInsight: "", currentScope: [] }
+        ? { ...existingMemory.queryContext, rawQuery, pendingIntents: [], lastTurnInsight: "", currentScope: [] }
         : { ...existingMemory.queryContext, rawQuery }; // rawQuery always comes from our resolved value above
+
+    // ─────────────────────────────────────────────────────────────────
+    // Phase 1c: Deterministic currentScope Sync (GAP-30)
+    //
+    // Harvest all 24-character hex IDs from the session scope (excluding orgID) 
+    // to ensure they are available in the Orchestrator's ledger for the current 
+    // investigation. This prevents the LLM from losing track of resolved IDs
+    // between turns even if the Phase 2 structured output misses them.
+    // ─────────────────────────────────────────────────────────────────
+    const deterministicScope = new Set<string>();
+    Object.entries(sessionStateCommit.scope).forEach(([k, v]) => {
+        if (typeof v === 'string' && /^[0-9a-fA-F]{24}$/.test(v) && k !== 'organizationID') {
+            deterministicScope.add(v);
+        }
+    });
+    const currentScopeArray = Array.from(deterministicScope);
+    console.log(`\x1b[33m[UpdateMemory2] 🆔 GAP-30: Deterministic currentScope Sync: [${currentScopeArray.join(', ')}]\x1b[0m`);
 
     // ─────────────────────────────────────────────────────────────────
     // PHASE 2: LLM-driven — structured queryContext update
@@ -313,6 +332,7 @@ Rules:
    - IMPORTANT: If a discovery tool ran (e.g. fleet overview returning vessel IDs), the discovery intent is NOW COMPLETE. Do NOT keep "discover vessels" as a pending intent.
    - IMPORTANT: If entity IDs are now known (from discovery), the retrieval step is the ONLY remaining intent.
 2. activeFilters: Extract all filters that are scoping the current query (e.g. statusCode, startDate, limit, distributionScope like "per vessel"). 
+   - FILTER INHERITANCE: If the user's latest message is a continuation or an entity pivot (e.g., 'and for MV Phoenix', 'now show me XXX2'), you SHOULD preserve relevant filters from the 'Previous activeFilters' list (like statusCode: committed, limit, dates) unless the user explicitly changes them or the context makes them irrelevant.
    - ENTITY PRESERVATION: If the original 'rawQuery' contains a specific label (e.g. 'XXX1', 'DFGRE') that is NOT yet a canonical 24-char hex ID, you MUST preserve it in 'activeFilters' even if the user provides a different piece of info (like an Organization). Do NOT allow a context refinement to delete an unresolved label.
    - If the user specifies a limit or distribution scope, add them here. Do NOT hallucinate filters that are not clearly requested.
 3. lastTurnInsight: One sentence only. Focus on what was resolved or found. If entities were resolved, mention the count. Max 150 chars.`;
@@ -321,6 +341,9 @@ Rules:
 
 Tools executed this turn:
 ${toolSummaryLines.join('\n') || "None"}
+
+Previous activeFilters (Inherit these if applicable):
+${JSON.stringify(previousQueryContext.activeFilters || {}, null, 2)}
 
 Previous pending intents:
 ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.pendingIntents.map((i: string) => `- ${i}`).join('\n') : "None (first turn)"}${hitlContextBlock}`;
@@ -353,6 +376,7 @@ ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.
             pendingIntents: response.pendingIntents || [],
             activeFilters: activeFiltersRecord,
             lastTurnInsight: response.lastTurnInsight || "",
+            currentScope: currentScopeArray, // 🟢 GAP-30: Use deterministic truth from Phase 1
         };
 
         // Rich diagnostic output

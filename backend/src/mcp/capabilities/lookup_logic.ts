@@ -1,5 +1,24 @@
 import { MongoClient, ObjectId } from "mongodb";
 
+// 🟢 GAP-10 FIX: Module-level singleton MongoDB client.
+// Previously, every resolve_entities call opened a fresh TCP connection and immediately closed it.
+// Under concurrent requests (e.g., Strategic Interceptor firing 3 parallel entity type resolutions),
+// this creates N simultaneous connect+close cycles, exhausting the MongoDB connection pool rapidly.
+// Solution: shared client that stays connected for the lifetime of the process.
+const mongoUri = process.env.PHOENIX_MONGO_URI || process.env.SKYLARK_MONGODB_URI || 'mongodb://localhost:27017/ProductsDB';
+const _sharedClient = new MongoClient(mongoUri, { maxPoolSize: 10 });
+let _clientConnected = false;
+
+async function getSharedDb(): Promise<ReturnType<MongoClient['db']>> {
+    if (!_clientConnected) {
+        await _sharedClient.connect();
+        _clientConnected = true;
+        console.log('[Discovery Engine] 🔗 Shared MongoDB client connected.');
+    }
+    const dbName = mongoUri.split('/').pop()?.split('?')[0] || 'ProductsDB';
+    return _sharedClient.db(dbName);
+}
+
 /**
  * Registry mapping conversational entity types (verbatim collection names) 
  * to their primary text identifier properties for regex searching.
@@ -128,13 +147,9 @@ export async function resolveEntities(args: {
   
   console.log(`[Discovery Engine] Unified Resolve: Searching collection "${entityType}" for term: "${searchTerm}"`);
 
-  const mongoUri = process.env.PHOENIX_MONGO_URI || process.env.SKYLARK_MONGODB_URI || 'mongodb://localhost:27017/ProductsDB';
-  const dbName = mongoUri.split('/').pop()?.split('?')[0] || 'ProductsDB';
-  const client = new MongoClient(mongoUri);
-
+  // 🟢 GAP-10: Use shared singleton client instead of per-call connect/close
   try {
-    await client.connect();
-    const db = client.db(dbName);
+    const db = await getSharedDb();
 
     // 1. Resolve Organization/Vessel Scope first if they are names
     let resolvedOrgID = organizationID;
@@ -181,10 +196,20 @@ export async function resolveEntities(args: {
     };
 
     // 3. Execute Search
+    // 🟢 GAP-18 FIX: Only apply `active: { $ne: false }` to collections that actually use it.
+    // Applying it universally adds a filter evaluated on every document, and for collections
+    // that don't have the field, it is a harmless but wasteful no-op. More importantly, if any
+    // collection uses active as a non-boolean (e.g. a string or number), documents would be wrongly excluded.
+    const COLLECTIONS_WITH_ACTIVE_FLAG = new Set([
+        'Vessel', 'Machinery', 'Component', 'InventoryPart', 'InventoryLocation',
+        'Vendor', 'CrewMember', 'FormTemplate', 'User', 'MaintenanceSchedule'
+    ]);
+    const activeFilter = COLLECTIONS_WITH_ACTIVE_FLAG.has(entityType) ? { active: { $ne: false } } : {};
+
     const docs = await db.collection(entityType).find({
       ...orgFilter,
       ...searchClause,
-      active: { $ne: false } // Only return active entities if collection supports it
+      ...activeFilter,
     }).limit(10).toArray();
 
     if (docs.length === 0) {
@@ -227,7 +252,7 @@ export async function resolveEntities(args: {
       content: [{ type: "text", text: `Error connecting to discovery engine: ${err.message}` }],
       isError: true
     };
-  } finally {
-    await client.close();
   }
+  // 🟢 GAP-10: No finally block needed — shared client stays alive between calls.
+  // The client is intentionally NOT closed here; it persists for the process lifetime.
 }

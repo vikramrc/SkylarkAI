@@ -83,7 +83,19 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                         workingMemory: state.workingMemory // 🟢 Auto-fill identifier support flawless!
                     };
 
-                    const result = await tool.execute(inputArgs, contextMock); 
+                    // 🟢 GAP-29 FIX: Implement 25s tool execution timeout.
+                    // This prevents a single hung MCP tool from blocking the entire LangGraph turn.
+                    // 🟢 GAP-32 FIX: Store the timer handle and cancel it via .finally() so that when
+                    // a tool completes before the deadline, the timer is cleared immediately rather
+                    // than running as a dangling handle holding the event loop open.
+                    let _timeoutHandle: ReturnType<typeof setTimeout>;
+                    const _timeoutPromise = new Promise((_, reject) => {
+                        _timeoutHandle = setTimeout(() => reject(new Error("Tool execution timed out after 25s")), 25000);
+                    });
+                    const result = await Promise.race([
+                        tool.execute(inputArgs, contextMock).finally(() => clearTimeout(_timeoutHandle!)),
+                        _timeoutPromise,
+                    ]);
                     console.log(`[LangGraph Execute] ${sanitizedName} Result Preview: ${JSON.stringify(result).slice(0, 251)}...`);
                     
                     if (result && typeof result === 'object' && toolCall.uiTabLabel) {
