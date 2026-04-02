@@ -10,7 +10,7 @@ import { getParameterDescription } from "../../mcp/capabilities/contract.js";
 
 // 1. Define Structured Output Schema
 export const orchestratorSchema = z.object({
-    currentScope: z.array(z.string()).describe("Identify the specific Entity IDs from your ledger that map to the user's requested scope. If they say 'all vessels/fleet-wide', list EVERY discovered vessel ID here. If they say 'just XXX1', list only XXX1's ID. If the query does not target specific entities, return an empty array.").nullable(),
+    currentScope: z.array(z.string()).describe("Identify the specific 24-character Entity IDs from your ledger that map to the user's requested scope. You MUST use the hex IDs (e.g., '67eed...'), NOT tool result keys. If they say 'all vessels/fleet-wide', list EVERY discovered vessel ID here. If they say 'just XXX1', list only XXX1's ID. If the query does not target specific entities, return an empty array.").nullable(),
     tools: z.array(z.object({
         name: z.string().describe("The dot-separated tool name (e.g., maintenance.query_status)"),
         uiTabLabel: z.string().describe("A short, user-friendly title for this tool's UI tab, summarizing the context or specific filters applied (e.g., 'Overdue Tasks', 'Global Checklists', 'Deck Operations')."),
@@ -260,6 +260,15 @@ ${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matches: ${m.
         ? `\n### 🗃️ SECONDARY SCOPE (Last 7 Conversations, current Conv ${convCount})\n${secondaryLines.join('\n')}`
         : "";
 
+    // ─── RESOLVED LABELS (Current Conversation Mappings)
+    const resolvedLabels = (session?.scope as any)?.resolvedLabels || {};
+    const labelLines: string[] = Object.entries(resolvedLabels).map(([label, info]: [string, any]) => 
+        `  - ✅ ${info.type} resolved: ${label} (ID: ${info.id})`
+    );
+    const labelStr = labelLines.length > 0
+        ? `\n### 🆔 RESOLVED ENTITIES (Current Conversation)\n${labelLines.join('\n')}`
+        : "";
+
     // ─── ORG CONTEXT GUARD (replaces passive scopeLine) ──────────────────────
     // When no org is in memory AND it's not a HITL continuation (user answering
     // a previous clarifying question), we inject a hard mandatory block so the
@@ -290,6 +299,7 @@ You MUST check the user's current query:
         longTermStr,
         summaryStr,
         secondaryStr,
+        labelStr,
         query?.rawQuery || anchoredRawQuery
             ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${(query?.currentScope || []).join(', ')}]` 
             : "",
@@ -505,7 +515,10 @@ Instruction: Proceed with your investigation based on the complete context provi
     // and force a resolution pass. This prevents "hijacking" retrieval parameters.
     // 🟢 Section II.B Rule 3: Resolution is PREFERRED over asking a clarifying question immediately.
     // We now allow this even if response.clarifyingQuestion exists, prioritizing the resolution turn.
-    if (Array.isArray(response.unclassifiedLabels) && response.unclassifiedLabels.length > 0) {
+    const resolvedLabelSet = new Set(Object.keys((state.workingMemory?.sessionContext?.scope as any).resolvedLabels || {}));
+    const actualUnclassified = (response.unclassifiedLabels || []).filter((l: any) => !resolvedLabelSet.has(l.label));
+
+    if (actualUnclassified.length > 0) {
         const resolutionTools: any[] = [];
         const scope = (state.workingMemory as any)?.sessionContext?.scope;
         
@@ -546,7 +559,7 @@ Instruction: Proceed with your investigation based on the complete context provi
         const orgValue = orgID || orgShortName;
 
         if (orgKey && orgValue) {
-            response.unclassifiedLabels.forEach((item: any) => {
+            actualUnclassified.forEach((item: any) => {
                 // Only resolve types explicitly guessed by the grounded AI (Capped at 3)
                 if (Array.isArray(item.likelyEntityTypes) && item.likelyEntityTypes.length > 0) {
                     item.likelyEntityTypes.slice(0, 3).forEach((type: string) => {

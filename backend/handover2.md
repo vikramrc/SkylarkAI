@@ -17,29 +17,31 @@ Details for each tier are in [skylark_memory.md](file:///home/phantom/.gemini/an
 
 ## 🧠 Memory Persistence & Scoping Logic
 
-### `accumulatedScope` vs `currentScope` (The "Notebook" vs the "Voice")
-There is often confusion between these two terms in the code vs. the prompt:
+### `currentScope` (The Unified Investigatory Bridge)
 
-*   **`currentScope` (The Voice)**: This is the field name defined in the **Orchestrator's Output Schema** (`orchestratorSchema`). When the AI discovers an ID (e.g., via `fleet.query_overview`), it "speaks" that ID back to us in the `currentScope` array in its JSON response.
-*   **`accumulatedScope` (The Notebook)**: Because the AI's output message doesn't persist across turns of the *same* conversation, we store those discovered IDs in **`workingMemory.queryContext.accumulatedScope`**. 
-*   **The Bridge**: In the next turn, the prompt injector takes the contents of `accumulatedScope` and shows it to the AI under the label: `currentScope (Organic Discoveries)`. This ensures that if it takes 3 turns to answer a question, the AI doesn't forget the ID it found in Turn 1.
+We have unified the transient investigation memory into **`currentScope`**. The term `accumulatedScope` is deprecated.
 
-### The [ENTITIES] Block Extraction
-We have deleted manual regex scrapers from the backend. 
-- **summarizer.ts** now uses a hardened regex to extract a `[ENTITIES]` JSON block from the AI's final answer.
-- This block is the **Single Source of Truth** for populating `secondaryScope`.
-- It is hardened against markdown codefences (e.g., it strips ```json tags if the LLM hallucinates them).
+*   **`currentScope` (The Voice)**: This is the field in the **Orchestrator's Output Schema** (`orchestratorSchema`). When the AI discovers an ID (e.g., via `fleet.query_overview`), it "speaks" that ID back to us in the `currentScope` array in its JSON response.
+*   **The Bridge**: In the next turn, the prompt injector takes the contents of `currentScope` and shows it to the AI under the label: `currentScope (Organic Discoveries)`. This ensures the AI doesn't forget IDs found in prior turns of the *same* conversation.
+
+### 🆔 `resolvedLabels` (Current Identity Ledger)
+
+We have implemented a persistent **Identity Ledger** in the session context (`sessionContext.scope.resolvedLabels`). 
+- **Persistence**: Unlike `currentScope` (which resets per query), `resolvedLabels` persists indefinitely for the conversation.
+- **Deduplication**: Once a label (e.g., "XXX1") is resolved to a hex ID, it is stored in this ledger.
+- **LLM Grounding**: This mapping is injected into every Orchestrator turn (as `🆔 RESOLVED ENTITIES`), ensuring the LLM never loses the link between a human-readable name and its canonical ID, even if the raw discovery results are purged from the short-term prompt buffer.
 
 ---
 
 ## 🛠️ Status & Implementation Details
 
-1.  **State Schema**: Updated in [state.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/state.ts) to include the new buffers.
-2.  **Compression Engine**: Implemented in [summarizer.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/summarizer.ts). It triggers a native `invoke` turn to summarize history when the buffer reaches 20 items.
-3.  **Orchestrator Rules**: Updated in [orchestrator_rules.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/prompts/orchestrator_rules.ts) to enforce "The Golden Rule": consult `secondaryScope` or `currentScope` before executing discovery tools.
-4.  **State Safety**: Both `update_memory2.ts` and `summarizer.ts` have been refactored to return **Partial State Updates**. This prevent parallel branches from overwriting each other's memory modifications (e.g., `scope` vs `buffers`).
+1.  **State Schema**: Updated in [state.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/state.ts).
+2.  **Compression Engine**: Implemented in [summarizer.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/summarizer.ts).
+3.  **Orchestrator Rules**: Updated in [orchestrator_rules.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/prompts/orchestrator_rules.ts).
+4.  **Identity-First Strategy**: Implemented in [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts).
+5.  **Deduplicated Harvesting**: [update_memory2.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/update_memory2.ts) now automatically extracts discovery results.
 
-**STATUS**: The architecture is **Sturdy**. Long-term, short-term, and immediate memory are now logically isolated and deterministic.
+**STATUS**: The architecture is **Hardened**. Identity resolution is now deterministic, and memory scoping is unified to prevent context leakage or blindspot loops.
 
 > [!IMPORTANT]
 > **Identity-First Protocol (Section 64/65)**: As of April 2026, the Orchestrator now uses a deterministic "Strategic Interceptor" to force entity resolution before retrieval. See the root `handover2.md` for the full technical specification of the Ambiguity Bridge and Context Thievery.

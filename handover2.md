@@ -455,3 +455,26 @@ We have hardened the SkylarkAI orchestrator by implementing a deterministic **"I
 - [x] **Multi-Harvesting**: Validated that `update_memory2` promotes only unique IDs and flags collisions.
 - [x] **Human Protocol**: Confirmed the LLM asks for "type" instead of "ID" during ambiguities.
 - [x] **Consolidation**: Verified Rule 8 correctly triggers a follow-up resolution after user clarification.
+
+---
+
+## 🛠️ 66. Identity Resolution Persistence & currentScope Hardening
+
+We resolved a critical "Resolution Loop" and "Parameter Hallucination" bug where the AI would forget its discovered IDs or populate tools with result keys (e.g., `mcp.resolve_entities_iter1_2`).
+
+### 🟢 Deduplicated Harvesting (`update_memory2.ts`)
+- **Unique-ID Deduplication**: Updated Phase 1 of the memory node to filter identity matches by their unique document ID. This prevents the system from flagging a collision if the same vessel is returned multiple times across different turns of the same request.
+- **`resolvedLabels` Ledger**: Implemented a persistent mapping ledger in `sessionContext.scope.resolvedLabels`. Once an entity (e.g., "XXX1") is resolved, its ID and Label are stored indefinitely for the conversation.
+
+### 🟢 Orchestrator Context Injection (`orchestrator.ts`)
+- **Grounded Mapping Injection**: The Orchestrator now injects a dedicated `🆔 RESOLVED ENTITIES` block into the system prompt. This provides the LLM with immediate, grounded evidence that "XXX1" is already verified to a specific ID, even after the discovery tool results are purged from history.
+- **currentScope Hex-ID Enforcement**: Hardened the Zod schema and prompt for `currentScope`. It now explicitly forbids tool result keys and mandates that only 24-character hex IDs be output.
+- **Interceptor Optimization**: The "Strategic Interceptor" now cross-references the `resolvedLabels` ledger and will NOT diver turns for labels that are already verified, ensuring the graph proceeds directly to retrieval.
+
+### 📑 Final Session Checklist:
+- [x] **Deduplication**: Confirmed that identical matches across turns no longer trigger an ambiguity loop.
+- [x] **Mapping Persistence**: Verified that `resolvedLabels` keeps names linked to IDs throughout 3+ turns.
+- [x] **Schema Guard**: Validated that `currentScope` contains hex IDs and never tool-keys.
+- [x] **Intercept Filtering**: Confirmed that previously resolved labels do not trigger a resolution intercept.
+- [x] **Build Integrity**: Verified the system is fully compilable (`npx tsc --noEmit`) with the new state fields.
+

@@ -94,7 +94,11 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                 const label = data.appliedFilters?.searchTerm;
                 if (label) {
                   if (!labelToMatches[label]) labelToMatches[label] = [];
-                  labelToMatches[label].push(...data.items);
+                  const existing = labelToMatches[label]!;
+                  data.items.forEach((item: any) => {
+                    const exists = existing.some(m => m.id === item.id);
+                    if (!exists) existing.push(item);
+                  });
                 }
             }
         }
@@ -102,6 +106,10 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
 
     // C. Resolve Ambiguities or Promote Singular Hits
     const ambiguousMatches: any[] = [];
+    if (!sessionStateCommit.scope.resolvedLabels) {
+        sessionStateCommit.scope.resolvedLabels = (existingMemory.sessionContext.scope as any).resolvedLabels || {};
+    }
+
     for (const [label, matches] of Object.entries(labelToMatches)) {
         if (matches.length === 0) continue;
 
@@ -109,9 +117,13 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
             const hit = matches[0];
             const typeKey = `${hit.type.toLowerCase()}ID`; // e.g. vesselID, machineryID
             sessionStateCommit.scope[typeKey] = hit.id;
+            
+            // 🟢 PERSIST MAPPING: Store the label link so the Orchestrator knows "683..." is "XXX1"
+            sessionStateCommit.scope.resolvedLabels[label] = { id: hit.id, type: hit.type };
+            
             console.log(`\x1b[32m[UpdateMemory2] 💎 Promoted unique match: ${label} -> ${typeKey}: ${hit.id}\x1b[0m`);
         } else {
-            console.log(`\x1b[31m[UpdateMemory2] ⚠️ Ambiguity detected for label "${label}": ${matches.length} matches found.\x1b[0m`);
+            console.log(`\x1b[31m[UpdateMemory2] ⚠️ Ambiguity detected for label "${label}": ${matches.length} UNIQUE matches found.\x1b[0m`);
             ambiguousMatches.push({ label, candidates: matches });
         }
     }
