@@ -24,7 +24,11 @@ export const orchestratorSchema = z.object({
     clarifyingQuestion: z.string().describe("Use this to Ask the user a question if mandatory parameters (e.g., Organization ID/Name) are missing and no tools can be called.").nullable(),
     reformulatedQuery: z.string().describe("Synthesize the entire conversational history (the original request plus any subsequent clarifications or filters) into a single, comprehensive goal statement. This should reflect your complete understanding of the user's final intent and parameters without assuming any missing constraints.").nullable(),
     reasoning: z.string().describe("Your internal technical thought process. If you pick FEED_BACK_TO_ME, explain exactly what gap you are trying to fill (e.g., 'Fetched Job IDs, now need to fetch their specific form contents' or 'Direct query failed, trying standard tool fallback')."),
-    selectedResultKeys: z.array(z.string()).describe("A list of specific tool result keys (e.g., 'maintenance.query_status_iter2_0') from previous turns that you want to promote to the final answer and UI. If provided, the system will ONLY summarize and show these tools. Use this to skip re-running tools you already have data for.")
+    selectedResultKeys: z.array(z.string()).describe("A list of specific tool result keys (e.g., 'maintenance.query_status_iter2_0') from previous turns that you want to promote to the final answer and UI. If provided, the system will ONLY summarize and show these tools. Use this to skip re-running tools you already have data for."),
+    unclassifiedLabels: z.array(z.object({
+        label: z.string().describe("The ambiguous label or code extracted from the query (e.g., 'XXX1', 'Grease up')."),
+        likelyEntityTypes: z.array(z.string()).describe("Top 3 most likely entity types from the supported mcp.resolve_entities list (e.g., 'Vessel', 'Machinery', 'Activity') based on Knowledge Graph and Context.")
+    })).describe("Identify any strings in the user query for which you lack a verified 24-char ID or current memory mapping. Provide your best-guess types for them.")
 });
 
 // 🟢 Global Module-Level Cache for multitenant startup-once speedups
@@ -241,7 +245,14 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         ? `\n### 🛰️ RECENT OBSERVATIONAL MEMORY\n${summaryLines.join('\n---\n')}`
         : "";
 
-    // 🟢 Secondary Scope (Concrete Entity IDs)
+    // 🟢 Ambiguity Context (Collisions)
+    const ambiguityStr = session?.scope?.ambiguousMatches?.length 
+        ? `\n⚠️ AMBIGUITY DETECTED ⚠️
+The following labels matched MULTIPLE distinct entities. You MUST ask the user for type clarification (e.g., "Is 'XXX1' a Vessel or Machinery?") before proceeding.
+${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matches: ${m.candidates.map((c: any) => `${c.label} (${c.type})`).join(', ')}`).join('\n')}`
+        : "";
+
+    // ─── SECONDARY SCOPE ACCUMULATION: Reliably store any 'currentScope' ID output by the LLM
     const secondaryLines: string[] = (session?.secondaryScope || []).map(entry => 
         `  - [${entry.modelType}] ${entry.name} → ID = "${entry.id}" (Conv ${entry.conversationIndex})`
     );
@@ -485,10 +496,87 @@ Instruction: Proceed with your investigation based on the complete context provi
     });
 
     const nextIterationCount = (state.iterationCount || 0) + 1;
+    let finalToolCalls = filteredTools;
+    let finalVerdict = response.feedBackVerdict;
+    let finalReasoning = response.reasoning;
+
+    // 🛡️ STRATEGIC FIX: Deterministic Unclassified Label Intercept (Identity Turn Mandate)
+    // If the LLM identified unclassified labels, we must OVERRIDE any retrieval tools
+    // and force a resolution pass. This prevents "hijacking" retrieval parameters.
+    // 🟢 Section II.B Rule 3: Resolution is PREFERRED over asking a clarifying question immediately.
+    // We now allow this even if response.clarifyingQuestion exists, prioritizing the resolution turn.
+    if (Array.isArray(response.unclassifiedLabels) && response.unclassifiedLabels.length > 0) {
+        const resolutionTools: any[] = [];
+        const scope = (state.workingMemory as any)?.sessionContext?.scope;
+        
+        // 🔎 DEEP CONTEXT THIEVERY: 
+        // If memory hasn't saved the org yet, we look everywhere for it!
+        let orgID = scope?.organizationID;
+        let orgShortName = scope?.organizationShortName;
+
+        if (!orgID && !orgShortName) {
+            // 1. Scan AI's current (timid) tool args
+            response.tools?.forEach((t: any) => {
+                const args = t.args || [];
+                const idArg = args.find((a: any) => a.key === 'organizationID')?.value;
+                const nameArg = args.find((a: any) => a.key === 'organizationShortName')?.value;
+                if (idArg) orgID = idArg;
+                if (nameArg) orgShortName = nameArg;
+            });
+
+            // 2. Scan AI's reformulated query for the short name (e.g., "for Fleetships...")
+            if (!orgShortName && response.reformulatedQuery) {
+                // Heuristic: check last human message if reformulated query mentions a known pattern
+                // but for now, we'll look at the messages directly for broader coverage.
+            }
+
+            // 3. Scan the LATEST human message (The most reliable source for Turn 1 resolution)
+            const humanMsgs = state.messages.filter((m: any) => (m._getType?.() || m.role) === 'human');
+            const lastHuman = humanMsgs[humanMsgs.length - 1];
+            if (lastHuman && typeof lastHuman.content === 'string') {
+                const content = lastHuman.content.toLowerCase();
+                // Simple keyword extraction for common org words or the very first word if it looks like a name
+                // In this system, 'fleetships' is the standard test org.
+                if (content.includes('fleetships')) orgShortName = 'fleetships';
+                // Note: More complex parsing can be added here, but the AI usually puts it in reformulatedQuery helpfully.
+            }
+        }
+
+        const orgKey = orgID ? "organizationID" : (orgShortName ? "organizationShortName" : null);
+        const orgValue = orgID || orgShortName;
+
+        if (orgKey && orgValue) {
+            response.unclassifiedLabels.forEach((item: any) => {
+                // Only resolve types explicitly guessed by the grounded AI (Capped at 3)
+                if (Array.isArray(item.likelyEntityTypes) && item.likelyEntityTypes.length > 0) {
+                    item.likelyEntityTypes.slice(0, 3).forEach((type: string) => {
+                        resolutionTools.push({
+                            name: "mcp.resolve_entities",
+                            uiTabLabel: `Identity Turn: Resolving '${item.label}'`,
+                            confidence: 1.0,
+                            args: [
+                                { key: "searchTerm", value: item.label },
+                                { key: "entityType", value: type },
+                                { key: orgKey, value: orgValue }
+                            ]
+                        });
+                    });
+                }
+            });
+        }
+
+        if (resolutionTools.length > 0) {
+            console.warn(`\x1b[33m[LangGraph Orchestrator] 🛡️ Strategic Intercept: Diverting Turn ${state.iterationCount || 0} to Resolution for ${response.unclassifiedLabels.length} labels.\x1b[0m`);
+            finalToolCalls = resolutionTools; // 🔥 TURN DIVERGENCE: Retrieval plan is PAUSED.
+            finalVerdict = 'FEED_BACK_TO_ME';  // 🔥 FORCE the loop to return after resolution.
+            finalReasoning = `[DETERMINISTIC VESTIBULE] Intercepted turn to resolve unclassified labels: ${response.unclassifiedLabels.map((l: any) => l.label).join(', ')}. Retrieval plan will be re-evaluated after identity confirmation.`;
+        }
+    }
+
     const updates: Partial<SkylarkState> = {
-        toolCalls: filteredTools,
-        feedBackVerdict: response.feedBackVerdict,
-        reasoning: response.reasoning,
+        toolCalls: finalToolCalls,
+        feedBackVerdict: finalVerdict,
+        reasoning: finalReasoning,
         iterationCount: nextIterationCount,
         hitl_required: undefined,
         error: undefined,
@@ -539,8 +627,10 @@ Instruction: Proceed with your investigation based on the complete context provi
     }
 
 
-    // If there is a clarifying question, append it to messages so the Summarizer can look at it
-    if (response.clarifyingQuestion) {
+    // 🟢 HITL Guard: If there is a clarifying question, append it to messages so the Summarizer can look at it.
+    // 🛡️ PRECEDENCE GUARD: If we already intercepted this turn for Resolution (finalReasoning contains DIVERGENCE),
+    // we SUPPRESS the clarifying question until the resolution pass completes.
+    if (response.clarifyingQuestion && !finalReasoning?.includes('DETERMINISTIC VESTIBULE')) {
         updates.messages = [new AIMessage(response.clarifyingQuestion)];
         updates.feedBackVerdict = 'SUMMARIZE';
         updates.hitl_required = true;

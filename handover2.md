@@ -401,4 +401,57 @@ To optimize for token efficiency and eliminate context noise, we hardened the Or
     - **Summarizer Integrity**: The `Summarizer` node is **NOT** affected. It still receives the full result set from every turn to ensure final report accuracy.
 
 ### ⚠️ Mandate:
-Do not revert to cumulative result injection. If the AI "loses" context, the solution is to better populate the `currentScope` (The Notebook), not to flood the prompt with old logs.
+---
+
+## 🛠️ 63. Maintenance Status Filtering (Cancelled vs All)
+We resolved a long-standing tool contract mismatch where the AI was unable to filter for "Cancelled" jobs in historical data.
+
+### 🟢 Implementation Fixes:
+- **Service Layer**: Updated `getMaintenanceExecutionHistory` in [mcp.service.js](file:///home/phantom/testcodes/PhoenixCloudBE/services/mcp.service.js) to natively support `statusCode`. It now maps strings like "cancelled" to the `latestEventStatus` field in the MongoDB aggregation pipeline.
+- **Contract Parity**: Synchronized [contract.ts (SkylarkAI)](file:///home/phantom/testcodes/SkylarkAI/backend/src/mcp/capabilities/contract.ts) and [mcp.capabilities.contract.js (Backend)](file:///home/phantom/testcodes/PhoenixCloudBE/constants/mcp.capabilities.contract.js) to include `statusCode` in the `optionalQuery` for `maintenance.query_execution_history`.
+- **Status Guidance**: Added `interpretationGuidance` to both maintenance tools to explicitly list `completed, cancelled, rescheduled, created` as valid values, preventing the LLM from falling back to "completed" by default.
+
+---
+
+## 🛠️ 64. The "XXX1" Lesson (Classify -> Resolve -> Retrieve)
+We identified a critical reasoning breakdown where the Orchestrator attempted to "shortcut" the discovery process to save a turn, leading to an investigation failure for the label **"XXX1"**.
+
+### 🔴 The Breakdown:
+- **Parameter Hijacking**: Because the Orchestrator didn't have a VesselID for "XXX1", it "hijacked" the `activityDescription` text field in the retrieval tool and placed "XXX1" there. 
+- **The Result**: The tool searched for a *Maintenance Job* named "XXX1" (which doesn't exist) and returned 0 results, while correctly ignoring the actual *Vessel* named "XXX1".
+
+### 🟢 The Mandatory Agentic Pattern:
+Future agents MUST enforce the **Classify -> Resolve -> Retrieve** loop for all unclassified labels (e.g., "XXX1", "Main Engine", "CC-01"):
+1.  **Classify**: The LLM must infer the most likely Entity Type (e.g., "I think XXX1 is a Vessel").
+2.  **Resolve**: The LLM MUST call `mcp.resolve_entities` with that type and label. Chaining a retrieval call in the SAME turn using that label as a placeholder is **STRICTLY FORBIDDEN**.
+3.  **Retrieve**: Only after the Resolution Turn returns a 24-char Hex ID (e.g., `67eed...`) should the retrieval tool be called.
+
+> [!WARNING]
+> **No Shortcuts**: The Orchestrator is forbidden from using raw alphanumeric labels in text-search parameters (`searchTerm`, `activityDescription`) as a substitute for Missing IDs. A resolution failure MUST trigger **Rule II.B.4 (The Hard-Stop/Ambiguity Protocol)** rather than a "best-effort" mapping guess.
+
+---
+
+## 🛠️ 65. Identity-First & Ambiguity Bridge Architecture
+We have hardened the SkylarkAI orchestrator by implementing a deterministic **"Identity-First"** protocol. This architecture eliminates LLM parameter hijacking and ensures all entity labels (e.g., "XXX1") are canonicalized to 24-char hex IDs before retrieval begins.
+
+### 🟢 The Strategic Intercept (`orchestrator.ts`)
+- **Deterministic Vestibule**: Implemented a "Pre-Execution Interceptor" in the Orchestrator node. If the LLM identifies `unclassifiedLabels`, the system **physically wipes** the suggested retrieval tools (e.g., history query) and injects parallel `mcp.resolve_entities` calls.
+- **Turn Divergence**: This forces the graph into a mandatory "Identity Turn" before any data is fetched, preventing data-leaks and searching-by-label hallucinations.
+- **Context Thievery**: Added logic to "steal" organization context (`organizationID`/`organizationShortName`) from the AI's *current turn tool arguments* if it hasn't yet reached the persistent session memory. This ensures the first turn of a new organization context correctly scopes the resolution pass.
+
+### 🟢 Discovery Harvesting (`update_memory2.ts`)
+- **Deterministic Promotion**: Upgraded Phase 1 of the memory node to scan all `mcp.resolve_entities` results. It now automatically promotes discovered IDs (e.g., `vesselID`, `machineryID`, `activityID`) directly into the `sessionContext.scope` ledger if a unique match is found.
+- **Ambiguity Detection (The Collision Bridge)**: If a single label (e.g., "CCC") returns matches for multiple different entity types (e.g., both a Vessel and an Activity), the node flags an **`ambiguousMatches`** collision in memory instead of guessing a winner.
+
+### 🟢 Relational Deduction Constitution (`orchestrator_rules.ts`)
+- **The Pointer Pattern**: Consolidated all resolution logic into a single source of truth (**Section II.B**). The high-level "Fidelity Bridge" now acts as a pointer to the deep deduction protocol, eliminating instructional divergence.
+- **No-Hex-ID Policy (Rule 4)**: The AI is **strictly forbidden** from asking users for "24-character hex IDs." It MUST ask for human-friendly "Type Clarification" (e.g., *"Is 'XXX1' a Vessel or a piece of Machinery?"*).
+- **Ambiguity Logic (Rule 7)**: Mandates a hard-stop when `⚠️ AMBIGUITY DETECTED ⚠️` appears in the prompt context.
+- **Resolution Consolidation (Rule 8)**: Once a user clarifies an ambiguity, the AI is mandated to fire exactly **ONE** targeted confirmation turn to lock in the ID before proceeding.
+
+### 📑 Identity-First Verification:
+- [x] **Strategic Intercept**: Verified that `unclassifiedLabels` correctly trigger a diversion to resolution tools.
+- [x] **Context Thievery**: Confirmed Turn 1 org extraction works before memory persistence.
+- [x] **Multi-Harvesting**: Validated that `update_memory2` promotes only unique IDs and flags collisions.
+- [x] **Human Protocol**: Confirmed the LLM asks for "type" instead of "ID" during ambiguities.
+- [x] **Consolidation**: Verified Rule 8 correctly triggers a follow-up resolution after user clarification.

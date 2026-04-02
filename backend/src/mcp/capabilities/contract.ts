@@ -221,11 +221,12 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/execution-history",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "majorJobsOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "isFailureEvent", "startDate", "endDate", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "majorJobsOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "isFailureEvent", "statusCode", "startDate", "endDate", "limit"],
     purpose: "Returns recent maintenance execution events / Activity Work History (AWH), including completion status, costs, and comments.",
     whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution. Use this for all Activity Work History (AWH) queries.",
     typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated.", "Show me the latest committed AWH.", "Show me lube oil levels logged between Jan 1st and Jan 31st.", "List work completed from 2026-01-01 to 2026-02-01.", "Show me the last overhaul date of the Air Compressor."],
-    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
+    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
+    interpretationGuidance: "Valid values for statusCode: completed, cancelled, rescheduled, created. Use this tool for historical execution analysis."
   },
   {
     name: "maintenance.query_compliance_overview",

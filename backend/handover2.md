@@ -40,3 +40,6 @@ We have deleted manual regex scrapers from the backend.
 4.  **State Safety**: Both `update_memory2.ts` and `summarizer.ts` have been refactored to return **Partial State Updates**. This prevent parallel branches from overwriting each other's memory modifications (e.g., `scope` vs `buffers`).
 
 **STATUS**: The architecture is **Sturdy**. Long-term, short-term, and immediate memory are now logically isolated and deterministic.
+
+> [!IMPORTANT]
+> **Identity-First Protocol (Section 64/65)**: As of April 2026, the Orchestrator now uses a deterministic "Strategic Interceptor" to force entity resolution before retrieval. See the root `handover2.md` for the full technical specification of the Ambiguity Bridge and Context Thievery.

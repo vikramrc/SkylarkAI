@@ -65,8 +65,10 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     console.log(`\x1b[36m[UpdateMemory2] 📦 Tool turns in this request: total=${history.length} | current slice: ${currentTurns.length} turn(s) | latestTurn keys: [${Object.keys(latestTurn).join(', ') || 'none'}]\x1b[0m`);
 
     // Extract scope + resolved entities from ALL current turns
+    const labelToMatches: Record<string, any[]> = {};
+
     for (const turn of currentTurns) {
-        for (const [, res] of Object.entries(turn || {})) {
+        for (const [turnKey, res] of Object.entries(turn || {})) {
             let data: any = res;
             if (data?.content?.[0]?.text) {
                 try {
@@ -77,7 +79,7 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                 } catch { /* ignore */ }
             }
 
-            // Extract org scope from any tool result
+            // A. Extract org scope from any tool result
             if (data?.organizationID && !sessionStateCommit.scope.organizationID) {
                 sessionStateCommit.scope.organizationID = data.organizationID;
                 console.log(`\x1b[33m[UpdateMemory2] 🏢 Captured orgID: ${data.organizationID}\x1b[0m`);
@@ -86,7 +88,39 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                 sessionStateCommit.scope.organizationShortName = data.appliedFilters.organizationShortName;
                 console.log(`\x1b[33m[UpdateMemory2] 🏢 Captured orgShortName: ${data.appliedFilters.organizationShortName}\x1b[0m`);
             }
+
+            // B. Harvest Identity Resolutions (The Ambiguity Bridge)
+            if (turnKey.includes('mcp.resolve_entities') && Array.isArray(data?.items)) {
+                const label = data.appliedFilters?.searchTerm;
+                if (label) {
+                  if (!labelToMatches[label]) labelToMatches[label] = [];
+                  labelToMatches[label].push(...data.items);
+                }
+            }
         }
+    }
+
+    // C. Resolve Ambiguities or Promote Singular Hits
+    const ambiguousMatches: any[] = [];
+    for (const [label, matches] of Object.entries(labelToMatches)) {
+        if (matches.length === 0) continue;
+
+        if (matches.length === 1) {
+            const hit = matches[0];
+            const typeKey = `${hit.type.toLowerCase()}ID`; // e.g. vesselID, machineryID
+            sessionStateCommit.scope[typeKey] = hit.id;
+            console.log(`\x1b[32m[UpdateMemory2] 💎 Promoted unique match: ${label} -> ${typeKey}: ${hit.id}\x1b[0m`);
+        } else {
+            console.log(`\x1b[31m[UpdateMemory2] ⚠️ Ambiguity detected for label "${label}": ${matches.length} matches found.\x1b[0m`);
+            ambiguousMatches.push({ label, candidates: matches });
+        }
+    }
+
+    // Store ambiguities in scope for Orchestrator to see
+    if (ambiguousMatches.length > 0) {
+        sessionStateCommit.scope.ambiguousMatches = ambiguousMatches;
+    } else {
+        delete sessionStateCommit.scope.ambiguousMatches; // Clear if resolved
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -109,6 +143,12 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     //
     const existingRawQuery = existingMemory.queryContext?.rawQuery || "";
     const isNewQuery = (iter <= 1) && !state.isHITLContinuation;
+
+    // 🛡️ AMBIGUITY GARBAGE COLLECTION: If this is a brand-new question, wipe any stale collisions 
+    // from previous topics so they don't pollute the new investigation's prompt context.
+    if (isNewQuery) {
+        delete sessionStateCommit.scope.ambiguousMatches;
+    }
 
     console.log(`\x1b[35m[UpdateMemory2] 🔀 Tier 2 Reset Decision:\x1b[0m`);
     console.log(`\x1b[35m  iter <= 1 = ${iter <= 1}\x1b[0m`);

@@ -15,6 +15,8 @@ export interface SkylarkState {
         organizationID?: string;
         organizationShortName?: string;
         organizationName?: string;
+        ambiguousMatches?: any[];
+        [key: string]: any; // Allow dynamic promotion of IDs (vesselID, machineryID, etc.)
       };
       // 🟢 Long-term infinite buffer compressed by LLM every 20 conversations
       longTermBuffer?: string;
