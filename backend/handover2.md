@@ -40,6 +40,7 @@ We have implemented a persistent **Identity Ledger** in the session context (`se
 3.  **Orchestrator Rules**: Updated in [orchestrator_rules.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/prompts/orchestrator_rules.ts).
 4.  **Identity-First Strategy**: Implemented in [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts).
 5.  **Deduplicated Harvesting**: [update_memory2.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/update_memory2.ts) now automatically extracts discovery results.
+6.  **Request-Local Loop Breaker**: [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts) now scans `toolResults` for the current turn to identify and skip irresolvable labels, preventing infinite resolution loops.
 
 **STATUS**: The architecture is **Hardened**. Identity resolution is now deterministic, and memory scoping is unified to prevent context leakage or blindspot loops.
 

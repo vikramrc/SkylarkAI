@@ -192,7 +192,12 @@ export async function resolveEntities(args: {
       return { 
         content: [{ 
             type: 'text', 
-            text: `No matches found in ${entityType} for "${searchTerm}". Please check your spelling or verify the organization/vessel scope.` 
+            text: JSON.stringify({
+              capability: 'mcp.resolve_entities',
+              appliedFilters: { entityType, searchTerm, organizationID: resolvedOrgID, vesselID: resolvedVesselID },
+              items: [],
+              message: `No matches found in ${entityType} for "${searchTerm}".`
+            })
         }] 
       };
     }

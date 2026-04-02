@@ -226,6 +226,43 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         ? `\n\n### 📓 SESSION DECISION JOURNAL (Current Query Only):\n${journalEntries.join('\n---\n')}\n\n**MANDATE**: You MUST consult this Journal to avoid redundant work. Do NOT repeat the exact same Tool+Parameter combination unless requested. HOWEVER, if the user asks a follow-up question requiring new or related data (e.g., asking for Invoices linked to prior POs), you MUST proactively execute the relevant new tool calls to continue the investigation.`
         : "";
 
+    // 🟢 Loop Breaker Logic (Request-Local): 
+    // Identify any labels that have ALREADY been searched in the current Turn and came back empty!
+    const failedSessionLabels = new Set<string>();
+    const requestCycleTurns = (state.toolResults || []).slice(state.startTurnIndex || 0);
+    
+    requestCycleTurns.forEach((turn: any) => {
+        Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
+            if (key.includes('mcp.resolve_entities')) {
+                const rawText = res?.content?.[0]?.text;
+                if (!rawText) return;
+
+                let data: any = null;
+                try {
+                    data = JSON.parse(rawText);
+                } catch (e) {
+                    if (rawText.toLowerCase().includes('no matches found')) {
+                        const match = rawText.match(/for "(.*?)"/);
+                        if (match && match[1]) {
+                            failedSessionLabels.add(match[1].trim().toLowerCase());
+                        }
+                    }
+                }
+
+                if (data) {
+                    const items = Array.isArray(data.items) ? data.items : [];
+                    if (items.length === 0 && data.appliedFilters?.searchTerm) {
+                        failedSessionLabels.add(data.appliedFilters.searchTerm.trim().toLowerCase());
+                    }
+                }
+            }
+        });
+    });
+
+    const deadEndStr = failedSessionLabels.size > 0 
+        ? `\n\n🛡️ DEAD-END LABELS (Verified NOT FOUND This Turn):\n${Array.from(failedSessionLabels).map(l => `- "${l}": Checked multiple entity types. No matches found. Do NOT retry resolution for this label. Inform the user it does not exist.`).join('\n')}`
+        : "";
+
     // ─── TWO-TIER MEMORY CONTEXT ASSEMBLY (after all components are declared) ─────
     const session = state.workingMemory?.sessionContext;
     const query = state.workingMemory?.queryContext;
@@ -304,6 +341,7 @@ You MUST check the user's current query:
             ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${(query?.currentScope || []).join(', ')}]` 
             : "",
         resultsContext,
+        deadEndStr,
         decisionJournal,
     ].filter(Boolean).join('\n');
 
@@ -516,7 +554,31 @@ Instruction: Proceed with your investigation based on the complete context provi
     // 🟢 Section II.B Rule 3: Resolution is PREFERRED over asking a clarifying question immediately.
     // We now allow this even if response.clarifyingQuestion exists, prioritizing the resolution turn.
     const resolvedLabelSet = new Set(Object.keys((state.workingMemory?.sessionContext?.scope as any).resolvedLabels || {}));
-    const actualUnclassified = (response.unclassifiedLabels || []).filter((l: any) => !resolvedLabelSet.has(l.label));
+    
+    // 🟢 Loop Breaker Logic (Filtering AI and Interceptor)
+    // failedSessionLabels is now pre-calculated at the start of the node.
+
+    // 🟢 Filter AI-suggested unclassified labels
+    const actualUnclassified = (response.unclassifiedLabels || []).filter((l: any) => {
+        const lbl = (l.label || '').trim().toLowerCase();
+        return !resolvedLabelSet.has(l.label) && !failedSessionLabels.has(lbl);
+    });
+
+    // 🟢 Filter AI-suggested Tool Calls (Prevent redundant resolution loops)
+    // If the tool is mcp.resolve_entities and the searchTerm is in failedSessionLabels, skip it!
+    finalToolCalls = finalToolCalls.filter((t: any) => {
+        if (t.name === 'mcp.resolve_entities') {
+            const searchTerm = (t.args || []).find((a: any) => a.key === 'searchTerm')?.value;
+            if (searchTerm && typeof searchTerm === 'string') {
+                const lbl = searchTerm.trim().toLowerCase();
+                if (failedSessionLabels.has(lbl)) {
+                    console.log(`\x1b[33m[LangGraph Orchestrator] 🛡️ Loop Breaker: Blocking redundant resolution call for "${searchTerm}" (already failed this turn)\x1b[0m`);
+                    return false;
+                }
+            }
+        }
+        return true;
+    });
 
     if (actualUnclassified.length > 0) {
         const resolutionTools: any[] = [];

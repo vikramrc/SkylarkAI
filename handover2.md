@@ -478,3 +478,24 @@ We resolved a critical "Resolution Loop" and "Parameter Hallucination" bug where
 - [x] **Intercept Filtering**: Confirmed that previously resolved labels do not trigger a resolution intercept.
 - [x] **Build Integrity**: Verified the system is fully compilable (`npx tsc --noEmit`) with the new state fields.
 
+---
+
+## 🛠️ 67. Request-Local Resolution Loop Breaker
+
+We identified and resolved a critical "Agentic Loop" bug where the Orchestrator would enter an infinite cycle of trying to resolve irresolvable labels (typos like "XCCCCC").
+
+### 🟢 Deterministic Loop Prevention (`orchestrator.ts`)
+
+- **Negative Resolution Caching**: The `Strategic Interceptor` now performs a deterministic check BEFORE triggering a resolution turn. 
+- **Internal Turn Scanning**: It scans all `toolResults` for the **current user request** (using `state.startTurnIndex`). 
+- **Bypass Mandate**: If a label was already searched via `mcp.resolve_entities` in a previous iteration of the *same turn* and returned "No matches found," the Interceptor now **skips** that label.
+- **Graceful Best-Effort**: If the filtered list of labels to resolve is empty, the Interceptor stands down. This allows the graph to proceed with the retrieval of other valid entities in the query (e.g., fetching jobs for a valid vessel even if a second vessel name was a typo).
+
+### 🟢 Lifecycle of the "Failure Cache"
+- **Ephemeral**: The failure state is **strictly local** to the current internal request loop.
+- **Auto-Reset**: As soon as the user sends a new message, the `startTurnIndex` moves forward, clearing the "failure cache" and ensuring the AI will attempt the resolution again if asked.
+
+### 📑 Loop Breaker Verification:
+- [x] **Internal Loop Termination**: Confirmed that the system stops retrying "XCCCCC" after the first failure.
+- [x] **Selective Retrieval**: Verified that valid data for "MV Phoenix Demo" is still retrieved even when "XCCCCC" fails.
+- [x] **New-Turn Reset**: Confirmed that the AI will re-try the resolution if the user asks for it in a fresh prompt.
