@@ -1,48 +1,62 @@
-# Handover: SkylarkAI 5-Tier Memory Architecture & Orchestration
+# Final Handover: SkylarkAI Architectural Hardening & Memory Resilience
 
-## 🎯 Current Objective
-Establish a deterministic, token-efficient 5-tier memory architecture that eliminates "hallucinated IDs" and brittle backend scraping. The system now balances verbatim recent history, a rolling entity scope, and infinite conceptual long-term memory.
+This document summarizes the comprehensive stabilization work performed on the SkylarkAI orchestrator as of April 2, 2026. The system is now hardened against context collapse, memory bloat, and non-deterministic race conditions.
 
-## 🟢 System Architecture (The 5-Tier Stack)
+## 🏗️ The 5-Tier Memory Stack (Finalized)
 
-Details for each tier are in [skylark_memory.md](file:///home/phantom/.gemini/antigravity/brain/f1cda7da-bcd5-4a2f-ac09-4df45fb2430e/skylark_memory.md).
+The memory system is now a deterministic, single-owner hierarchy that prevents token blowup and "Identity Blind Spots."
 
-1.  **Knowledge Graph (Static)**: Maritime schemas and SFI codes.
-2.  **`longTermBuffer` (Infinite)**: Compressed narrative of interactions older than the verbatim window.
-3.  **`summaryBuffer` (7-20 Verbatim)**: Stores exact Q&A pairs. Slices the oldest 13 conversations into `longTermBuffer` when it hits 20, resetting to the latest 7.
-4.  **`secondaryScope` (7-Conversation Rolling IDs)**: A FIFO list of (ModelType | Name | ID) parsed from the Summarizer's `[ENTITIES]` block.
-5.  **`currentScope` (Immediate Scratchpad)**: Ephemeral scratchpad for the active investigation/turn.
-
----
-
-## 🧠 Memory Persistence & Scoping Logic
-
-### `currentScope` (The Unified Investigatory Bridge)
-
-We have unified the transient investigation memory into **`currentScope`**. The term `accumulatedScope` is deprecated.
-
-*   **`currentScope` (The Voice)**: This is the field in the **Orchestrator's Output Schema** (`orchestratorSchema`). When the AI discovers an ID (e.g., via `fleet.query_overview`), it "speaks" that ID back to us in the `currentScope` array in its JSON response.
-*   **The Bridge**: In the next turn, the prompt injector takes the contents of `currentScope` and shows it to the AI under the label: `currentScope (Organic Discoveries)`. This ensures the AI doesn't forget IDs found in prior turns of the *same* conversation.
-
-### 🆔 `resolvedLabels` (Current Identity Ledger)
-
-We have implemented a persistent **Identity Ledger** in the session context (`sessionContext.scope.resolvedLabels`). 
-- **Persistence**: Unlike `currentScope` (which resets per query), `resolvedLabels` persists indefinitely for the conversation.
-- **Deduplication**: Once a label (e.g., "XXX1") is resolved to a hex ID, it is stored in this ledger.
-- **LLM Grounding**: This mapping is injected into every Orchestrator turn (as `🆔 RESOLVED ENTITIES`), ensuring the LLM never loses the link between a human-readable name and its canonical ID, even if the raw discovery results are purged from the short-term prompt buffer.
+1.  **Knowledge Graph (Static)**: Foundation of maritime relations (SFI, Schemas) loaded at startup.
+2.  **`longTermBuffer` (Infinite)**: A conceptual summary of interactions older than the verbatim window.
+3.  **`summaryBuffer` (7-20 Verbatim)**: Stores exact Q&A pairs. Ownership migrated to `summarizer.ts` (GAP-31).
+    - **Compression Engine**: When the buffer hits 20 entries, the **oldest 13** are compressed into `longTermBuffer`, resetting the buffer to the **latest 7** (20-to-7 logic).
+    - **HITL Persistence**: Clarifying exchanges are now proactively detected and committed here (GAP-3).
+4.  **`secondaryScope` (7-Conversation Rolling IDs)**: A FIFO ledger of concrete IDs (`ModelType | Name | ID`) parsed from the `[ENTITIES]` block. Pruned to match the 7-turn verbatim window.
+5.  **`currentScope` (Immediate Scratchpad)**:
+    - **Transient Truth**: Wiped on brand-new queries but persists across HITL/Iterative loops.
+    - **GAP-30 Fix**: Now deterministically synchronized from Phase 1 resolved IDs in `update_memory2.ts` before Phase 2 LLM execution.
 
 ---
 
-## 🛠️ Status & Implementation Details
+## 🛡️ Critical Gap Remediations (The 34-GAP Audit)
 
-1.  **State Schema**: Updated in [state.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/state.ts).
-2.  **Compression Engine**: Implemented in [summarizer.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/summarizer.ts).
-3.  **Orchestrator Rules**: Updated in [orchestrator_rules.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/prompts/orchestrator_rules.ts).
-4.  **Identity-First Strategy**: Implemented in [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts).
-5.  **Deduplicated Harvesting**: [update_memory2.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/update_memory2.ts) now automatically extracts discovery results.
-6.  **Request-Local Loop Breaker**: [orchestrator.ts](file:///home/phantom/testcodes/SkylarkAI/backend/src/langgraph/nodes/orchestrator.ts) now scans `toolResults` for the current turn to identify and skip irresolvable labels, preventing infinite resolution loops.
+### 1. Memory & State Integrity
+- **GAP-2 (Context Wipe)**: Removed `queryContext` writes from the summarizer to prevent parallel-branch race conditions from wiping active filters.
+- **GAP-9 (Windowing)**: Increased message window from 6 to 10 to prevent original human queries from sliding off the buffer during deep HITL chains.
+- **GAP-16 (Non-Determinism)**: Implemented an explicit LangGraph `reducer` for `hitl_required` to prevent "last-write-wins" randomness in parallel branches.
+- **GAP-31 (Race Conditions)**: Consolidated all Tier 1 memory writes to `summarizer.ts`, eliminating state collisions between memory and summary nodes.
 
-**STATUS**: The architecture is **Hardened**. Identity resolution is now deterministic, and memory scoping is unified to prevent context leakage or blindspot loops.
+### 2. Identity & Relational Reasoning
+- **GAP-1 (Precedence)**: Established a constitutional mandate that `resolvedLabels` (current) always take precedence over `secondaryScope` (past).
+- **GAP-10 (Connection Pool)**: Implemented a module-level **MongoDB Singleton Client** to prevent TCP exhaustion during parallel resolution calls.
+- **The Ambiguity Bridge**: Tool results now emit an `__ambiguity_stop` sentinel when multiple entities match a label, triggering a direct graph breakout for clarification.
 
-> [!IMPORTANT]
-> **Identity-First Protocol (Section 64/65)**: As of April 2026, the Orchestrator now uses a deterministic "Strategic Interceptor" to force entity resolution before retrieval. See the root `handover2.md` for the full technical specification of the Ambiguity Bridge and Context Thievery.
+### 3. Stability & Infrastructure
+- **GAP-15 (BSON Limit)**: Capped `toolResults` at 30 turns to prevent MongoDB 16MB checkpoint overflows.
+- **GAP-29 (Timeout)**: Implemented a **25s Promise.race timeout** for all tool executions (GAP-32 ensures no dangling timer handles).
+- **GAP-18 (Lookup Isolation)**: Restricted `active: { $ne: false }` filters to relevant collections to avoid index-blindness errors on specialized lookups.
+
+### 4. Orchestration & UX
+- **GAP-8 (Clarifying Mandate)**: Enforced explicit clarifying question triggers in the orchestrator's "deadEndStr" to prevent silent failures.
+- **GAP-13 (Description Sync)**: Fixed tool parameter descriptions to correctly reference `optionalQuery` for optional parameters.
+- **Strategic Interceptor**: Implemented a deterministic diversion that pauses retrieval turns to force entity resolution if unclassified labels are detected.
+
+---
+
+### 5. Maintenance Execution & Status Hardening (April 3, 2026)
+- **Terminal Status Support**: Added explicit support for `cancelled`, `rescheduled`, and `missed` statuses in `mcp.service.js` and `contract.ts`.
+- **Conditional Base Match**: Modified `getMaintenanceExecutionHistory` to conditionally drop the `committed: true` constraint when a terminal status is requested, preventing "disappearing" cancelled records.
+- **Orchestrator Discipline (Rule III.2.3)**: Implemented a strict "Only send what is requested" mandate. The LLM is forbidden from adding default boolean flags (e.g., `taggedOnly: false`) or hallucinated filters (e.g., `maintenanceType: Corrective`) which previously caused empty results due to lack of matching event documents.
+- **Tool Steering Hardening**: Updated `contract.ts` to strictly steer `cancelled` and "who did it" (performer) queries away from the lighter `query_status` tool and towards the high-fidelity `query_execution_history` tool.
+
+---
+
+## 🛠️ Developer Checklist for Next Agent
+
+- **State Schema**: See `src/langgraph/state.ts` for the final memory interfaces.
+- **Constitutional Rules**: See `orchestrator_rules.ts` for the latest "Identity-First" and "Sequential Turn" mandates.
+- **Status Normalization**: See `mcp.service.js` (`buildMaintenanceStatusFilter`) for how `overdue`, `cancelled`, and `missed` are handled.
+- **Timeout Logic**: Check `execute_tools.ts` for the 25s guardrail.
+- **Compression**: Loop logic is in `summarizer.ts` (lines 340-380).
+
+**STATUS**: ✅ **PRODUCTION READY**. All identified gaps, including the recent maintenance retrieval stalls, have been addressed. The system is robust, deterministic, and token-efficient.

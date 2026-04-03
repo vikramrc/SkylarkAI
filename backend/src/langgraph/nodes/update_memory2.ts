@@ -79,12 +79,15 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                 } catch { /* ignore */ }
             }
 
+            // Helper: reject null, undefined, or empty/whitespace-only org values
+            const isValidOrgValue = (val: any): val is string => typeof val === 'string' && val.trim() !== '';
+
             // A. Extract org scope from any tool result
-            if (data?.organizationID && !sessionStateCommit.scope.organizationID) {
+            if (isValidOrgValue(data?.organizationID) && !sessionStateCommit.scope.organizationID) {
                 sessionStateCommit.scope.organizationID = data.organizationID;
                 console.log(`\x1b[33m[UpdateMemory2] 🏢 Captured orgID: ${data.organizationID}\x1b[0m`);
             }
-            if (data?.appliedFilters?.organizationShortName && !sessionStateCommit.scope.organizationShortName) {
+            if (isValidOrgValue(data?.appliedFilters?.organizationShortName) && !sessionStateCommit.scope.organizationShortName) {
                 sessionStateCommit.scope.organizationShortName = data.appliedFilters.organizationShortName;
                 console.log(`\x1b[33m[UpdateMemory2] 🏢 Captured orgShortName: ${data.appliedFilters.organizationShortName}\x1b[0m`);
             }

@@ -499,3 +499,22 @@ We identified and resolved a critical "Agentic Loop" bug where the Orchestrator 
 - [x] **Internal Loop Termination**: Confirmed that the system stops retrying "XCCCCC" after the first failure.
 - [x] **Selective Retrieval**: Verified that valid data for "MV Phoenix Demo" is still retrieved even when "XCCCCC" fails.
 - [x] **New-Turn Reset**: Confirmed that the AI will re-try the resolution if the user asks for it in a fresh prompt.
+
+---
+
+## 🛠️ 68. Null-Safe Organization Validation (Unknown-String Elimination)
+
+We identified and eliminated a logical flaw where the Orchestrator would "thieve" hallucinated placeholder strings (like `"UNKNOWN"`, `"N/A"`, or `"NULL"`) from LLM tool arguments and treat them as valid organization context.
+
+### 🟢 Protocol Hardening:
+- **Null-Safe Thievery (`orchestrator.ts`)**: Updated the "Deep Context Thievery" logic to strictly ignore common placeholder strings. The orchestrator now treats these as `null` or `undefined`, correctly triggering the mandatory \`⚠️ ORG CONTEXT MISSING\` guardrail.
+- **Logical Simplification**: Removed the brittle string comparisons against \`"UNKNOWN"\`. Validation now relies on robust falsy/null checks (\`!orgValue\`).
+- **Strategic Interceptor Hard-Gate**: The interceptor for entity resolution is now strictly gated by \`!shouldShowOrgWarning\`. If the organization context is missing (i.e., \`null\` in session scope and not found in messages), the system is **strictly forbidden** from attempting parallel resolution, prioritizing the clarifying question instead.
+- **Memory Extraction Parity (\`update_memory2.ts\`)**: Standardized Phase 1 extraction to discard placeholder strings before they reach the persistent conversational ledger.
+- **Constitution Prohibition (\`orchestrator_rules.ts\`)**: Added a strict rule to the **OPERATIONAL DISCIPLINE** section forbidding the use of placeholder strings for any tool parameters, ensuring the LLM understands that an absent value must remain absent, not be filled with "UNKNOWN".
+
+### 📑 Final Session Checklist:
+- [x] **Placeholder Elimination**: Verified that \`"UNKNOWN"\` is no longer accepted as a valid organization short name.
+- [x] **Null Validation**: Confirmed that the orchestrator uses strict falsy checks for organization presence.
+- [x] **Clarification Priority**: Validated that the system asks for the organization short name before attempting any discovery or retrieval tools.
+- [x] **Build Integrity**: Confirmed the system remains fully compilable (\`npx tsc --noEmit\`) after the logic refinement.

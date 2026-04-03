@@ -67,7 +67,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "isFailureEvent":
       return `${requiredLabel} flag. Set to true to filter for maintenance events that were specifically logged as failure-driven outcomes (unplanned/breakdown/CM).`;
     case "statusCode":
-      return `${requiredLabel} status enum filter. For status queries: 'overdue', 'upcoming', 'completed', 'open'. For execution history: 'completed', 'cancelled', 'rescheduled', 'created'.`;
+      return `${requiredLabel} status enum filter. Valid values: 'overdue', 'upcoming', 'completed', 'open', 'cancelled', 'rescheduled', 'missed'. Note: 'cancelled', 'rescheduled', and 'missed' match on latestEventStatus and work in both query_status and query_execution_history.`;
     case "performedBy":
       return `${requiredLabel} performer search. Accepts a 24-character User ID, or a human-readable rank/designation (e.g., 'Chief Engineer', 'Third Officer'). Use to see who completed a task.`;
     case "majorJobsOnly":
@@ -81,7 +81,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "riskAssessmentOnly":
       return `${requiredLabel} safety flag. Set to true to return only records where a risk assessment was explicitly attached or filled.`;
     case "maintenanceType":
-      return `${requiredLabel} category filter for the type of maintenance work (e.g., 'Preventative', 'Corrective').`;
+      return `${requiredLabel} category filter for the type of maintenance work (e.g., 'Preventative', 'Corrective'). ⚠️ ONLY provide this if the user explicitly named a maintenance type. DO NOT infer or default to 'Corrective' — omitting this parameter returns all types.`;
     case "searchTerm":
       return `${requiredLabel} CRITICAL parameter. The human-readable label or code to resolve (e.g., 'TESTCOSTCENTER1', 'Main Engine', 'John Doe'). YOU MUST ALWAYS PROVIDE THIS field, even if you are also providing organizationShortName or vesselName. The value you are searching for MUST go in this field.`;
     case "costCenterID":
@@ -219,18 +219,18 @@ const baseCapabilitiesContract = [
     optionalQuery: ["vesselID", "vesselName", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "hasInstructionsOnly", "isFailureEvent", "activityDescription", "startDate", "endDate", "limit"],
     purpose: "Returns overdue, upcoming, and recently completed maintenance work.",
     whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses. This is the primary tool for 'What is due/overdue' or 'Finding an activity ID'.",
-    whenNotToUse: "Do NOT use for historical failure analysis (use reliability), deep execution comments, dedicated AWH queries (use execution_history), or technical instructions/manuals (use query_instructions).",
+    whenNotToUse: "Do NOT use for historical failure analysis (use reliability), deep execution comments, dedicated AWH queries (use execution_history), or technical instructions/manuals (use query_instructions). Do NOT use when the user asks 'who did' a job — performer data (performer name, man-hours, comments) only exists in execution_history.",
     typicalQuestions: [
       "Which activities are overdue?", 
       "What maintenance is due in the next 7 days?", 
       "Show me pending critical jobs.",
       "Show me completed maintenance from Jan 2026 to March 2026.",
       "What jobs are overdue from last year?",
-      "Show me all overdue for 'Grease up'",
-      "Are there any upcoming jobs for 'Valve'?"
+      "Show me all cancelled jobs",
+      "Show me rescheduled or missed maintenance"
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
-    interpretationGuidance: "Valid values for statusCode: overdue, upcoming, completed, open. The 'summary' block provides quick counts."
+    interpretationGuidance: "Valid statusCode values: overdue, upcoming, completed, open, cancelled, rescheduled, missed. For 'who did it' (performer, man-hours, comments), use maintenance.query_execution_history instead."
   },
   {
     name: "maintenance.query_execution_history",
@@ -242,7 +242,7 @@ const baseCapabilitiesContract = [
     whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution. Use this for all Activity Work History (AWH) queries.",
     typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated.", "Show me the latest committed AWH.", "Show me lube oil levels logged between Jan 1st and Jan 31st.", "List work completed from 2026-01-01 to 2026-02-01.", "Show me the last overhaul date of the Air Compressor."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
-    interpretationGuidance: "Valid values for statusCode: completed, cancelled, rescheduled, created. Use this tool for historical execution analysis."
+    interpretationGuidance: "Valid values for statusCode: completed, cancelled, rescheduled, missed, created. Use this tool when the user wants to know WHO performed a job (performer, man-hours, comments, parts used). ⚠️ DO NOT add `maintenanceType` (e.g., 'Corrective', 'Preventative') unless the user explicitly asks for a specific type — omitting it returns all types."
   },
   {
     name: "maintenance.query_compliance_overview",

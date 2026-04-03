@@ -320,9 +320,39 @@ ${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matches: ${m.
         session?.scope?.organizationID ||
         session?.scope?.organizationShortName
     );
+
+    // 🟢 BUG-1 FIX: org-from-messages fallback.
+    // When the user provides the org name via a HITL reply, it lives in the message history
+    // but has NOT yet been promoted to sessionContext.scope (that happens in update_memory2
+    // AFTER execute_tools runs). On the FEED_BACK_TO_ME loop-back turn, isHITLContinuation
+    // has already been reset to false by update_memory2, so the naive check
+    // `!hasOrgContext && !isHITLContinuation` would re-fire the ORG MISSING warning even
+    // though the org WAS provided. We detect this by scanning the message window for a
+    // short human reply that immediately follows an AI clarifying question.
+    let orgFoundInMessages = false;
+    if (!hasOrgContext) {
+        const msgs = state.messages || [];
+        for (let i = msgs.length - 1; i >= 1; i--) {
+            const cur = msgs[i] as any;
+            const prev = msgs[i - 1] as any;
+            const curType = cur._getType?.() || cur.role || 'human';
+            const prevType = prev._getType?.() || prev.role || 'ai';
+            if (curType === 'human' && (prevType === 'ai' || prevType === 'assistant')) {
+                const prevContent: string = prev.content || '';
+                // If the preceding AI message looks like a short clarifying question, treat
+                // this human reply as a potential org answer and suppress the warning.
+                if (prevContent.includes('?') && prevContent.length < 400) {
+                    orgFoundInMessages = true;
+                    console.log(`\x1b[33m[Orchestrator] 🛡️ OrgGuard: Org not yet in scope but detected HITL Q→A pair in messages. Suppressing ORG MISSING warning.\x1b[0m`);
+                    break;
+                }
+            }
+        }
+    }
+
     // isHITLContinuation = true means the user just replied to our clarifying
     // question — suppress the warning so the LLM reads the answer from history.
-    const shouldShowOrgWarning = !hasOrgContext && !state.isHITLContinuation;
+    const shouldShowOrgWarning = !hasOrgContext && !state.isHITLContinuation && !orgFoundInMessages;
 
     const orgContextBlock = shouldShowOrgWarning
         ? `⚠️ ORG CONTEXT MISSING — MANDATORY CHECK ⚠️
@@ -333,8 +363,8 @@ You MUST check the user's current query:
         : hasOrgContext
             // Scope is populated — show the confirmed org for grounding
             ? `✅ Org confirmed: ${session?.scope?.organizationShortName || session?.scope?.organizationID}${session?.scope?.organizationID ? ` (ID: ${session.scope.organizationID})` : ""}`
-            // isHITLContinuation=true but scope not yet persisted — LLM must read org from conversation
-            : `✅ HITL Continuation Active: The user has just answered your clarifying question. Extract the organization from their latest message. ⚠️ CRITICAL MANDATE: The Discovery-First Mandate still applies! If the request implies a "per-vessel" or "fleet-wide" scope, you MUST use fleet.query_overview first to resolve the vessels. DO NOT call data-retrieval tools directly at the organization level without vessel IDs.`;
+            // isHITLContinuation=true or org found in message history — LLM must read org from conversation
+            : `✅ HITL Continuation Active: The user has just answered your clarifying question. Extract the organization from their latest message and use it directly in your tool calls. ⚠️ CRITICAL MANDATE: The Discovery-First Mandate still applies! If the request implies a "per-vessel" or "fleet-wide" scope, you MUST use fleet.query_overview first to resolve the vessels. DO NOT call data-retrieval tools directly at the organization level without vessel IDs.`;
 
     const memoryContext = [
         `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
@@ -596,14 +626,16 @@ Instruction: Proceed with your investigation based on the complete context provi
         let orgID = scope?.organizationID;
         let orgShortName = scope?.organizationShortName;
 
+        const isValidOrgValue = (val: any): val is string => typeof val === 'string' && val.trim() !== '';
+
         if (!orgID && !orgShortName) {
             // 1. Scan AI's current (timid) tool args
             response.tools?.forEach((t: any) => {
                 const args = t.args || [];
                 const idArg = args.find((a: any) => a.key === 'organizationID')?.value;
                 const nameArg = args.find((a: any) => a.key === 'organizationShortName')?.value;
-                if (idArg) orgID = idArg;
-                if (nameArg) orgShortName = nameArg;
+                if (isValidOrgValue(idArg)) orgID = idArg;
+                if (isValidOrgValue(nameArg)) orgShortName = nameArg;
             });
 
             // 2. Scan AI's reformulated query for the short name (e.g., "for Fleetships...")
@@ -623,7 +655,7 @@ Instruction: Proceed with your investigation based on the complete context provi
         const orgKey = orgID ? "organizationID" : (orgShortName ? "organizationShortName" : null);
         const orgValue = orgID || orgShortName;
 
-        if (orgKey && orgValue) {
+        if (orgKey && orgValue && !shouldShowOrgWarning) {
             actualUnclassified.forEach((item: any) => {
                 // Only resolve types explicitly guessed by the grounded AI (Capped at 3)
                 if (Array.isArray(item.likelyEntityTypes) && item.likelyEntityTypes.length > 0) {
@@ -656,7 +688,18 @@ Instruction: Proceed with your investigation based on the complete context provi
         feedBackVerdict: finalVerdict,
         reasoning: finalReasoning,
         iterationCount: nextIterationCount,
-        hitl_required: undefined,
+        // 🟢 CRITICAL: Must be explicit `false`, NOT `undefined`.
+        // The graph reducer is: (x, y) => y !== undefined ? y : x
+        // Setting `undefined` is treated as "no write" — the reducer keeps the old `true`
+        // from the prior HITL turn, causing the conditional edge to route to __end__ again
+        // on the very next turn, silently killing the tool execution. `false` is explicit.
+        hitl_required: false,
+        // 🟢 BUG-2 FIX: Explicitly reset isHITLContinuation to false on the normal (non-HITL) tool path.
+        // Without this, the reducer (y ?? x) sees y=undefined and preserves the checkpoint's `true`
+        // from the previous HITL turn — causing update_memory2 to skip its Tier-2 reset, and
+        // causing the orgContextBlock on the loop-back turn to incorrectly show "HITL Continuation"
+        // even after the turn has been fully processed.
+        isHITLContinuation: false,
         error: undefined,
         selectedResultKeys: response.selectedResultKeys || []
     };
@@ -665,7 +708,10 @@ Instruction: Proceed with your investigation based on the complete context provi
     // 🟢 SMART PROMOTION BRIDGE: If we are summarizing WITH actual retrieval tools (no HITL interrupt),
     // automatically promote all current-turn tools to selectedResultKeys.
     // Guard: skip if clarifyingQuestion is set — that path zeroes out toolCalls and goes to HITL.
-    if (response.feedBackVerdict === 'SUMMARIZE' && response.tools.length > 0 && !response.clarifyingQuestion) {
+    // 🟢 BUG-3 FIX: Use updates.feedBackVerdict (the authoritative written value) not response.feedBackVerdict
+    // (raw LLM output). The HITL guard below may override response.feedBackVerdict to 'SUMMARIZE',
+    // causing the Smart Promotion check to fire incorrectly on a HITL turn.
+    if (updates.feedBackVerdict === 'SUMMARIZE' && response.tools.length > 0 && !response.clarifyingQuestion) {
         console.log(`[LangGraph Orchestrator] 🚀 Smart Promotion Active: Verifying UI visibility for ${response.tools.length} current tools...`);
         response.tools.forEach((t: any, idx: number) => {
             // Skip discovery/infrastructure tools in the UI unless explicitly named
@@ -700,7 +746,8 @@ Instruction: Proceed with your investigation based on the complete context provi
     // NOTE: secondaryScope lock-in and 7-conversation pruning is now handled natively
     // in the summarizer node by parsing the [ENTITIES] block, eliminating Orchestrator guesswork.
     
-    if (response.feedBackVerdict === 'SUMMARIZE' && !response.clarifyingQuestion) {
+    // 🟢 BUG-3 FIX: Use updates.feedBackVerdict (authoritative) not response.feedBackVerdict (raw)
+    if (updates.feedBackVerdict === 'SUMMARIZE' && !response.clarifyingQuestion) {
         updates.workingMemory.queryContext.currentScope = []; // Reset transient query scope
     }
 
