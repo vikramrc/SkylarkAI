@@ -917,3 +917,90 @@ Added **Rule 9: Recency > Specificity (The Broad Scope Override)** to the Relati
 - `backend/src/langgraph/nodes/orchestrator.ts`
 - `backend/src/langgraph/nodes/update_memory2.ts`
 - `backend/src/langgraph/prompts/orchestrator_rules.ts`
+
+---
+
+## 🛠️ 79. Three-Bug Cascade Fix — Broad Scope Override Was Dead on Arrival
+
+### Root Cause Chain (All Three Bugs Were Required to Break the Feature)
+
+When the user typed "okay show me org wide but restrict it to 2025 only", the expected behavior was:
+1. Orchestrator signals `isBroadScopeRequest=true`
+2. UpdateMemory2 detects the flag, surgically clears `vesselID` from `activeFilters` and `sessionScope`
+3. Phase 2 LLM inherits only `statusCode=cancelled + startDate=2025 + endDate=2025` (no vessel)
+4. Next Orchestrator sees no vesselID in Active Filters and fetches org-wide data
+
+What actually happened: the user got a re-summary of the OLD single-vessel (XXX1) data.
+
+---
+
+### Bug 1 (Critical): `isBroadScopeRequest` was not a LangGraph state channel
+
+**File**: `graph.ts`
+
+`isBroadScopeRequest` was present in the `SkylarkState` TypeScript interface but was **never declared in the `channels: {}` block** of the `StateGraph`. In LangGraph, only fields declared in the channels block are tracked in state. Updates to undeclared fields from any node are **silently dropped** — no error, no warning.
+
+Result: `updates.isBroadScopeRequest = true` returned from the Orchestrator node was thrown away. UpdateMemory2 always read `state.isBroadScopeRequest === undefined`, so `isBroadScopeTriggered` was always `false`. The surgical clear never ran. The `🌐 Broad Scope TRIGGERED` log never appeared.
+
+**Fix**: Added `isBroadScopeRequest` as a proper channel with a `(x, y) => y !== undefined ? y : x` reducer — same pattern as `hitl_required` and `isHITLContinuation`.
+
+---
+
+### Bug 2 (Critical): INSIGHT boundary detection matched wrong string
+
+**File**: `update_memory2.ts`, line 213
+
+The boundary detection scanned `state.messages` for the last AI summary using:
+```ts
+m.content.includes("[INSIGHT]")
+```
+
+All real summaries use `[INSIGHT title="..." icon="..." color="..."]`. The literal string `"[INSIGHT]"` (with closing bracket immediately adjacent) **never appears** in any summary content.
+
+Result: `lastSummaryIdx === -1` on every new conversation after the first. `scanStartIdx = 0`. `missionTopic` was always anchored to the very first Human message in the 10-message window — which was always "i need to see details of all cancelled jobs..." from the previous conversation.
+
+So `rawQuery` for the new query "org wide 2025" was wrong, `missionTopic === existingRawQuery`, the "TOPIC PIVOT" log never fired, and Phase 2 was given the wrong topic.
+
+**Fix**: Changed `includes("[INSIGHT]")` → `includes("[INSIGHT")` (no closing bracket). This matches all INSIGHT variants: `[INSIGHT]`, `[INSIGHT title=...]`, etc.
+
+---
+
+### Bug 3 (Defense-in-Depth Gap): Entity-scope filters bled across conversation boundaries
+
+**File**: `update_memory2.ts`
+
+`previousQueryContext` is built by spreading `existingMemory.queryContext`, which includes `activeFilters` from the previous conversation. Even on `isNewQuery=true`, only `pendingIntents`, `lastTurnInsight`, and `currentScope` were reset — **`activeFilters` was preserved in full** as "soft context" for the Phase 2 LLM.
+
+This is correct behavior for same-conversation continuity (attribute filters like `statusCode=cancelled` should persist). But it also carried over `vesselID=683...` and `searchTerm=XXX1`. Phase 2 LLM faithfully included these in `activeFilters` output. The next Orchestrator inherited `vesselID` and used the old XXX1 data.
+
+**Fix**: When `isNewQuery=true`, also delete entity-scope keys (`vesselID`, `machineryID`, `scheduleID`, `activityID`, `costCenterID`, `searchTerm`) from `previousQueryContext.activeFilters` before passing to Phase 2. Attribute filters (`statusCode`, `startDate`, `endDate`, `limit`) are still soft-carried for LLM reasoning. Added matching console log: `🧹 New conversation boundary — cleared entity-scope keys...`
+
+This is a defense-in-depth measure that also helps when Bug 1 would have otherwise left the system vulnerable.
+
+---
+
+### Expected Log Sequence After Fix
+
+```
+[UpdateMemory2] → isNewQuery = true (🔄 TIER 2 WILL RESET)
+[UpdateMemory2] ⚓ NEW CONVERSATION DETECTED — TOPIC PIVOT:
+  From: "i need to see details of all cancelled jobs..."
+  To:   "okay show me org wide but restrict it to 2025 only"
+[UpdateMemory2] 🌐 Broad Scope TRIGGERED — cleared entity-scope filters...
+  OR
+[UpdateMemory2] 🧹 New conversation boundary — cleared entity-scope keys...
+[UpdateMemory2] activeFilters: {"statusCode":"cancelled","startDate":"2025-01-01","endDate":"2025-12-31"}
+                               (vesselID and searchTerm are GONE)
+```
+
+---
+
+### Key Design Rule for Future Agents
+
+> **Any boolean flag that must flow from Orchestrator → UpdateMemory2 MUST be declared as a LangGraph channel in `graph.ts`.** The TypeScript interface (`SkylarkState`) is just a type hint — it has zero effect on LangGraph runtime state management.
+
+---
+
+### Files Modified
+- `backend/src/langgraph/graph.ts` — Added `isBroadScopeRequest` channel declaration
+- `backend/src/langgraph/nodes/update_memory2.ts` — Fixed INSIGHT boundary detection + defense-in-depth entity-scope clear on new conversation

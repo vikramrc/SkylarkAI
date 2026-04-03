@@ -184,76 +184,49 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // to declare "metric is unknown" → stall → discovery loop.
     // ─────────────────────────────────────────────────────────────────
     const allMessages = state.messages || [];
-    let rawQuery = existingRawQuery; 
-    
+    let rawQuery = existingRawQuery;
+
     if (isNewQuery) {
         // ─────────────────────────────────────────────────────────────────
-        // BOUNDARY-AWARE TOPIC ANCHORING (GAP-1 & GAP-3 FIX)
+        // CLEAN rawQuery ANCHORING
         // ─────────────────────────────────────────────────────────────────
-        // A "Conversation" starts at the first Human message AFTER the last AI Summary ([INSIGHT]).
-        // We MUST NOT look for the "last" human message or the "latest" message in the window,
-        // because those could be HITL answers from the PREVIOUS conversation (e.g., "fleetships").
+        // At isNewQuery=true (iter ≤ 1 AND not HITL continuation), we are always on the FIRST
+        // tool turn of a brand-new user request. The last HumanMessage in state.messages IS the
+        // new query — no ambiguity, no string scanning needed.
         //
-        // GAP-3 FIX: This block is scoped INSIDE the `isNewQuery` branch only.
-        // During HITL continuations (isNewQuery=false), we never need to re-compute the
-        // boundary because the topic is already correctly anchored in existingRawQuery.
-        // Running it unconditionally created dead computation and the risk of overwriting
-        // a valid topic anchor mid-HITL loop.
-        //
-        // Algorithm:
-        //   1. Reverse the message array and find the LAST AI Summary (contains "[INSIGHT]").
-        //   2. Convert the reversed index back to a FORWARD index using: length - 1 - reversedIdx
-        //      GAP-1 FIX: The formula MUST be `length - 1 - reversedIdx`, NOT `length - reversedIdx`.
-        //      Using `length - reversedIdx` (missing the -1) skips one extra message, and if the
-        //      Summary is the last element, .slice() gets an empty array → missionTopic = "" → rawQuery collapses.
-        //   3. The first Human message at or after that index is the Mission's Starting Question.
+        // Why not the INSIGHT scan that was here before?
+        //   - INSIGHT scanning was fragile: looked for literal "[INSIGHT]" but real summaries
+        //     use "[INSIGHT title=...]", so the match was always -1 → wrong boundary.
+        //   - It solved a problem that doesn't exist: "what if the last HumanMessage is a HITL
+        //     answer from the previous conversation?" That can't happen here because if it were
+        //     a HITL continuation, isHITLContinuation=true and isNewQuery would be false.
         // ─────────────────────────────────────────────────────────────────
-        const lastSummaryIdx = [...allMessages].reverse().findIndex((m: any) => {
-            const type = m._getType?.() || m.role || 'ai';
-            return type === 'ai' && typeof m.content === 'string' && m.content.includes("[INSIGHT]");
-        });
-
-        // GAP-1 FIX: Correct formula — `length - 1 - lastSummaryIdx` (NOT `length - lastSummaryIdx`).
-        // lastSummaryIdx is from a reversed array, so the forward index is: (length - 1) - reversedIdx.
-        // The Summary itself is at scanStartIdx; the mission question is the first Human msg AT OR AFTER it.
-        const scanStartIdx = lastSummaryIdx === -1 ? 0 : (allMessages.length - 1 - lastSummaryIdx);
-        const missionStartMsg = allMessages.slice(scanStartIdx).find((m: any) => {
-            const type = m._getType?.() || m.role || 'human';
-            return type === 'human';
-        });
-
-        const missionTopic = (missionStartMsg as any)?.content || "";
-
-        if (existingRawQuery && existingRawQuery !== missionTopic) {
-            console.log(`\x1b[32m[UpdateMemory2] ⚓ NEW CONVERSATION DETECTED — TOPIC PIVOT:\x1b[0m`);
-            console.log(`\x1b[36m  From: "${existingRawQuery.substring(0, 80)}..."\x1b[0m`);
-            console.log(`\x1b[35m  To:   "${missionTopic.substring(0, 80)}..."\x1b[0m`);
-        } else {
-            console.log(`\x1b[33m[UpdateMemory2] ⚓ Anchoring rawQuery from mission boundary: "${missionTopic.substring(0, 80)}"\x1b[0m`);
-        }
-        rawQuery = missionTopic;
-    } else if (existingRawQuery) {
-        // Internal loop or HITL continuation — the topic was already anchored on isNewQuery=true.
-        // We MUST NOT re-run boundary detection here because:
-        //   (a) It is computationally wasteful.
-        //   (b) The HITL reply itself (e.g., "fleetships") would become the new "first human msg"
-        //       after the boundary if we re-scanned, overwriting the genuine mission topic.
-        rawQuery = existingRawQuery;
-        console.log(`\x1b[33m[UpdateMemory2] ♻️ Using existing rawQuery anchor: "${rawQuery.substring(0, 80)}"\x1b[0m`);
-    } else {
-        // Edge case: first HITL continuation turn — memory exists but rawQuery was never set yet.
-        // Use the FIRST HumanMessage in the thread (the original question), NOT the last one
-        // (which would be the HITL reply like "myco, show me top 5 per vessel").
-        const firstHumanMsg = allMessages.find((m: any) => {
-            const type = m._getType?.() || m.role;
-            return type === 'human';
-        });
         const lastHumanMsg = [...allMessages].reverse().find((m: any) => {
             const type = m._getType?.() || m.role;
             return type === 'human';
         });
-        rawQuery = (firstHumanMsg as any)?.content || (lastHumanMsg as any)?.content || "";
-        console.log(`\x1b[33m[UpdateMemory2] 🔄 Edge case (HITL first turn, no prior rawQuery) — using FIRST human message: "${rawQuery.substring(0, 80)}"\x1b[0m`);
+        const missionTopic = (lastHumanMsg as any)?.content || existingRawQuery || "";
+
+        if (existingRawQuery && existingRawQuery !== missionTopic) {
+            console.log(`\x1b[32m[UpdateMemory2] ⚓ NEW CONVERSATION DETECTED — TOPIC PIVOT:\x1b[0m`);
+            console.log(`\x1b[36m  From: "${existingRawQuery.substring(0, 80)}"\x1b[0m`);
+            console.log(`\x1b[32m  To:   "${missionTopic.substring(0, 80)}"\x1b[0m`);
+        } else {
+            console.log(`\x1b[33m[UpdateMemory2] ⚓ rawQuery anchored to last human message: "${missionTopic.substring(0, 80)}"\x1b[0m`);
+        }
+        rawQuery = missionTopic;
+    } else if (existingRawQuery) {
+        // Internal loop or HITL continuation — the topic was already anchored on isNewQuery=true.
+        rawQuery = existingRawQuery;
+        console.log(`\x1b[33m[UpdateMemory2] ♻️ Using existing rawQuery anchor: "${rawQuery.substring(0, 80)}"\x1b[0m`);
+    } else {
+        // Edge case: very first turn of a thread, no prior rawQuery.
+        const lastHumanMsg = [...allMessages].reverse().find((m: any) => {
+            const type = m._getType?.() || m.role;
+            return type === 'human';
+        });
+        rawQuery = (lastHumanMsg as any)?.content || "";
+        console.log(`\x1b[33m[UpdateMemory2] 🔄 Edge case (no prior rawQuery) — using last human message: "${rawQuery.substring(0, 80)}"\x1b[0m`);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -304,11 +277,17 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
         }
     }
 
-    // Build previous query context for Phase 2
-    // 🟢 SOFT PERSISTENCE: Instead of wiping activeFilters on a new human message, we carry them forward 
-    // to the LLM as context so it can decide which ones remain relevant to the ongoing investigation.
+    // Build previous query context for Phase 2.
+    // On isNewQuery=true (fresh conversation boundary): wipe ALL activeFilters — the previous
+    // conversation's filters (statusCode, dates, vesselID etc.) are stale context. Phase 2 will
+    // re-derive correct filters from the new rawQuery + tool results. This is always safe because
+    // at isNewQuery=true, at least one tool turn has already run (iter=1), so Phase 2 can read
+    // the applied filters directly from the tool result args (e.g. startDate from fleet.query_overview).
+    //
+    // On continuation turns (HITL or internal loop): soft-carry existing filters — the topic hasn't
+    // changed and the LLM needs continuity to know which filters are still in play.
     let previousQueryContext = isNewQuery
-        ? { ...existingMemory.queryContext, rawQuery, pendingIntents: [], lastTurnInsight: "", currentScope: [] }
+        ? { ...existingMemory.queryContext, rawQuery, pendingIntents: [], lastTurnInsight: "", currentScope: [], activeFilters: {} }
         : { ...existingMemory.queryContext, rawQuery }; // rawQuery always comes from our resolved value above
 
     // ─────────────────────────────────────────────────────────────────
@@ -318,15 +297,16 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
     // Entity-scope keys: vesselID, machineryID, scheduleID, activityID, costCenterID
     // Attribute filters (statusCode, date, limit, etc.) are NOT touched here — they follow LLM reasoning.
     const isBroadScopeTriggered = state.isBroadScopeRequest === true;
+    const entityScopeKeys = ['vesselID', 'machineryID', 'scheduleID', 'activityID', 'costCenterID', 'searchTerm'];
+    
     if (isBroadScopeTriggered) {
-        const entityScopeKeys = ['vesselID', 'machineryID', 'scheduleID', 'activityID', 'costCenterID'];
         entityScopeKeys.forEach(k => {
             delete sessionStateCommit.scope[k];
             if (previousQueryContext.activeFilters) {
-                delete previousQueryContext.activeFilters[k];
+                delete (previousQueryContext.activeFilters as any)[k];
             }
         });
-        console.log(`\x1b[35m[UpdateMemory2] 🌐 Broad Scope TRIGGERED — cleared entity-scope filters (vesselID, machineryID, etc.) from scope and activeFilters. Attribute filters (status, date, limit) follow LLM reasoning.\x1b[0m`);
+        console.log(`\x1b[35m[UpdateMemory2] 🌐 Broad Scope TRIGGERED — cleared entity-scope filters (vesselID, machineryID, searchTerm, etc.) from session scope. Attribute filters (status, date, limit) handled by Phase 2.\x1b[0m`);
     }
 
     // Persist the mode so Orchestrator remembers it's doing a broad scope search across iterations
