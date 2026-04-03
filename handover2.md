@@ -518,3 +518,24 @@ We identified and eliminated a logical flaw where the Orchestrator would "thieve
 - [x] **Null Validation**: Confirmed that the orchestrator uses strict falsy checks for organization presence.
 - [x] **Clarification Priority**: Validated that the system asks for the organization short name before attempting any discovery or retrieval tools.
 - [x] **Build Integrity**: Confirmed the system remains fully compilable (\`npx tsc --noEmit\`) after the logic refinement.
+
+---
+
+## 🛠️ 69. Graph Routing & Proactive Retrieval Hardening
+
+We resolved a critical "Reasoning Stall" and "Routing Trap" where the orchestrator would enter an infinite loop of "thinking" without acting, ultimately being terminated by an aggressive graph safety sink.
+
+### 🟢 Graph Routing Restoration (`graph.ts`):
+- **The Routing Trap Fix**: Previously, the graph router at `graph.ts` forced any turn with zero tools directly to the `Summarizer`. If the AI decided to "plan" (empty tools) and set its verdict to `FEED_BACK_TO_ME`, the router overruled the AI and killed the turn.
+- **Verdict Precedence**: Updated the conditional edge from the Orchestrator. The system now strictly honors a `FEED_BACK_TO_ME` verdict, ensuring it orbits back to the "Brain" for follow-up turns even if no tools were called in the current turn.
+
+### 🟢 Non-Procrastination Mandate (`orchestrator_rules.ts`):
+- **Proactive Execution**: Added a new **Step 2 (Non-Procrastination Mandate)** to Section VIII. 
+- **Mandatory Action**: If target entity IDs are already present in the session ledger (`secondaryScope` or `Organic Discoveries`), the Orchestrator is **strictly forbidden** from returning a zero-tool "planning turn." It MUST generate and execute the parallel retrieval tool calls immediately.
+- **Result**: This prevents the AI from being "too cautious," forcing it to leverage available data instantly rather than wasting turns on verbalizing a plan.
+
+### 📑 Sequential Logic Checklist:
+- [x] **Router Loop-back**: Verified that `FEED_BACK_TO_ME` successfully bypasses the "Zero Tool" sink and returns to the orchestrator.
+- [x] **Proactive Retrieval**: Confirmed that the AI fires parallel retrieval tools immediately once vessel/machinery IDs are discovered.
+- [x] **Investigative Continuity**: Validated that multi-turn chaining (e.g., Fleet Overview -> Per Vessel Statistics) works without manual intervention or stalling.
+- [x] **Build Integrity**: Confirmed the system is fully compilable (`npx tsc --noEmit`) after the routing and prompt updates.

@@ -105,7 +105,17 @@ workflow.addConditionalEdges(
   "orchestrator" as any,
   ((state: SkylarkState) => {
       if (state.error) return "errorNode";
-      if (state.hitl_required) return "__end__"; // 🟢 Skip Summarizer for clarifying question breakouts flawlessly!
+      if (state.hitl_required) return "__end__"; 
+
+      // 🛡️ ROUTING FIX: 
+      // Prevents the "Safety Sink" from killing the investigation if the AI wants 
+      // a feedback loop but hasn't provided tools yet. If Verdict is FEED_BACK_TO_ME, 
+      // we MUST proceed to update_memory (which eventually loops back to orchestrator) 
+      // regardless of tool count.
+      if (state.feedBackVerdict === "FEED_BACK_TO_ME") {
+          return "update_memory";
+      }
+
       if (!state.toolCalls || state.toolCalls.length === 0) {
           return "summarizer";
       }
@@ -113,9 +123,10 @@ workflow.addConditionalEdges(
   }) as any,
   {
       execute_tools: "execute_tools" as any,
+      update_memory: "update_memory" as any,
       summarizer: "summarizer" as any,
       errorNode: "errorNode" as any,
-      __end__: "__end__" as any // 🟢 Add this!
+      __end__: "__end__" as any
   } as any
 );
 
