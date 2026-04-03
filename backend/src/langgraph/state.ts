@@ -41,6 +41,7 @@ export interface SkylarkState {
       activeFilters: Record<string, string>; // Current active tool filters (dateRange, statusCode, etc.)
       lastTurnInsight: string;       // ONE sentence max 120 chars. What just happened this turn.
       currentScope?: string[];   // All IDs listed in currentScope across all turns of this query
+      isBroadScope?: boolean;    // Set to true when user explicitly requested org/fleet-wide scope override
     };
   };
 
@@ -67,4 +68,9 @@ export interface SkylarkState {
 
   // 8. Conductor Result Selection
   selectedResultKeys?: string[];
+
+  // 9. Broad Scope Override Flag
+  // Emitted by Orchestrator when user explicitly requests org/fleet-wide scope.
+  // Consumed by UpdateMemory2 to clear entity-scope filters and persist isBroadScope.
+  isBroadScopeRequest?: boolean;
 }

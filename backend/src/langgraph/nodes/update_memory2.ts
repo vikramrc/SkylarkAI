@@ -312,21 +312,37 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
         : { ...existingMemory.queryContext, rawQuery }; // rawQuery always comes from our resolved value above
 
     // ─────────────────────────────────────────────────────────────────
-    // Phase 1c: Deterministic currentScope Sync (GAP-30)
-    //
-    // Harvest all 24-character hex IDs from the session scope (excluding orgID) 
-    // to ensure they are available in the Orchestrator's ledger for the current 
-    // investigation. This prevents the LLM from losing track of resolved IDs
-    // between turns even if the Phase 2 structured output misses them.
-    // ─────────────────────────────────────────────────────────────────
+    // 🌐 BROAD SCOPE OVERRIDE: When state.isBroadScopeRequest=true, the user explicitly de-scoped
+    // from a specific entity to org/fleet-wide THIS turn. We surgically clear OLD entity-scope IDs from
+    // the scope so they don't pollute this investigation.
+    // Entity-scope keys: vesselID, machineryID, scheduleID, activityID, costCenterID
+    // Attribute filters (statusCode, date, limit, etc.) are NOT touched here — they follow LLM reasoning.
+    const isBroadScopeTriggered = state.isBroadScopeRequest === true;
+    if (isBroadScopeTriggered) {
+        const entityScopeKeys = ['vesselID', 'machineryID', 'scheduleID', 'activityID', 'costCenterID'];
+        entityScopeKeys.forEach(k => {
+            delete sessionStateCommit.scope[k];
+            if (previousQueryContext.activeFilters) {
+                delete previousQueryContext.activeFilters[k];
+            }
+        });
+        console.log(`\x1b[35m[UpdateMemory2] 🌐 Broad Scope TRIGGERED — cleared entity-scope filters (vesselID, machineryID, etc.) from scope and activeFilters. Attribute filters (status, date, limit) follow LLM reasoning.\x1b[0m`);
+    }
+
+    // Persist the mode so Orchestrator remembers it's doing a broad scope search across iterations
+    const isBroadScopeActive = isBroadScopeTriggered || (existingMemory.queryContext as any)?.isBroadScope === true;
+
+    // Harvest deterministicScope AFTER any old entity-scope keys were cleared
     const deterministicScope = new Set<string>();
     Object.entries(sessionStateCommit.scope).forEach(([k, v]) => {
         if (typeof v === 'string' && /^[0-9a-fA-F]{24}$/.test(v) && k !== 'organizationID') {
             deterministicScope.add(v);
         }
     });
+
     const currentScopeArray = Array.from(deterministicScope);
-    console.log(`\x1b[33m[UpdateMemory2] 🆔 GAP-30: Deterministic currentScope Sync: [${currentScopeArray.join(', ')}]\x1b[0m`);
+    console.log(`\x1b[33m[UpdateMemory2] 🆔 GAP-30: Deterministic currentScope Sync: [${currentScopeArray.join(', ')}]${isBroadScopeActive ? ' (BROAD SCOPE MODE)' : ''}\x1b[0m`);
+
 
     // ─────────────────────────────────────────────────────────────────
     // PHASE 2: LLM-driven — structured queryContext update
@@ -425,6 +441,7 @@ ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.
             activeFilters: activeFiltersRecord,
             lastTurnInsight: response.lastTurnInsight || "",
             currentScope: currentScopeArray, // 🟢 GAP-30: Use deterministic truth from Phase 1
+            isBroadScope: isBroadScopeActive, // 🌐 Persist broad scope flag across iterations
         };
 
         // Rich diagnostic output
@@ -455,7 +472,11 @@ ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.
         return {
             workingMemory: {
                 sessionContext: sessionStateCommit,
-                queryContext: { ...previousQueryContext, rawQuery },
+                queryContext: {
+                    ...previousQueryContext,
+                    rawQuery,
+                    isBroadScope: isBroadScopeActive, // 🌐 Preserve broad scope flag even on LLM failure
+                },
             },
             isHITLContinuation: false,
         };

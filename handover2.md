@@ -695,3 +695,225 @@ Added `"vessel._id": 1` to the final `$project` stage in `getMaintenanceExecutio
 
 **Key Principle**: Always project `_id` alongside display fields in lookup stages AND in the final `$project`. Dropping `_id` from response items causes the AI to use display names as identifiers, creating a cascade of tool failures downstream.
 
+
+---
+
+## 🛠️ 74. UI Tab Bleed Fix & Completed Jobs Timeout
+
+### Problem 1: Old Result Tabs Showing in UI
+**Root Cause**: `emitToolResults()` in `workflow.ts` used `selectedResultKeys` (set by the Orchestrator) to filter results across ALL historical turns. When the user asked a new question (e.g. "completed jobs"), the Orchestrator also selected old result keys from prior turns (e.g. cancelled jobs) for the Summarizer's context. The `emitToolResults` D1 call was then promoting those old keys to the UI, causing stale tabs to appear.
+
+**Fix**: Added `currentTurnOnly: boolean = false` parameter to `emitToolResults`:
+- **D1 (execute_tools)**: Calls `emitToolResults("execute_tools", true)` → emits only `allTurns.slice(startTurnIndex)` (keys from THIS request only, no historical bleed)
+- **D2 (summarizer)**: Calls `emitToolResults("summarizer")` (unchanged) → uses `selectedResultKeys` conductor logic for final consolidated view, which is correct (D2 fires when no new tools are run and historical re-surfacing IS intended)
+
+**File**: `backend/src/langgraph/routes/workflow.ts` — `emitToolResults` function signature + D1 call site
+
+---
+
+### Problem 2: Timeout on "completed" Jobs Query
+**Root Cause**: `statusCode: "completed"` in `getMaintenanceExecutionHistory` was setting `effectiveBaseMatch.committed = true`. This is a boolean field with no compound index alongside `organizationID` or `latestEventDate`, causing a full collection scan on fleet-wide queries with large datasets. Result: 25s timeout.
+
+**Fix 1** (`mcp.service.js`): Changed the `completed` branch to:
+```js
+effectiveBaseMatch.latestEventStatus = { $in: ["completed"] };
+```
+`latestEventStatus` is a denormalized field that is now covered by the new compound indexes and hits the index directly.
+
+**Fix 2** (`models/activity.work.history.model.js`): Added two compound indexes:
+```js
+// Fleet-wide status queries (no vessel filter)
+{ organizationID: 1, latestEventStatus: 1, latestEventDate: -1 }  → "ix_awh_org_status_date"
+
+// Per-vessel status queries
+{ organizationID: 1, vesselID: 1, latestEventStatus: 1, latestEventDate: -1 } → "ix_awh_org_vessel_status_date"
+```
+These indexes cover ALL status-based execution history queries (`completed`, `cancelled`, `missed`, etc.) for both fleet-wide and per-vessel scopes. Indexes are created automatically by Mongoose on server restart (background build, no downtime).
+
+> ⚠️ Note: The `cancelled` status was already working because cancelled jobs are sparse in the dataset. The `completed` query timed out because `committed: true` is set on a much larger superset of records. The new `latestEventStatus` filter is tighter and index-backed.
+
+
+---
+
+## 🛠️ 75. D2 Tab Bleed Fix (Vessel-wise Breakdown) & Log De-bloat
+
+### Problem: Old Result Tabs Surfaced via D2 (Summarizer Path)
+When the user asked "show me a vessel wise break up" after the cancelled jobs overview, the orchestrator ran ONE fleet-wide tool in iter 1, then went SUMMARIZE/tools=[] in iter 2. Since no tools ran in iter 2, execute_tools was skipped → D1 never fired → D2 (summarizer) fired.
+
+D2 called `emitToolResults("summarizer")` which used `selectedResultKeys: ["maintenance.query_status_iter1", "maintenance.query_execution_history_iter1"]`. It searched ALL historical turns, found `maintenance.query_execution_history_iter1` in Turn 0 (from the PREVIOUS HTTP request), and surfaced it alongside the new result → **2 stale tabs instead of the expected new vessel-wise result only**.
+
+### Fix: Context-Aware Conductor Selection in D2
+**File**: `backend/src/langgraph/routes/workflow.ts` — `emitToolResults` function, D2 branch.
+
+New logic in the `selection.length > 0` branch (D2 path, `currentTurnOnly=false`):
+1. Build `currentRequestKeySet` from `allTurns.slice(startTurnIndex)`
+2. Check `hasCurrentHits = selection.some(k => currentRequestKeySet.has(k))`
+3. **If hasCurrentHits = true** → search only `currentRequestTurns` (prevents old keys from bleeding in)
+4. **If hasCurrentHits = false** → search all turns (this is the pure "re-surface" scenario — no new tools ran, LLM deliberately wants to surface old data)
+
+This preserves the legitimate re-surface use case (user asks a follow-up that needs no new tools; Orchestrator selects old keys) while fixing the mixed-history bleed.
+
+### Problem: Log Bloat from Full toolResults Dump
+The `[DEBUG] State & Scope Context` console dump included `toolResults: state.toolResults` which dumped the entire MCP response JSON (50KB+) per turn to the console. This made logs unreadable.
+
+### Fix: 32-char Digest in Debug Dump
+**File**: `backend/src/langgraph/nodes/orchestrator.ts` — debug dump block.
+
+`toolResults: state.toolResults` → replaced with `toolResults: toolResultsDigest`, where each entry is:
+```ts
+{ turn: i, keys: { "maintenance.query_status_iter1": '{"capability":"maintenance.que…' } }
+```
+Only the first 32 characters of the result text are shown per key. All other functionally-relevant state (sessionContext, queryContext, activeMessages) remains fully logged.
+
+> ⚠️ Note: The "vessel-wise breakdown = 2 per-vessel tabs" expectation requires the Orchestrator to run the tool TWICE (once per vesselID). The LLM chose to reuse existing data instead (single fleet-wide result). That's an AI reasoning issue, not a code bug — the data was correct but the presentation was a single tab of 29 records rather than two filtered tabs.
+
+---
+
+## 🛠️ 76. False Positive `unclassifiedLabels` Intercept Fix
+
+### Problem
+When the user typed "i need to see details of ALL cancelled jobs, who did those", the Orchestrator correctly ran `maintenance.query_status` org-wide (29 items, Turn 6). But when it output `SUMMARIZE`, it also emitted:
+```json
+"unclassifiedLabels": [{ "label": "ALL cancelled jobs", "likelyEntityTypes": [...] }]
+```
+The LLM treated `"ALL cancelled jobs"` — a plain descriptive phrase — as if it were a named entity to be looked up (like a vessel name or schedule name). The Strategic Intercept code fired two `mcp.resolve_entities("ALL cancelled jobs", ...)` calls. Both returned zero results (obviously). The dead-end mandate then forced the LLM into a confined SUMMARIZE state where it selected OLD stale keys (7-item results from prior conversations) rather than the freshly fetched 29-item result.
+
+### Root Cause Chain
+1. Prompt negative constraint too narrow: only excluded status values and temporal terms, not descriptive phrases starting with quantifiers like "ALL", "ANY", "details of"
+2. No code-level guard: the intercept trusted the LLM output entirely, with only the `resolvedLabelSet`/`failedSessionLabels` checks
+
+### Fix: Two-Layer Defence
+
+**Layer 1: Prompt (orchestrator_rules.ts, line 28)**
+Expanded the `Negative Constraint` on `unclassifiedLabels` to explicitly list:
+- Status words (`cancelled`, `completed`, `overdue`, `committed`, `missed`, `rescheduled`)
+- Temporal terms (existing)
+- Generic quantities (existing)
+- **NEW: Descriptive phrases** — any phrase starting with a quantifier/scope word like `ALL`, `ANY`, `EVERY`, `DETAILS`, `SHOW`. Includes concrete examples: `ALL cancelled jobs`, `details of cancelled jobs`, `cancelled maintenance`. The prompt now explains WHY: "If the user says 'show me ALL cancelled jobs', the entity is already resolved — it is a fleet-wide status query. There is NO entity label to classify."
+
+**Layer 2: Code guard (orchestrator.ts, `actualUnclassified` filter)**
+Added pre-filter that rejects any label matching ANY of these before the intercept fires:
+```
+(c) Starts with quantifier word: ALL, ANY, EVERY, DETAILS, SHOW, GET, FIND, LIST, RETRIEVE
+(d) Contains a maintenance status word: cancelled, completed, overdue, committed, missed, rescheduled, upcoming, pending
+(e) Empty/whitespace label
+(f) Label > 40 chars — no real named entity is a sentence
+```
+This is the last line of defence: even if the LLM slips through the prompt, the code rejects it before any resolve_entities call is made.
+
+
+---
+
+## 🛠️ 77. Dead-End Label False Positive (GAP-77) — Critical Bug Fix
+
+### Problem
+When the Strategic Intercept fired parallel resolve calls for `XXX1` across 3 entity types (Vessel, Machinery, Activity):
+- Vessel → **1 match found** ✅
+- Machinery → 0 items
+- Activity → 0 items
+
+The old `failedSessionLabels` logic processed each resolve result **individually**. For Machinery and Activity (both empty, `searchTerm: "XXX1"`), it called `failedSessionLabels.add("xxx1")`. There was no cross-check to see if another call for the same searchTerm had already succeeded. By the time the Vessel result was processed, "xxx1" was already in the failed set — but checking it there didn't help because the add had already happened for the two empty results.
+
+Result: The DEAD-END LABELS block fired with `"xxx1"`, mandating a clarifying question even though XXX1 had been successfully resolved as a Vessel.
+
+### Root Cause (Line 313 — old code)
+```ts
+// ❌ WRONG: marks as failed on any individual empty result
+if (items.length === 0 && data.appliedFilters?.searchTerm) {
+    failedSessionLabels.add(data.appliedFilters.searchTerm.trim().toLowerCase());
+}
+```
+
+### Fix: Two-Pass Group-By-SearchTerm (orchestrator.ts)
+Replaced the single-pass per-result approach with a two-pass approach:
+1. **Pass 1**: Walk all resolve_entities results, accumulate a `resolveHits: Map<searchTerm, totalItemCount>` — adding up the item counts from ALL entity types for each searchTerm.
+2. **Pass 2**: Build `failedSessionLabels` from only the entries in `resolveHits` where `totalItemCount === 0`.
+
+This ensures a searchTerm is only marked as a dead-end if it returned zero results across EVERY parallel entity-type lookup — which is the correct semantics for "we checked everywhere and found nothing".
+
+
+---
+
+## 🛠️ 78. Broad Scope Override — Deterministic Entity-Scope Release
+
+### Problem
+When a user explicitly upgraded their query from vessel-specific to org/fleet-wide (e.g., "okay show me org wide"), the Orchestrator incorrectly recycled stale vessel-specific tool results from prior conversations. The LLM, having vessel-scoped data in its context, applied the Specificity Mandate and declared the old data "sufficient" — never fetching fresh org-level data.
+
+Root cause: there was no deterministic system signal telling the Orchestrator "specificity is explicitly suspended for this request". The LLM's lazy reasoning defaulted to the most granular data it already had.
+
+---
+
+### Design Principle: Recency > Specificity
+When a user explicitly upgrades entity scope (org-wide, fleet-wide, all vessels), old single-entity data is **always insufficient**, regardless of how recently it was fetched. The user's latest entity-scope intent overrides all stored narrower entity filters.
+
+**Crucially**: This only applies to *entity-scope constraints* (vesselID, machineryID, etc.). Attribute filters (statusCode, date range, limit, department) are governed purely by the user's latest words:
+- "org wide but 2025 only" → release vesselID, **keep** dates
+- "org wide, ignore the date range" → release vesselID AND drop dates (user said so)
+- "ignore the date range" (no scope upgrade) → flag stays false, LLM drops dates via normal reasoning
+
+---
+
+### Implementation: 4-Component Solution
+
+#### Component 1: `state.ts`
+- Added `isBroadScopeRequest?: boolean` to the top-level `SkylarkState` interface. This is the **transient** inter-node signal emitted by Orchestrator, consumed by UpdateMemory2 on that same turn only.
+- Added `isBroadScope?: boolean` inside `queryContext`. This is the **persistent** mode flag that stays true for all subsequent iterations of the same broad-scope conversation.
+
+#### Component 2: `orchestrator.ts`
+Three changes:
+
+**Schema**: Added `isBroadScopeRequest: z.boolean()` to `orchestratorSchema`. The LLM sets this to `true` when it detects phrases like "org-wide", "fleet-wide", "for all vessels", "show me everything", "ignore the vessel filter". Schema description explicitly clarifies that attribute filters are NOT this flag's responsibility.
+
+**Memory Injection**: Reads `queryContext.isBroadScope` (the persisted flag) and injects a `🌐 BROAD SCOPE MODE ACTIVE` block at the TOP of `memoryContext` before orgContextBlock — ensuring it's the first thing the LLM reads, making it a mandatory override. The block forbids recycling prior vessel results and reminds the LLM that attribute-level filters follow its own reasoning.
+
+**Deterministic Post-Processing** (lines ~893–903): After the LLM responds, code checks `response.isBroadScopeRequest === true` and:
+1. Forces `updates.workingMemory.queryContext.currentScope = incomingIds` — drops the old `previouslyAccumulated` vessel IDs (stale), but preserves any IDs organically discovered in THIS current turn.
+2. Sets `updates.isBroadScopeRequest = true` to signal UpdateMemory2.
+3. Explicitly sets `updates.isBroadScopeRequest = false` in the else branch — prevents LangGraph reducer from inheriting a stale `true` from the prior turn.
+
+#### Component 3: `update_memory2.ts`
+Two-phase clear, ordered correctly to avoid self-defeating logic:
+
+**Phase A (isBroadScopeTriggered only)**: When `state.isBroadScopeRequest === true` fires (ONLY on the turn when the LLM first signals it):
+- Surgically deletes entity-scope keys (`vesselID`, `machineryID`, `scheduleID`, `activityID`, `costCenterID`) from both `sessionStateCommit.scope` AND `previousQueryContext.activeFilters` (the LLM's inheritance list).
+- The deletion from `activeFilters` is critical: without it, the Phase 2 LLM would simply re-inherit the dropped vessel ID via its "FILTER INHERITANCE" rule.
+
+**Phase B (isBroadScopeActive, persisted)**: `isBroadScopeTriggered || existingMemory.queryContext.isBroadScope`. This broader check is only used to persist the `isBroadScope: true` flag into the next `updatedQueryContext` — not to re-clear anything.
+
+The `deterministicScope` harvest runs AFTER the deletion so cleared keys do not re-enter `currentScope`.
+
+On Phase 2 LLM failure (catch block), `isBroadScope: isBroadScopeActive` is explicitly preserved in the graceful degradation return — preventing a crash from silently dropping the mode.
+
+#### Component 4: `orchestrator_rules.ts`
+Added **Rule 9: Recency > Specificity (The Broad Scope Override)** to the Relational Deduction Protocol. Instructs the LLM to:
+- Set `isBroadScopeRequest: true`, clear `currentScope`, forbid result recycling.
+- Explicitly documents the three attribute-filter cases with examples so the LLM understands the distinction.
+
+---
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Flag is a **transient state field** (`isBroadScopeRequest`), not inferred from query text | Deterministic, not fragile |
+| Entity-scope clear happens in **code** (not trusting LLM) | LLM may forget on iteration 2+ |
+| Old entity IDs cleared from **both** scope AND activeFilters | Prevents Phase 2 LLM re-inheriting dropped IDs |
+| Deletion only on `isBroadScopeTriggered` (not `isBroadScopeActive`) | Prevents "continuous wipe" killing newly discovered IDs on iteration 1+ |
+| `currentScope = incomingIds` (not `[]`) in orchestrator post-processing | Preserves any IDs organically discovered in the SAME turn as the broad scope signal |
+| `isBroadScopeRequest = false` explicit in else branch | LangGraph reducer `(x, y) => y ?? x` would otherwise keep stale `true` |
+
+---
+
+### Console Signals
+- `🌐 BROAD SCOPE OVERRIDE ACTIVE: User requested fleet/org-wide scope.` (Orchestrator, magenta)
+- `🌐 Broad Scope TRIGGERED — cleared entity-scope filters from scope and activeFilters.` (UpdateMemory2, magenta)
+- `🆔 GAP-30: Deterministic currentScope Sync: [...] (BROAD SCOPE MODE)` (UpdateMemory2, yellow)
+- `🌐 BROAD SCOPE MODE ACTIVE` block visible in the Orchestrator memory context print
+
+---
+
+### Files Modified
+- `backend/src/langgraph/state.ts`
+- `backend/src/langgraph/nodes/orchestrator.ts`
+- `backend/src/langgraph/nodes/update_memory2.ts`
+- `backend/src/langgraph/prompts/orchestrator_rules.ts`

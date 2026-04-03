@@ -28,7 +28,19 @@ export const orchestratorSchema = z.object({
     unclassifiedLabels: z.array(z.object({
         label: z.string().describe("The ambiguous label or code extracted from the query (e.g., 'XXX1', 'Grease up')."),
         likelyEntityTypes: z.array(z.string()).describe("Top 3 most likely entity types from the supported mcp.resolve_entities list (e.g., 'Vessel', 'Machinery', 'Activity') based on Knowledge Graph and Context.")
-    })).describe("Identify any strings in the user query for which you lack a verified 24-char ID or current memory mapping. Provide your best-guess types for them.")
+    })).describe("Identify any strings in the user query for which you lack a verified 24-char ID or current memory mapping. Provide your best-guess types for them."),
+    isBroadScopeRequest: z.boolean()
+        .describe(
+            "Set to TRUE if the user explicitly requested a BROADER entity scope than previously active — " +
+            "e.g., 'org-wide', 'fleet-wide', 'for all vessels', 'show me everything', 'ignore the vessel filter', 'across the organization'. " +
+            "When true: (1) set currentScope to [], (2) do NOT recycle any prior vessel-specific tool results as sufficient, " +
+            "(3) you MUST fetch fresh data at the org/fleet level. " +
+            "NOTE: This flag ONLY releases entity-scope constraints (vesselID, machineryID, etc.). " +
+            "Attribute filters (statusCode, date range, limit, department) are NOT controlled by this flag — " +
+            "they follow the user's explicit instructions. Keep attribute filters the user didn't mention removing. " +
+            "Set to FALSE for any request that narrows or maintains the existing entity scope."
+        )
+        .default(false)
 });
 
 // 🟢 Global Module-Level Cache for startup-once speedups
@@ -74,10 +86,12 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     if (!anchoredRawQuery || (state.iterationCount === 0 && !state.isHITLContinuation)) {
         const messages = state.messages || [];
         
-        // 1. Find the last time the AI emitted a Summary (The Conversation Boundary)
+        // 1. Find the last time the AI emitted a Summary (The Conversation Boundary).
+        // NOTE: Summarizer output is stored as a plain object { role: 'assistant', content: '[INSIGHT]...' }
+        // NOT as a LangChain AIMessage (_getType() = 'ai'). We must accept both role values.
         const lastSummaryIdx = [...messages].reverse().findIndex((m: any) => {
             const type = m._getType?.() || m.role || 'ai';
-            return type === 'ai' && typeof m.content === 'string' && m.content.includes("[INSIGHT]");
+            return (type === 'ai' || type === 'assistant') && typeof m.content === 'string' && m.content.includes("[INSIGHT]");
         });
 
         // 2. The Current Topic is the FIRST human message after that boundary
@@ -92,10 +106,11 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
             if (anchoredRawQuery && anchoredRawQuery !== newTopic) {
                 console.log(`\x1b[32m[Orchestrator] ⚓ TOPIC PIVOT DETECTED:\x1b[0m`);
                 console.log(`\x1b[36m  From: "${anchoredRawQuery.substring(0, 60)}..."\x1b[0m`);
-                console.log(`\x1b[35m  To:   "${newTopic.substring(0, 60)}..."\x1b[0m`);
+                console.log(`\x1b[33m  To:   "${newTopic.substring(0, 60)}..."\x1b[0m`);
             } else {
-                console.log(`\x1b[35m[Orchestrator] ⚓ Anchoring Topic: "${newTopic.substring(0, 60)}..."\x1b[0m`);
+                console.log(`\x1b[33m[Orchestrator] ⚓ USER QUERY: "${newTopic.substring(0, 60)}..."\x1b[0m`);
             }
+
             anchoredRawQuery = newTopic;
         }
     }
@@ -285,38 +300,59 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         ? `\n\n### 📓 SESSION DECISION JOURNAL (Current Query Only):\n${journalEntries.join('\n---\n')}\n\n**MANDATE**: You MUST consult this Journal to avoid redundant work. Do NOT repeat the exact same Tool+Parameter combination unless requested. HOWEVER, if the user asks a follow-up question requiring new or related data (e.g., asking for Invoices linked to prior POs), you MUST proactively execute the relevant new tool calls to continue the investigation.`
         : "";
 
-    // 🟢 Loop Breaker Logic (Request-Local): 
-    // Identify any labels that have ALREADY been searched in the current Turn and came back empty!
-    // NOTE: Uses requestCycleTurns declared above (not a new declaration) — GAP-2 fix ensures this
-    // is scoped to the current request only, not all of history.
-    const failedSessionLabels = new Set<string>();
+    // 🟢 Loop Breaker Logic (Request-Local):
+    // Identify labels that have been searched in the current request cycle and TRULY came back empty
+    // across ALL entity types. A label is only a "dead-end" if every parallel resolve call for it
+    // returned zero items. If even ONE entity type returned a match, it is NOT a dead-end.
+    //
+    // 🐛 BUG FIX (GAP-77): The old logic added a searchTerm to failedSessionLabels for every
+    // individual empty result. When parallel calls fired for Vessel/Machinery/Activity and only
+    // Machinery and Activity came back empty (Vessel returned 1 match), "xxx1" was still being
+    // flagged as failed — causing the DEAD-END LABELS block to fire incorrectly and mandate a
+    // clarifying question even though the entity was clearly resolved.
+    //
+    // Fix: two-pass approach — first tally hit counts per searchTerm, then only mark as failed
+    // if total hits across all entity types is zero.
+    const resolveHits = new Map<string, number>();  // searchTerm (lower) -> total items found
+
     requestCycleTurns.forEach((turn: any) => {
         Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
-            if (key.includes('mcp.resolve_entities')) {
-                const rawText = res?.content?.[0]?.text;
-                if (!rawText) return;
+            if (!key.includes('mcp.resolve_entities')) return;
 
-                let data: any = null;
-                try {
-                    data = JSON.parse(rawText);
-                } catch (e) {
-                    if (rawText.toLowerCase().includes('no matches found')) {
-                        const match = rawText.match(/for "(.*?)"/);
-                        if (match && match[1]) {
-                            failedSessionLabels.add(match[1].trim().toLowerCase());
-                        }
+            const rawText = res?.content?.[0]?.text;
+            if (!rawText) return;
+
+            let data: any = null;
+            try {
+                data = JSON.parse(rawText);
+            } catch (e) {
+                // Non-JSON response — check for explicit "no matches" message
+                if (rawText.toLowerCase().includes('no matches found')) {
+                    const match = rawText.match(/for "(.*?)"/);
+                    if (match && match[1]) {
+                        const lbl = match[1].trim().toLowerCase();
+                        if (!resolveHits.has(lbl)) resolveHits.set(lbl, 0);
+                        // Zero contribution from this call — leave count as-is
                     }
                 }
+                return;
+            }
 
-                if (data) {
-                    const items = Array.isArray(data.items) ? data.items : [];
-                    if (items.length === 0 && data.appliedFilters?.searchTerm) {
-                        failedSessionLabels.add(data.appliedFilters.searchTerm.trim().toLowerCase());
-                    }
-                }
+            if (data && data.appliedFilters?.searchTerm) {
+                const lbl = data.appliedFilters.searchTerm.trim().toLowerCase();
+                const count = Array.isArray(data.items) ? data.items.length : 0;
+                resolveHits.set(lbl, (resolveHits.get(lbl) ?? 0) + count);
             }
         });
     });
+
+    // Only labels whose TOTAL hit count across all entity types is 0 are true dead-ends
+    const failedSessionLabels = new Set<string>(
+        Array.from(resolveHits.entries())
+            .filter(([, total]) => total === 0)
+            .map(([lbl]) => lbl)
+    );
+
 
     // 🟢 GAP-8 FIX: Explicitly mandate a clarifying question when all resolution guesses fail
     const deadEndStr = failedSessionLabels.size > 0 
@@ -422,8 +458,20 @@ You MUST check the user's current query:
             // isHITLContinuation=true or org found in message history — LLM must read org from conversation
             : `✅ HITL Continuation Active: The user has just answered your clarifying question. Extract the organization from their latest message and use it directly in your tool calls. ⚠️ CRITICAL MANDATE: The Discovery-First Mandate still applies! If the request implies a "per-vessel" or "fleet-wide" scope, you MUST use fleet.query_overview first to resolve the vessels. DO NOT call data-retrieval tools directly at the organization level without vessel IDs.`;
 
+    // 🌐 BROAD SCOPE OVERRIDE BLOCK: Inject when user explicitly requested org/fleet-wide data.
+    // This prevents the LLM from recycling prior vessel-specific results in subsequent iterations.
+    const broadScopeStr = query?.isBroadScope
+        ? `\n🌐 BROAD SCOPE MODE ACTIVE — User explicitly requested org/fleet-wide data in this conversation.\n` +
+          `⚠️ MANDATORY: Prior vessel-specific tool results (e.g., single-vessel data from a prior conversation) are INSUFFICIENT. ` +
+          `You MUST fetch fresh data at the organization or fleet level. ` +
+          `Do NOT populate currentScope with historical vessel IDs from secondaryScope — leave it empty until fresh discovery runs.\n` +
+          `🔎 ATTRIBUTE FILTERS: Apply your Active Filters (statusCode, date range, etc.) at the new broader scope ` +
+          `UNLESS the user's latest message explicitly removed a specific filter (e.g., 'ignore the date range').`
+        : "";
+
     const memoryContext = [
         `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
+        broadScopeStr,
         orgContextBlock,
         longTermStr,
         summaryStr,
@@ -436,6 +484,7 @@ You MUST check the user's current query:
         deadEndStr,
         decisionJournal,
     ].filter(Boolean).join('\n');
+
 
     console.log(`\n\x1b[36m[Orchestrator] 🧠 Memory Context Injected:\x1b[0m\n${memoryContext}\n`);
 
@@ -526,15 +575,26 @@ Instruction: Proceed with your investigation based on the complete context provi
     console.log(`\x1b[36m[LangGraph Orchestrator] --- PROMPT SENT TO LLM ---\x1b[0m`);
     
     // 🟢 Console Visibility Optimization: Dump only the critical debugging objects
+    // toolResults are summarized to 32-char previews to prevent log bloat from large MCP payloads.
+    const toolResultsDigest = (state.toolResults || []).map((turn: any, i: number) => {
+        const entries: Record<string, string> = {};
+        Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
+            const text: string = res?.content?.[0]?.text || res?.text || '';
+            entries[key] = text.length > 0 ? `${text.substring(0, 32)}…` : '(empty)';
+        });
+        return { turn: i, keys: entries };
+    });
+
     const debugDump = {
         sessionContext: state.workingMemory?.sessionContext,
         queryContext: state.workingMemory?.queryContext,
-        toolResults: state.toolResults,
+        toolResults: toolResultsDigest,
         activeMessages: promptMessages.filter(m => m.role !== 'system')
     };
     
     console.log(`\x1b[35m[DEBUG] State & Scope Context:\x1b[0m`);
     console.dir(debugDump, { depth: null, colors: true });
+
 
     let response: any;
     let result: any;
@@ -652,10 +712,33 @@ Instruction: Proceed with your investigation based on the complete context provi
     // failedSessionLabels is now pre-calculated at the start of the node.
 
     // 🟢 Filter AI-suggested unclassified labels
+    // Two layers of protection:
+    //   1. Prompt instruction (orchestrator_rules.ts) tells the LLM not to put descriptive phrases here.
+    //   2. This code-level guard is the last line of defence — if the LLM still misfires (e.g. classifies
+    //      "ALL cancelled jobs" as an entity label), we reject it before wasting a resolve turn.
+    //
+    // Rejection rules (any one match = rejected):
+    //   a) Already resolved in this session
+    //   b) Already failed in this session (loop-breaker)
+    //   c) Starts with a scope/quantifier word (ALL, ANY, EVERY, DETAILS, SHOW, GET, FIND)
+    //   d) Contains a maintenance status word (cancelled, completed, overdue, committed, missed, rescheduled)
+    //   e) Empty or whitespace-only label
+    //   f) Label longer than 40 chars (no real named entity is a sentence)
+    const QUANTIFIER_PREFIXES = /^(all|any|every|details|show|get|find|list|retrieve)\b/i;
+    const STATUS_WORDS = /\b(cancelled|completed|overdue|committed|missed|rescheduled|upcoming|pending)\b/i;
+
     const actualUnclassified = (response.unclassifiedLabels || []).filter((l: any) => {
-        const lbl = (l.label || '').trim().toLowerCase();
-        return !resolvedLabelSet.has(l.label) && !failedSessionLabels.has(lbl);
+        const lbl = (l.label || '').trim();
+        const lblLower = lbl.toLowerCase();
+        if (!lbl) return false;                           // (e) empty
+        if (lbl.length > 40) return false;                // (f) sentence-length → not an entity name
+        if (QUANTIFIER_PREFIXES.test(lbl)) return false;  // (c) starts with scope word
+        if (STATUS_WORDS.test(lbl)) return false;          // (d) contains status word
+        if (resolvedLabelSet.has(l.label)) return false;  // (a) already resolved
+        if (failedSessionLabels.has(lblLower)) return false; // (b) already failed
+        return true;
     });
+
 
     // 🟢 Filter AI-suggested Tool Calls (Prevent redundant resolution loops)
     // If the tool is mcp.resolve_entities and the searchTerm is in failedSessionLabels, skip it!
@@ -807,6 +890,17 @@ Instruction: Proceed with your investigation based on the complete context provi
         updates.workingMemory.queryContext.currentScope = []; // Reset transient query scope
     }
 
+    // 🌐 BROAD SCOPE OVERRIDE: Deterministic enforcement when LLM signals isBroadScopeRequest=true.
+    // We do NOT trust the LLM to clear currentScope itself — we force it in code.
+    if (response.isBroadScopeRequest === true) {
+        console.warn(`\x1b[35m[LangGraph Orchestrator] 🌐 BROAD SCOPE OVERRIDE ACTIVE: User requested fleet/org-wide scope. Clearing prior entity-scope filters.\x1b[0m`);
+        // 1. Force currentScope to drop previouslyAccumulated old IDs, keeping ONLY new organic discoveries (if any)
+        updates.workingMemory.queryContext.currentScope = incomingIds;
+        // 2. Emit the flag to state so UpdateMemory2 can persist isBroadScope and drop entity-scope activeFilters
+        updates.isBroadScopeRequest = true;
+    } else {
+        updates.isBroadScopeRequest = false; // Explicit reset so reducer doesn't inherit stale true
+    }
 
     // 🟢 HITL Guard: If there is a clarifying question, append it to messages so the Summarizer can look at it.
     // 🛡️ PRECEDENCE GUARD: If we already intercepted this turn for Resolution (finalReasoning contains DIVERGENCE),

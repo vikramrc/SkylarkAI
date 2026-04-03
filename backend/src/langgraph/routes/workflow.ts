@@ -115,7 +115,12 @@ export function createLangGraphWorkflowRouter() {
                     }
 
                     // 🟢 D. Emit Raw Tool Results — shared helper used by both execute_tools and summarizer nodes
-                    const emitToolResults = async (nodeLabel: string) => {
+                    // currentTurnOnly=true (D1 path): emit only results from THIS request's turns (slice from startTurnIndex).
+                    //   This prevents old result tabs (e.g. cancelled-jobs from a prior turn) from bleeding into
+                    //   the UI when the user asks a different question that fires new tools.
+                    // currentTurnOnly=false (D2 path, default): use selectedResultKeys conductor logic as before,
+                    //   allowing the Summarizer to surface cross-turn context when no new tools were run.
+                    const emitToolResults = async (nodeLabel: string, currentTurnOnly = false) => {
                         try {
                             const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
                             const currentState = finalState.values;
@@ -127,9 +132,32 @@ export function createLangGraphWorkflowRouter() {
                             const mergedResults: Record<string, any> = {};
                             const selection = currentState.selectedResultKeys || [];
 
-                            if (selection.length > 0) {
-                                console.log(`[Workflow Route] 🎯 Conductor Selection: Promoting ${selection.length} keys to UI`);
-                                allTurns.forEach(turn => {
+                            if (currentTurnOnly) {
+                                // D1: Only emit results generated during THIS request — ignore selectedResultKeys
+                                // to avoid surfacing historical turns loaded for Summarizer context.
+                                const currentTurns = allTurns.slice(startTurnIndex);
+                                currentTurns.forEach(turn => {
+                                    Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                                        mergedResults[key] = { ...val };
+                                    });
+                                });
+                            } else if (selection.length > 0) {
+                                // 🟢 D2 CONTEXT-AWARE CONDUCTOR SELECTION:
+                                // If this HTTP request produced ANY of the selected keys (they exist in current-request turns),
+                                // restrict the search scope to current-request turns only. This prevents old result tabs
+                                // (from prior HTTP requests) from bleeding into the UI alongside new results.
+                                //
+                                // Only fall back to ALL turns when the current request produced ZERO matching keys —
+                                // that is the pure "re-surface" scenario (no new tools ran, LLM wants to show old data).
+                                const currentRequestTurns = allTurns.slice(startTurnIndex);
+                                const currentRequestKeySet = new Set(
+                                    currentRequestTurns.flatMap((turn: any) => Object.keys(turn || {}))
+                                );
+                                const hasCurrentHits = selection.some((k: string) => currentRequestKeySet.has(k));
+                                const turnsToSearch = hasCurrentHits ? currentRequestTurns : allTurns;
+
+                                console.log(`[Workflow Route] 🎯 Conductor Selection: Promoting ${selection.length} keys to UI (scope: ${hasCurrentHits ? 'current-request only' : 'all-turns re-surface'})`);
+                                turnsToSearch.forEach((turn: any) => {
                                     Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
                                         if (selection.includes(key)) {
                                             mergedResults[key] = { ...val };
@@ -176,7 +204,7 @@ export function createLangGraphWorkflowRouter() {
                             const isFinalTurn = lastVerdict === "SUMMARIZE" || standsAmbiguous || (currentState.iterationCount || 0) >= 8;
                             
                             if (isFinalTurn) {
-                                await emitToolResults("execute_tools");
+                                await emitToolResults("execute_tools", true);
                                 toolResultsEmitted = true; // 🟢 Mark as sent so D2 doesn't double-emit
                             }
                         } catch (e) {
