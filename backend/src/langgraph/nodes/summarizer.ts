@@ -81,6 +81,7 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
             return { key, data };
         });
 
+        // ─────────────────────────────────────────────────────────────────
         // 🟢 Conductor Selection Filter: If the Orchestrator explicitly picked results, ignore everything else!
         // This prevents "Discovery" turns or "Internal Thinking" tools from bloating the final summary.
         let finalEntries = unpackedEntries;
@@ -117,12 +118,56 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
                 });
             });
 
-            // Fallback: If AI picked keys that don't exist (hallucination) AND we have no auto-promotions, use all current turns
+            // ─────────────────────────────────────────────────────────────────
+            // CONDUCTOR HISTORY LOOKUP (GAP-HIST-1 FIX)
+            // ─────────────────────────────────────────────────────────────────
+            // When selectedResultKeys are empty after filtering currentTurns, it could mean:
+            //   (a) The AI hallucinated a key name → true fallback case
+            //   (b) The key exists in a PRIOR TURN (before startTurnIndex) → re-group use case
+            //
+            // Example: User asks "show me per vessel" after already seeing 29 cancelled jobs.
+            // The 29-item result is at turn 0 (before startTurnIndex=1). The Conductor correctly
+            // names that key, but `currentTurns = history.slice(1)` doesn’t include turn 0.
+            // We MUST search all history for a valid (non-error, has items) match before giving up.
+            //
+            // This avoids the failure mode where the Summarizer says "no data" even though the
+            // data was already successfully retrieved in a prior step of the same conversation.
+            // ─────────────────────────────────────────────────────────────────
             if (finalEntries.length === 0) {
-                console.warn(`\x1b[33m${ts()} [LangGraph Summarizer] ⚠️ Conductor picked keys [${state.selectedResultKeys}] but none matched (and no auto-promotes)! Falling back to all current results.\x1b[0m`);
-                finalEntries = unpackedEntries;
+                // Walk ALL history (not just currentTurns) to find Conductor-named keys.
+                // Prefer entries that: (1) match the selected key, (2) are not errors, (3) have actual items.
+                const allHistoryEntries: { key: string; data: any }[] = [];
+                history.forEach((turn: any) => {
+                    Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
+                        let data = res;
+                        if (data?.content?.[0]?.text) {
+                            const text = data.content[0].text;
+                            if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
+                                try { const parsed = JSON.parse(text); if (parsed) data = parsed; } catch (e) {}
+                            }
+                        }
+                        allHistoryEntries.push({ key, data });
+                    });
+                });
+
+                const historicalMatches = allHistoryEntries.filter(e =>
+                    state.selectedResultKeys?.includes(e.key) &&
+                    !e.data?.isError &&
+                    Array.isArray(e.data?.items) &&
+                    e.data.items.length > 0
+                );
+
+                if (historicalMatches.length > 0) {
+                    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🗂️ Conductor History Lookup: Found ${historicalMatches.length} valid result(s) in prior turns. Using historical data for re-grouping.\x1b[0m`);
+                    finalEntries = historicalMatches;
+                } else {
+                    // True fallback: key doesn't exist anywhere (hallucination). Use all current results.
+                    console.warn(`\x1b[33m${ts()} [LangGraph Summarizer] ⚠️ Conductor picked keys [${state.selectedResultKeys}] but none matched anywhere (current or history). Falling back to all current results.\x1b[0m`);
+                    finalEntries = unpackedEntries;
+                }
             }
         }
+
 
         // 🔴 CRITICAL FIX: extract the actual *items* arrays from each tool result wrapper
         const toolCountMap: string[] = [];

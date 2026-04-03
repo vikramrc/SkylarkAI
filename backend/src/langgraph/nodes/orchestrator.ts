@@ -67,20 +67,36 @@ async function getCapabilitiesCached(backendUrl: string, params: any): Promise<a
 export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<SkylarkState>> {
     console.log(`[LangGraph] ▶ Orchestrator Node invoked (Iteration: ${state.iterationCount || 0})`);
     
-    // 🟢 TOPIC ANCHORING: Ensure the investigation has a stable "Notebook" entry from the very first turn.
-    // This prevents "HITL Context Collapse" where the AI forgets the original question after a clarifying loop.
+    // 🟢 TOPIC ANCHORING: Find the "Mission Starting Question" flawlessly.
+    // The Mission starts at the first Human message AFTER the last Summary ([INSIGHT]).
     let anchoredRawQuery = state.workingMemory?.queryContext?.rawQuery || "";
-    if (!anchoredRawQuery) {
-        // Look for the initial human message of THIS investigation cycle
+    
+    if (!anchoredRawQuery || (state.iterationCount === 0 && !state.isHITLContinuation)) {
         const messages = state.messages || [];
-        const startIdx = state.startTurnIndex || 0;
-        const initialHumanMsg = messages.slice(startIdx).find((m: any) => {
-           const type = m._getType?.() || m.role || 'human';
-           return type === 'human';
+        
+        // 1. Find the last time the AI emitted a Summary (The Conversation Boundary)
+        const lastSummaryIdx = [...messages].reverse().findIndex((m: any) => {
+            const type = m._getType?.() || m.role || 'ai';
+            return type === 'ai' && typeof m.content === 'string' && m.content.includes("[INSIGHT]");
         });
-        if (initialHumanMsg) {
-            anchoredRawQuery = (initialHumanMsg as any).content || "";
-            console.log(`\x1b[35m[LangGraph Orchestrator] ⚓ Anchoring Topic: "${anchoredRawQuery.substring(0, 60)}..."\x1b[0m`);
+
+        // 2. The Current Topic is the FIRST human message after that boundary
+        const scanStartIdx = lastSummaryIdx === -1 ? 0 : (messages.length - 1 - lastSummaryIdx);
+        const currentMissionTopic = messages.slice(scanStartIdx).find((m: any) => {
+            const type = m._getType?.() || m.role || 'human';
+            return type === 'human';
+        });
+
+        if (currentMissionTopic) {
+            const newTopic = (currentMissionTopic as any).content || "";
+            if (anchoredRawQuery && anchoredRawQuery !== newTopic) {
+                console.log(`\x1b[32m[Orchestrator] ⚓ TOPIC PIVOT DETECTED:\x1b[0m`);
+                console.log(`\x1b[36m  From: "${anchoredRawQuery.substring(0, 60)}..."\x1b[0m`);
+                console.log(`\x1b[35m  To:   "${newTopic.substring(0, 60)}..."\x1b[0m`);
+            } else {
+                console.log(`\x1b[35m[Orchestrator] ⚓ Anchoring Topic: "${newTopic.substring(0, 60)}..."\x1b[0m`);
+            }
+            anchoredRawQuery = newTopic;
         }
     }
 
@@ -94,16 +110,42 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 
 
 
-    // Compute currentTurns (used in both resultsContext and decisionJournal building)
+    // ─────────────────────────────────────────────────────────────────
+    // LEDGER vs. DATA SPLIT (GAP-4 FIX)
+    // ─────────────────────────────────────────────────────────────────
+    // We provide a "Technical Ledger" (keys + one-line headers) for recent results so the AI can
+    // identify and re-select data from a prior conversation without re-running the tool.
+    //
+    // GAP-4 FIX: We cap the ledger at the LAST 5 TURNS (not all history).
+    // Rationale from Section 62 (Orchestrator Diet):
+    //   - The Section 62 "Diet" exists to prevent token explosion in deep multi-turn sessions.
+    //   - The full history can reach 30 turns (×5 tools = 150 header lines per call).
+    //   - 5 turns is enough to cover any active investigation window while keeping tokens bounded.
+    //   - For truly old data, the AI's `currentScope` (Notebook) and `secondaryScope` (7-conv ledger)
+    //     carry the entity IDs that matter — the Orchestrator doesn't need the raw result headers.
+    // ─────────────────────────────────────────────────────────────────
     const history = Array.isArray(state.toolResults) ? state.toolResults : (state.toolResults ? [state.toolResults] : []);
-    const currentTurns = history.slice(state.startTurnIndex || 0).slice(-1); // 🟢 Orchestrator Diet: Only see the latest turn's results
+    
+    // LEDGER: Scoped to the last 5 turns for key visibility + token diet.
+    const ledgerTurns = history.slice(-5);
+    
+    // REQUEST CYCLE: Only the turns from THIS specific HTTP request (for journal + loop breaker).
+    // These are used separately so the journal stays current-request-scoped.
+    const requestCycleTurns = history.slice(state.startTurnIndex || 0);
 
     let resultsContext = "";
     const toolLines: string[] = [];
     
-    currentTurns.forEach((turn: any, tIdx: number) => {
-        const iterNum = (state.startTurnIndex || 0) + tIdx + 1; // 1-indexed human turn count flawless!
-        Object.entries(turn || {}).forEach(([key, res]) => {
+    // 🟢 Loop over the FULL ledger to build the headers and EXACT keys
+    ledgerTurns.forEach((turn: any, tIdx: number) => {
+        const iterNum = tIdx + 1; // Absolute turn count in history flawless!
+        const entries = Object.entries(turn || {});
+        
+        // 🟢 ID Sniffing: Only perform heavy ID harvesting/preview for the LATEST turn results
+        // This keeps the context window lean for the Orchestrator diet.
+        const isLatestTurn = tIdx === history.length - 1;
+
+        entries.forEach(([key, res]: [string, any]) => {
             let data: any = res;
             let errorMsg = "";
             let isError = !!data?.isError;
@@ -140,21 +182,24 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
                 ? `total available: overdue=${data.summary.overdueCount} upcoming=${data.summary.upcomingCount}`
                 : '';
 
-            // 🟢 Generic ID Sniffer: Extract ANY database IDs for the Orchestrator to use in chained calls without guessing
+            // 🟢 Generic ID Sniffer: Only harvest relational IDs from the LATEST turn results
+            // to save tokens and prevent context window explosion.
             let extractedIds: string[] = [];
-            items.forEach((item: any) => {
-                Object.entries(item).forEach(([k, v]) => {
-                    // Extract any string field ending in 'ID' or exactly '_id'
-                    if (typeof v === 'string' && (k.endsWith('ID') || k === '_id' || k.endsWith('Id'))) {
-                        // Skip organizationID to prevent noise, only harvest relational IDs
-                        if (k !== 'organizationID' && k !== 'organizationId') {
-                            const pair = `${k}:${v}`;
-                            if (!extractedIds.includes(pair)) extractedIds.push(pair);
+            if (isLatestTurn) {
+                items.forEach((item: any) => {
+                    Object.entries(item).forEach(([k, v]) => {
+                        // Extract any string field ending in 'ID' or exactly '_id'
+                        if (typeof v === 'string' && (k.endsWith('ID') || k === '_id' || k.endsWith('Id'))) {
+                            // Skip organizationID to prevent noise, only harvest relational IDs
+                            if (k !== 'organizationID' && k !== 'organizationId') {
+                                const pair = `${k}:${v}`;
+                                if (!extractedIds.includes(pair)) extractedIds.push(pair);
+                            }
                         }
-                    }
+                    });
                 });
-            });
-            // Limit to 15 to prevent context window explosion on massive arrays
+            }
+            // Limit to 15 to prevent context window explosion
             const idPreview = extractedIds.length > 0 ? ` | Extracted Keys: [${extractedIds.slice(0, 15).join(', ')}]` : '';
 
             let line = `- Key: "${key}" | Label: "${label}"${fLabel} | Count: ${count} items (Turn ${iterNum})${idPreview}`;
@@ -172,8 +217,8 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     });
 
     if (toolLines.length > 0) {
-        // 🟢 Inject exact key list to prevent LLM from guessing key names with wrong suffixes (e.g., _0)
-        const allAvailableKeys = currentTurns.flatMap((turn: any) => Object.keys(turn || {}));
+        // 🟢 Ledger Registry: Provide exact keys to prevent LLM hallucination
+        const allAvailableKeys = ledgerTurns.flatMap((turn: any) => Object.keys(turn || {}));
         resultsContext = `\n\n### PREVIOUS TOOL RESULTS IN THIS REQUEST:\n${toolLines.join('\n')}\n\n⚠️ EXACT KEY REFERENCE (Copy verbatim into selectedResultKeys — do NOT add or remove suffixes):\n${allAvailableKeys.map(k => `  "${k}"`).join('\n')}\n\n(Consult the 'DEDUPLICATION & CONDUCTOR RULES' in your system instructions for how to handle these results.)`;
     }
 
@@ -209,8 +254,19 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         }
     });
 
-    // Match tools into the journal entries
-    currentTurns.forEach((turn: any) => {
+    // ─────────────────────────────────────────────────────────────────
+    // DECISION JOURNAL — TOOL MATCHING (GAP-2 FIX)
+    // ─────────────────────────────────────────────────────────────────
+    // The journal's mandate is: "Do NOT repeat the SAME Tool+Parameter in the CURRENT REQUEST."
+    // This prevents pointless re-fetches within a single agentic loop (e.g., fetching fleet
+    // overview twice in the same chain because the AI forgot it already did it).
+    //
+    // GAP-2 FIX: This MUST use requestCycleTurns, NOT ledgerTurns.
+    // Using ledgerTurns (full history) would show tools from PREVIOUS conversations in the journal.
+    // The AI would then refuse to re-run a tool from yesterday's conversation even if the user
+    // explicitly asks for fresh data today, because the journal says "already done".
+    // ─────────────────────────────────────────────────────────────────
+    requestCycleTurns.forEach((turn: any) => {
         Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
             const filters = (res as any)?.appliedFilters || {};
             const filterStr = Object.entries(filters).filter(([k,v]) => v).map(([k,v]) => `${k}:${v}`).join(',');
@@ -231,9 +287,9 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 
     // 🟢 Loop Breaker Logic (Request-Local): 
     // Identify any labels that have ALREADY been searched in the current Turn and came back empty!
+    // NOTE: Uses requestCycleTurns declared above (not a new declaration) — GAP-2 fix ensures this
+    // is scoped to the current request only, not all of history.
     const failedSessionLabels = new Set<string>();
-    const requestCycleTurns = (state.toolResults || []).slice(state.startTurnIndex || 0);
-    
     requestCycleTurns.forEach((turn: any) => {
         Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
             if (key.includes('mcp.resolve_entities')) {

@@ -539,3 +539,159 @@ We resolved a critical "Reasoning Stall" and "Routing Trap" where the orchestrat
 - [x] **Proactive Retrieval**: Confirmed that the AI fires parallel retrieval tools immediately once vessel/machinery IDs are discovered.
 - [x] **Investigative Continuity**: Validated that multi-turn chaining (e.g., Fleet Overview -> Per Vessel Statistics) works without manual intervention or stalling.
 - [x] **Build Integrity**: Confirmed the system is fully compilable (`npx tsc --noEmit`) after the routing and prompt updates.
+
+---
+
+## 🛠️ 70. Architectural Alignment: Turns vs. Conversations
+
+This section formalizes the memory-anchoring strategy to prevent "Topic Lockdown" regressions.
+
+### 📐 Definitions (User-Agent Shared Protocol)
+*   **Conversation (Summary-to-Summary)**: Represented by the User's NEW incoming query until the Agent returns a final `[INSIGHT]` Summary. A Conversation is a complete mission (e.g., "Find all completed jobs").
+*   **Turn (Internal Iteration)**: Any intermediate step (`AI <-> AI` or `AI <-> HITL`) *inside* a single Conversation. Turns share the same topic anchor (`rawQuery`).
+
+### ⚓ Dynamic Topic Anchoring (UpdateMemory2)
+To break the "Topic Lock," the `UpdateMemory2` node now uses a **Force-Refresh** protocol:
+*   **Conversation Start (`isNewQuery`)**: The system MUST ignore any existing thread topic and refresh purely from the latest User Query. This allows the user to pivot from "Cancelled" to "Completed" without the agent staying stuck on the previous task. 
+*   **Turn Continuation**: The topic stays anchored to ensure multi-step retrieval (Discover -> Resolve -> Retrieve) remains focused on the original mission.
+
+### 🧩 Filter Poisoning & RULE 69
+*   **Anti-Poisoning**: The Memory Controller prompt now prioritizes **Latest Tool Arguments** as the ground truth. If a tool successfully fetches "Completed" data, the memory will reflect "Completed" regardless of historical intent.
+*   **Investigative Continuity (RULE 69)**: The Orchestrator is now strictly forbidden from downgrading to "lite" status tools once a deep "Work History" (Audit) investigation is underway. This preserves data richness across status pivots.
+
+
+---
+
+## 🛠️ 71. Deterministic Topic Anchoring & Re-Retrieval Mandate
+
+We addressed a regression where the agent incorrectly pivoted the investigation topic to HITL answers (e.g., "fleetships") instead of the new mission query ("show me vessel wise"). We also resolved a data-loss issue where the Summarizer would lack the raw data needed for re-grouping insights across conversation boundaries.
+
+### 🟢 Boundary-Aware Anchoring ( & ):
+- **Structural Boundary Detection**: The system no longer "guesses" based on iteration counts alone. It now identifies the **Boundary** as the last `[INSIGHT]` Summary emitted by the AI.
+- **Top-Level Mission ID**: The `rawQuery` (Topic) is now anchored to the **first Human message following the last Summary**. This ensures that the original starting question of the new mission is preserved, reliably skipping any "tail" HITL messages from the previous conversation.
+- **Result**: Perfect topic stability during the "vessel-wise" pivot.
+
+### 🟢 Re-Retrieval Mandate (RULE 71):
+- **Summarizer Context Restoration**: Identified that the Summarizer is isolated by `startTurnIndex` and cannot "see" raw tool results from previous conversations.
+- **Mandatory Re-Execution**: Added **RULE 71** to the Constitution. If a user asks for a re-grouping or further analysis of historical data, the Orchestrator MUST re-execute the relevant retrieval tools. This guarantees that the current turn's toolResults payload contains the raw rows necessary for the Summarizer to build its synthesis.
+
+### 📑 Stability Checklist:
+- [x] **Topic Pivot Accuracy**: Verified that "fleetships" (HITL) no longer steals the mission anchor from "show me vessel wise".
+- [x] **Raw Data Availability**: Confirmed that the Orchestrator re-runs retrieval when a new view is requested.
+- [x] **Summarizer Synthesis**: Validated that the Summarizer successfully produces vessel-wise insights when tool results are populated in the current turn.
+
+
+---
+
+## 🛠️ 72. Visibility Ledger vs. Data Diet (Context Hardening)
+
+We refined the **"Orchestrator Diet"** (Section 62) to resolve a critical visibility gap that occurred during cross-conversation re-summarization.
+
+### 🔴 The Regression:
+The previous "Diet" was too aggressive, hiding ALL historical tool results from the Orchestrator's prompt. When a user requested a re-grouping (e.g., "vessel wise"), the AI correctly pivoted to the new topic but **hallucinated key names** (e.g., `previous_cancelled_jobs_overview`) because it couldn't see the technical technical IDs/results from the previous conversation.
+
+### 🟢 The Deterministic Fix (`orchestrator.ts`):
+- **Full Ledger Visibility**: The Orchestrator now receives a **Full Technical Ledger** (Headers and Keys only) for every tool result in the thread history. This ensures the AI always has the correct technical key (e.g., `_iter1`) for selection.
+- **ID-Sniffing Weight-Limit**: Heavy Data Previews (ID harvesting and row counts) remain restricted to the **latest turn results** only. 
+- **Result**: Massive token efficiency is preserved, but the AI is no longer "blind" to the existence of data it already retrieved.
+
+### 🟢 Topic Boundary Sync (`orchestrator.ts` & `update_memory2.ts`):
+- **Boundary Detection**: Unified the topic-anchoring logic to look for the last `[INSIGHT]` (Summary) and treat the **first Human message after that boundary** as the new Mission Topic. This deterministically breaks the "Topic Lockdown" without fragile If/Else logic.
+
+
+---
+
+## 🛠️ 73. Post-Implementation Gap Fixes (Ledger Hardening)
+
+Following a thorough audit against all three handover documents, we identified and fixed **4 gaps** introduced during the Section 72 implementation.
+
+### �� GAP-1 FIX: Off-By-One in `scanStartIdx` (`update_memory2.ts`)
+- **Root Cause**: The `lastSummaryIdx` is derived from a **reversed** array's `.findIndex()`. Converting it back to a forward index requires `length - 1 - reversedIdx`. The implementation was using `length - reversedIdx` (missing the `-1`), shifting the scan window one message too far. When the Summary was the last message, `.slice()` returned an empty array → `missionTopic = ""` → `rawQuery` collapsed to empty string → the AI lost its topic anchor entirely.
+- **Fix**: Changed formula in `update_memory2.ts` to `(allMessages.length - 1 - lastSummaryIdx)`.
+- **Formula Rule for Future Agents**: reversed `.findIndex()` result → forward index = `array.length - 1 - reversedIdx`. Never `length - reversedIdx`.
+
+### 🔴 GAP-2 FIX: Decision Journal Was Showing Full History (`orchestrator.ts`)
+- **Root Cause**: The journal's tool-matching loop was changed to iterate `ledgerTurns` (the last 5 turns of all history) instead of `requestCycleTurns` (tools from THIS request only). This violated the journal's own mandate ("Current Query Only") and caused the AI to see tools from **previous conversations** as "already done," refusing to re-run them even on explicit user request.
+- **Fix**: Changed the journal's tool-matching loop back to use `requestCycleTurns` (= `history.slice(state.startTurnIndex)`).
+- **Mandate**: The journal MUST always be scoped to `requestCycleTurns`. Only the `ledgerTurns` section (headers/keys) may reference broader history.
+
+### 🟡 GAP-3 FIX: Boundary Detection Was Running Outside `isNewQuery` (`update_memory2.ts`)
+- **Root Cause**: The full boundary scan (`lastSummaryIdx` → `missionStartMsg`) was running unconditionally on every memory update, including HITL continuations. This caused two problems: (a) wasteful computation, (b) during a HITL continuation, the HITL reply itself (e.g., "fleetships") could become the new "first human msg after boundary," overwriting the genuine mission topic.
+- **Fix**: Moved the entire boundary scan block **inside** the `if (isNewQuery)` branch. During HITL continuations (`isNewQuery = false`), the code now falls straight to `existingRawQuery` preservation without re-scanning.
+
+### 🟡 GAP-4 FIX: `ledgerTurns` Was Unbounded (`orchestrator.ts`)
+- **Root Cause**: After the Section 72 fix, `ledgerTurns` was set to the full `history` array with no cap. In a 30-turn session (≤30 per the BSON guard) with 5 tools per turn, this injects 150 header lines into every orchestrator call, partially defeating the Section 62 Diet.
+- **Fix**: Capped `ledgerTurns` to `history.slice(-5)` — the last 5 turns. This covers any realistic active investigation window. For older data, the AI relies on `currentScope` (Notebook) and `secondaryScope` (7-conv rolling ledger) which already carry the entity IDs.
+- **Token Budget**: 5 turns × 5 tools = 25 header lines maximum per orchestrator call. Bounded and predictable.
+
+### �� Final Variable Responsibilities (for Future Agents):
+| Variable | Source | Purpose |
+|---|---|---|
+| `history` | `state.toolResults` (all) | Raw source — never inject directly |
+| `ledgerTurns` | `history.slice(-5)` | Headers/keys for re-grouping visibility |
+| `requestCycleTurns` | `history.slice(startTurnIndex)` | Journal + Loop Breaker (current request only) |
+
+
+---
+
+## 🛠️ 74. Infinite Resolution Loop Fix — Routing Order Bug (`graph.ts`)
+
+### 🔴 The Bug (GAP-LOOP-1):
+A critical infinite loop was observed when the user asked for a re-grouping of already-retrieved data (e.g., "show me these per vessel"). The system would loop indefinitely without ever running tools or producing a response.
+
+**Root Cause**: Two mechanisms interacted in a destructive way:
+1. The **Strategic Interceptor** (`orchestrator.ts`): When the AI listed vessel labels as `unclassifiedLabels`, the interceptor correctly injected `mcp.resolve_entities` tool calls AND set `feedBackVerdict = FEED_BACK_TO_ME`.
+2. The **Orchestrator Conditional Edge** (`graph.ts`): The routing check for `feedBackVerdict === "FEED_BACK_TO_ME"` came **BEFORE** the check for `toolCalls.length > 0`.
+
+**Effect**: The graph saw the `FEED_BACK_TO_ME` verdict first and short-circuited directly to `update_memory`, **silently dropping the injected resolve_entities tools**. On the next turn, the AI saw the same unresolved labels, the interceptor fired again, tools were dropped again → infinite loop. Confirmed by logs: `latestTurn keys: [none]` on every iteration.
+
+### 🟢 The Fix (`graph.ts`):
+Swapped the routing check order. `toolCalls` is now checked **first**:
+```
+• tools present (any verdict)  → execute_tools → update_memory / summarizer
+• no tools + FEED_BACK_TO_ME  → update_memory  (planning-only turn, loop back)  
+• no tools + SUMMARIZE        → summarizer     (empty / conversational end)
+```
+
+**Key Principle for Future Agents**: The verdict governs what happens **AFTER** tools run. It must never be used to skip tool execution. If `toolCalls` is non-empty, `execute_tools` MUST always be the next node, regardless of the verdict.
+
+
+---
+
+## 🛠️ 75. Summarizer Conductor History Lookup (`summarizer.ts`)
+
+### 🔴 The Bug (GAP-HIST-1):
+User asked "show me per vessel" after the AI had already retrieved 29 cancelled jobs. The AI (correctly) set `selectedResultKeys = ["maintenance.query_execution_history_iter1"]` and issued `SUMMARIZE`. But the Summarizer saw **0 items** and said "no data available."
+
+**Root Cause**: The Summarizer's `currentTurns = history.slice(startTurnIndex)` only covers the **current HTTP request's** tool turns. The original 29-item result was in turn 0 (from the previous conversation turn), before `startTurnIndex=1`. When `selectedResultKeys` named that key, the filter against `currentTurns` found nothing, triggering the fallback to `unpackedEntries` (also empty) → 0 rows → empty summary.
+
+**Secondary cause**: On an earlier attempt, the AI had tried to re-fetch per-vessel with `vesselID: "XXX1"` (a display name, not a Mongo ObjectId), which correctly failed. The Conductor then selected the *failed* key (which had 0 items) causing the same result.
+
+### 🟢 The Fix (`summarizer.ts`):
+Extended the Conductor Selection fallback block with a **Conductor History Lookup**:
+1. When `finalEntries` is empty after filtering `currentTurns`, walk **all history** (not just `currentTurns`) 
+2. Find any entry that: (a) matches a `selectedResultKey`, (b) is not an error, (c) has `items.length > 0`
+3. Use those historical entries for the summary — this is the "re-group prior data" use case
+4. Only if nothing matches in all history do we fall back to `unpackedEntries` (true hallucination case)
+
+**Key Principle**: The Conductor explicitly named the key — that name is authoritative. The Summarizer must honour it even if the key is from a prior turn before `startTurnIndex`. The `startTurnIndex` isolation prevents stale data from contaminating NEW queries, but must not block the Conductor from accessing prior results for re-grouping.
+
+
+---
+
+## 🛠️ 76. Vessel ObjectId Dropped from Execution History Response (`mcp.service.js`)
+
+### 🔴 The Bug (GAP-VESSEL-ID):
+Per-vessel follow-up queries (e.g., "show me these per vessel") failed with `vesselID must be a valid Mongo ObjectId`. The root cause was traced through a 4-step chain:
+
+1. `maintenance.query_execution_history` returns items with `vessel: { vesselName: "XXX1" }` — **no `vessel._id`**.
+2. The MongoDB aggregation pipeline uses `buildStringRefLookupStages` with `project: { _id: 1, vesselName: 1 }` — so the lookup correctly fetches both fields.
+3. BUT the final `$project` stage (line ~2155 in `mcp.service.js`) explicitly projects **only** `"vessel.vesselName": 1`, silently dropping `vessel._id`.
+4. The Summarizer LLM receives items with no vessel ObjectId, falls back to using the vessel name `"XXX1"` as the `id` in its `[ENTITIES]` block, and `secondaryScope` stores `{ name: "XXX1", id: "XXX1" }` instead of the real Mongo ObjectId.
+5. Next turn, the AI reads `id: "XXX1"` from secondaryScope and passes it as `vesselID: "XXX1"` to the tool → **backend rejects it** since `"XXX1"` is not a 24-char hex ObjectId.
+
+### 🟢 The Fix (`mcp.service.js`):
+Added `"vessel._id": 1` to the final `$project` stage in `getMaintenanceExecutionHistory`. The response now includes `vessel: { _id: "68...", vesselName: "XXX1" }`. The Summarizer can correctly emit `{ "modelType": "Vessel", "name": "XXX1", "id": "68..." }` into `[ENTITIES]`, which correctly propagates into `secondaryScope` with a real ObjectId.
+
+**Key Principle**: Always project `_id` alongside display fields in lookup stages AND in the final `$project`. Dropping `_id` from response items causes the AI to use display names as identifiers, creating a cascade of tool failures downstream.
+

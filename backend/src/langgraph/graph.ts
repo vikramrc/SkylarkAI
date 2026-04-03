@@ -107,19 +107,33 @@ workflow.addConditionalEdges(
       if (state.error) return "errorNode";
       if (state.hitl_required) return "__end__"; 
 
-      // 🛡️ ROUTING FIX: 
-      // Prevents the "Safety Sink" from killing the investigation if the AI wants 
-      // a feedback loop but hasn't provided tools yet. If Verdict is FEED_BACK_TO_ME, 
-      // we MUST proceed to update_memory (which eventually loops back to orchestrator) 
-      // regardless of tool count.
+      // ─────────────────────────────────────────────────────────────────
+      // GAP-LOOP-1 FIX: toolCalls check MUST come BEFORE feedBackVerdict check.
+      // ─────────────────────────────────────────────────────────────────
+      // The Strategic Interceptor (orchestrator.ts) can inject mcp.resolve_entities tools
+      // while SIMULTANEOUSLY setting feedBackVerdict=FEED_BACK_TO_ME.
+      //
+      // BUG (previous): Checking verdict first caused a short-circuit to update_memory,
+      // silently dropping the injected tools. The next turn the AI saw the same unresolved
+      // labels, re-fired the intercept, and dropped them again → infinite loop.
+      //
+      // FIX: Always route to execute_tools if toolCalls is non-empty, regardless of verdict.
+      // The verdict governs what happens AFTER tools run, not whether to skip them:
+      //   • tools present (any verdict)    → execute_tools → update_memory / summarizer
+      //   • no tools + FEED_BACK_TO_ME    → update_memory  (planning-only turn, loop back)
+      //   • no tools + SUMMARIZE          → summarizer     (empty / conversational end)
+      // ─────────────────────────────────────────────────────────────────
+      if (state.toolCalls && state.toolCalls.length > 0) {
+          return "execute_tools";
+      }
+
+      // Only reach here when there are NO tools. Now honor the verdict.
+      // FEED_BACK_TO_ME + no tools = planning-only turn; loop back to orchestrator.
       if (state.feedBackVerdict === "FEED_BACK_TO_ME") {
           return "update_memory";
       }
 
-      if (!state.toolCalls || state.toolCalls.length === 0) {
-          return "summarizer";
-      }
-      return "execute_tools";
+      return "summarizer";
   }) as any,
   {
       execute_tools: "execute_tools" as any,

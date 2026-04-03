@@ -186,15 +186,59 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     const allMessages = state.messages || [];
     let rawQuery = existingRawQuery; 
     
-    if (!rawQuery && isNewQuery) {
-        // Genuinely new request — use the latest human message
-        const lastHumanMsg = [...allMessages].reverse().find((m: any) => {
+    if (isNewQuery) {
+        // ─────────────────────────────────────────────────────────────────
+        // BOUNDARY-AWARE TOPIC ANCHORING (GAP-1 & GAP-3 FIX)
+        // ─────────────────────────────────────────────────────────────────
+        // A "Conversation" starts at the first Human message AFTER the last AI Summary ([INSIGHT]).
+        // We MUST NOT look for the "last" human message or the "latest" message in the window,
+        // because those could be HITL answers from the PREVIOUS conversation (e.g., "fleetships").
+        //
+        // GAP-3 FIX: This block is scoped INSIDE the `isNewQuery` branch only.
+        // During HITL continuations (isNewQuery=false), we never need to re-compute the
+        // boundary because the topic is already correctly anchored in existingRawQuery.
+        // Running it unconditionally created dead computation and the risk of overwriting
+        // a valid topic anchor mid-HITL loop.
+        //
+        // Algorithm:
+        //   1. Reverse the message array and find the LAST AI Summary (contains "[INSIGHT]").
+        //   2. Convert the reversed index back to a FORWARD index using: length - 1 - reversedIdx
+        //      GAP-1 FIX: The formula MUST be `length - 1 - reversedIdx`, NOT `length - reversedIdx`.
+        //      Using `length - reversedIdx` (missing the -1) skips one extra message, and if the
+        //      Summary is the last element, .slice() gets an empty array → missionTopic = "" → rawQuery collapses.
+        //   3. The first Human message at or after that index is the Mission's Starting Question.
+        // ─────────────────────────────────────────────────────────────────
+        const lastSummaryIdx = [...allMessages].reverse().findIndex((m: any) => {
+            const type = m._getType?.() || m.role || 'ai';
+            return type === 'ai' && typeof m.content === 'string' && m.content.includes("[INSIGHT]");
+        });
+
+        // GAP-1 FIX: Correct formula — `length - 1 - lastSummaryIdx` (NOT `length - lastSummaryIdx`).
+        // lastSummaryIdx is from a reversed array, so the forward index is: (length - 1) - reversedIdx.
+        // The Summary itself is at scanStartIdx; the mission question is the first Human msg AT OR AFTER it.
+        const scanStartIdx = lastSummaryIdx === -1 ? 0 : (allMessages.length - 1 - lastSummaryIdx);
+        const missionStartMsg = allMessages.slice(scanStartIdx).find((m: any) => {
             const type = m._getType?.() || m.role || 'human';
             return type === 'human';
         });
-        rawQuery = (lastHumanMsg as any)?.content || "";
-        console.log(`\x1b[33m[UpdateMemory2] ⚓ Anchoring rawQuery from last human message: "${rawQuery.substring(0, 80)}"\x1b[0m`);
-    } else if (rawQuery) {
+
+        const missionTopic = (missionStartMsg as any)?.content || "";
+
+        if (existingRawQuery && existingRawQuery !== missionTopic) {
+            console.log(`\x1b[32m[UpdateMemory2] ⚓ NEW CONVERSATION DETECTED — TOPIC PIVOT:\x1b[0m`);
+            console.log(`\x1b[36m  From: "${existingRawQuery.substring(0, 80)}..."\x1b[0m`);
+            console.log(`\x1b[35m  To:   "${missionTopic.substring(0, 80)}..."\x1b[0m`);
+        } else {
+            console.log(`\x1b[33m[UpdateMemory2] ⚓ Anchoring rawQuery from mission boundary: "${missionTopic.substring(0, 80)}"\x1b[0m`);
+        }
+        rawQuery = missionTopic;
+    } else if (existingRawQuery) {
+        // Internal loop or HITL continuation — the topic was already anchored on isNewQuery=true.
+        // We MUST NOT re-run boundary detection here because:
+        //   (a) It is computationally wasteful.
+        //   (b) The HITL reply itself (e.g., "fleetships") would become the new "first human msg"
+        //       after the boundary if we re-scanned, overwriting the genuine mission topic.
+        rawQuery = existingRawQuery;
         console.log(`\x1b[33m[UpdateMemory2] ♻️ Using existing rawQuery anchor: "${rawQuery.substring(0, 80)}"\x1b[0m`);
     } else {
         // Edge case: first HITL continuation turn — memory exists but rawQuery was never set yet.
@@ -335,7 +379,8 @@ Rules:
    - IMPORTANT: If a discovery tool ran (e.g. fleet overview returning vessel IDs), the discovery intent is NOW COMPLETE. Do NOT keep "discover vessels" as a pending intent.
    - IMPORTANT: If entity IDs are now known (from discovery), the retrieval step is the ONLY remaining intent.
 2. activeFilters: Extract all filters that are scoping the current query (e.g. statusCode, startDate, limit, distributionScope like "per vessel"). 
-   - FILTER INHERITANCE: If the user's latest message is a continuation or an entity pivot (e.g., 'and for MV Phoenix', 'now show me XXX2'), you SHOULD preserve relevant filters from the 'Previous activeFilters' list (like statusCode: committed, limit, dates) unless the user explicitly changes them or the context makes them irrelevant.
+   - FILTER INHERITANCE: If the user's latest message is a continuation or an entity pivot (e.g., 'and for MV Phoenix', 'now show me XXX2'), you SHOULD preserve relevant filters from the 'Previous activeFilters' list (like statusCode: committed, limit, dates).
+   - CRITICAL (ANTI-POISONING): If the "Tools executed this turn" block shows a tool ran with specific parameters (e.g. statusCode="completed"), you MUST update activeFilters to match those parameters, even if the "Previous activeFilters" or the "rawQuery" suggest otherwise. The tool result is the ground truth of the current turn's scope.
    - ENTITY PRESERVATION: If the original 'rawQuery' contains a specific label (e.g. 'XXX1', 'DFGRE') that is NOT yet a canonical 24-char hex ID, you MUST preserve it in 'activeFilters' even if the user provides a different piece of info (like an Organization). Do NOT allow a context refinement to delete an unresolved label.
    - If the user specifies a limit or distribution scope, add them here. Do NOT hallucinate filters that are not clearly requested.
 3. lastTurnInsight: One sentence only. Focus on what was resolved or found. If entities were resolved, mention the count. Max 150 chars.`;
