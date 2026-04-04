@@ -22,7 +22,7 @@ export const orchestratorSchema = z.object({
     })).describe("List of MCP tool names and their arguments to execute in parallel."),
     feedBackVerdict: z.enum(['SUMMARIZE', 'FEED_BACK_TO_ME']).describe("Decide whether the results should be fed back for sequential chain investigation or passed straight to the Summarizer."),
     clarifyingQuestion: z.string().describe("Use this to Ask the user a question if mandatory parameters (e.g., Organization ID/Name) are missing and no tools can be called.").nullable(),
-    reformulatedQuery: z.string().describe("Synthesize the entire conversational history (the original request plus any subsequent clarifications or filters) into a single, comprehensive goal statement. This should reflect your complete understanding of the user's final intent and parameters without assuming any missing constraints.").nullable(),
+    reformulatedQuery: z.string().describe("Synthesize the entire conversational history (the original request plus any subsequent clarifications or filters) into a single, comprehensive goal statement. This should reflect your complete understanding of the user's final intent and parameters without assuming any missing constraints."),
     reasoning: z.string().describe("Your internal technical thought process. If you pick FEED_BACK_TO_ME, explain exactly what gap you are trying to fill (e.g., 'Fetched Job IDs, now need to fetch their specific form contents' or 'Direct query failed, trying standard tool fallback')."),
     selectedResultKeys: z.array(z.string()).describe("A list of specific tool result keys (e.g., 'maintenance.query_status_iter2_0') from previous turns that you want to promote to the final answer and UI. If provided, the system will ONLY summarize and show these tools. Use this to skip re-running tools you already have data for."),
     unclassifiedLabels: z.array(z.object({
@@ -141,12 +141,29 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     // ─────────────────────────────────────────────────────────────────
     const history = Array.isArray(state.toolResults) ? state.toolResults : (state.toolResults ? [state.toolResults] : []);
     
-    // LEDGER: Scoped to the last 5 turns for key visibility + token diet.
-    const ledgerTurns = history.slice(-5);
-    
     // REQUEST CYCLE: Only the turns from THIS specific HTTP request (for journal + loop breaker).
-    // These are used separately so the journal stays current-request-scoped.
     const requestCycleTurns = history.slice(state.startTurnIndex || 0);
+
+    // ─────────────────────────────────────────────────────────────────
+    // LEDGER ISOLATION FOR BROAD SCOPE REQUESTS
+    // ─────────────────────────────────────────────────────────────────
+    // NORMAL MODE: Scoped to the last 5 turns (diet to prevent token explosion on deep multi-turn sessions).
+    //
+    // BROAD SCOPE MODE: Scoped to the CURRENT REQUEST only (requestCycleTurns).
+    //
+    // WHY: In broad-scope mode, prior vessel-specific results (e.g., maintenance.query_execution_history
+    // with vesselID from Conv 1) are stale and insufficient for the org-wide request. Showing them to
+    // the LLM causes it to erroneously re-select them ("I already have cancelled jobs data") and call
+    // no new tools, instead of fetching a fresh org-wide result. Restricting the ledger to the current
+    // request turns eliminates this temptation deterministically — the LLM only sees what was fetched
+    // FOR this broad-scope request, and is forced to plan the correct next retrieval step.
+    // ─────────────────────────────────────────────────────────────────
+    const isBroadScopeActive = (state.workingMemory as any)?.queryContext?.isBroadScope === true;
+    const ledgerTurns = isBroadScopeActive ? requestCycleTurns : history.slice(-5);
+
+    if (isBroadScopeActive && requestCycleTurns.length < history.slice(-5).length) {
+        console.log(`\x1b[35m[Orchestrator] 🌐 BROAD SCOPE LEDGER ISOLATION: Restricting tool result context to current-request turns only (${requestCycleTurns.length} turns vs ${history.slice(-5).length} in last-5 window). Prior vessel-specific results hidden.\x1b[0m`);
+    }
 
     let resultsContext = "";
     const toolLines: string[] = [];
@@ -158,7 +175,11 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         
         // 🟢 ID Sniffing: Only perform heavy ID harvesting/preview for the LATEST turn results
         // This keeps the context window lean for the Orchestrator diet.
-        const isLatestTurn = tIdx === history.length - 1;
+        // FIX (Bug A): Use ledgerTurns.length-1, NOT history.length-1.
+        // tIdx is an index into ledgerTurns (which may be a subset of history in broad scope mode).
+        // Using history.length-1 caused isLatestTurn to always be false in broad scope,
+        // meaning ID harvesting never fired on the latest discovery results.
+        const isLatestTurn = tIdx === ledgerTurns.length - 1;
 
         entries.forEach(([key, res]: [string, any]) => {
             let data: any = res;
@@ -400,9 +421,23 @@ ${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matches: ${m.
     const labelLines: string[] = Object.entries(resolvedLabels).map(([label, info]: [string, any]) => 
         `  - ✅ ${info.type} resolved: ${label} (ID: ${info.id})`
     );
-    const labelStr = labelLines.length > 0
+
+    // ─────────────────────────────────────────────────────────────────
+    // FIX — VESSEL GRAVITY SUPPRESSION
+    // When broad scope is active, SUPPRESS the RESOLVED ENTITIES block from the LLM prompt entirely.
+    // Rationale: resolvedLabels (e.g. "XXX1 → 683b...") acts as a magnet — even with the
+    // 🌐 BROAD SCOPE warning present, the LLM gravitates toward the concrete vessel ID it sees
+    // directly above it in the prompt. The data stays in state (so the user can re-scope back
+    // to a vessel at any time), but is hidden from the LLM during org-wide investigations.
+    // ─────────────────────────────────────────────────────────────────
+    const isBroadScopeActiveForPrompt = (query as any)?.isBroadScope === true;
+    const labelStr = (!isBroadScopeActiveForPrompt && labelLines.length > 0)
         ? `\n### 🆔 RESOLVED ENTITIES (Current Conversation)\n${labelLines.join('\n')}`
         : "";
+
+    if (isBroadScopeActiveForPrompt && labelLines.length > 0) {
+        console.log(`\x1b[35m[Orchestrator] 🚫 VESSEL GRAVITY SHIELD: Suppressed ${labelLines.length} resolvedLabel(s) from prompt (broad scope active). IDs stay in state.\x1b[0m`);
+    }
 
     // ─── ORG CONTEXT GUARD (replaces passive scopeLine) ──────────────────────
     // When no org is in memory AND it's not a HITL continuation (user answering
@@ -469,8 +504,33 @@ You MUST check the user's current query:
           `UNLESS the user's latest message explicitly removed a specific filter (e.g., 'ignore the date range').`
         : "";
 
+    // ─────────────────────────────────────────────────────────────────
+    // SYSTEM INTERCEPT INJECTION
+    // Passes previous turn's forced interruption reasoning into the prompt
+    // so the LLM isn't flying blind on the re-run.
+    //
+    // FIX (Bug B): Gate strictly on (currentIter === 1 && prevTurnWasDiscovery).
+    // state.reasoning persists forever in LangGraph state. Without this gate,
+    // a stale [DISCOVERY STALL GUARD] reason from turn 1 of request A would
+    // re-inject into turn 0 of request B (a completely unrelated future query)
+    // because state.reasoning was never cleared. Now it only fires when we are
+    // on the exact turn that follows the intercepted discovery turn.
+    // ─────────────────────────────────────────────────────────────────
+    const prevTurnWasDiscoveryForIntercept = Object.keys((Array.isArray(state.toolResults) ? state.toolResults : [])[( Array.isArray(state.toolResults) ? state.toolResults : []).length - 1] || {}).some(
+        k => k.includes('fleet.query_overview') || k.includes('resolve_entities')
+    );
+    const systemInterceptStr = (
+        (state.iterationCount || 0) > 0 &&
+        prevTurnWasDiscoveryForIntercept &&
+        state.reasoning &&
+        (state.reasoning.includes('[DISCOVERY STALL GUARD]') || state.reasoning.includes('[DETERMINISTIC VESTIBULE]'))
+    )
+        ? `\n🛑 SYSTEM INTERCEPT (Previous Turn): ${state.reasoning}\n`
+        : "";
+
     const memoryContext = [
         `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
+        systemInterceptStr,
         broadScopeStr,
         orgContextBlock,
         longTermStr,
@@ -547,14 +607,20 @@ You MUST check the user's current query:
     ];
 
     if (iterationCount > 0) {
-        // Option C: Passing the Full QnA Sequence
-        const qnaTranscript = state.messages
-            .filter((m: any) => m.content && typeof m.content === 'string')
-            .map((m: any) => {
-                const type = m._getType?.() || m.role || 'human';
-                return `${type.toUpperCase()}: ${m.content}`;
-            })
-            .join('\n\n');
+        // Option C: Passing the Full QnA Sequence cleanly via the unified summary buffer
+        let qnaTranscript = "";
+        const session = state.workingMemory?.sessionContext || {};
+        const summaryBuffer = session.summaryBuffer || [];
+        
+        if (summaryBuffer.length > 0) {
+            qnaTranscript = summaryBuffer.map((s: any) => `HUMAN: ${s.q}\n\nASSISTANT: ${s.a}`).join('\n\n');
+            qnaTranscript += "\n\n";
+        }
+        
+        const currentQuery = state.reformulatedQuery || state.workingMemory?.queryContext?.rawQuery || "";
+        if (currentQuery) {
+            qnaTranscript += `HUMAN: ${currentQuery}`;
+        }
         
         const syntheticBody = `🎯 CURRENT INVESTIGATION CONTEXT
 Review the conversation history below to understand the final unified goal.
@@ -701,6 +767,83 @@ Instruction: Proceed with your investigation based on the complete context provi
     let finalVerdict = response.feedBackVerdict;
     let finalReasoning = response.reasoning;
 
+    // ─────────────────────────────────────────────────────────────────
+    // FIX — DISCOVERY STALL GUARD
+    // ─────────────────────────────────────────────────────────────────
+    // A "discovery turn" runs fleet.query_overview or mcp.resolve_entities to get entity IDs.
+    // Its ONLY purpose is to feed those IDs into the NEXT retrieval tool call.
+    // If the LLM decides to SUMMARIZE after a discovery turn without calling any retrieval tool,
+    // the discovery was completely pointless — the user gets a fleet overview instead of the
+    // actual data they asked for.
+    //
+    // Guard fires EXACTLY ONCE (iter === 1 only) to force the LLM back into the loop.
+    // If LLM still returns no tools on the re-attempt (iter=2+), allow graceful degradation
+    // to prevent infinite loops.
+    // ─────────────────────────────────────────────────────────────────
+    const currentIter = state.iterationCount || 0;
+    const rawToolResults = Array.isArray(state.toolResults) ? state.toolResults : [];
+    const prevTurnKeys = Object.keys(rawToolResults[rawToolResults.length - 1] || {});
+    const prevTurnWasDiscovery = prevTurnKeys.some(k =>
+        k.includes('fleet.query_overview') ||
+        k.includes('resolve_entities')
+    );
+
+    // ─────────────────────────────────────────────────────────────────
+    // FIX: Replace hasPendingIntents with hasRetrievalInCurrentRequest.
+    //
+    // PREVIOUS BUG: hasPendingIntents relied on UpdateMemory2's LLM output.
+    // When fleet.query_overview ran and returned 7 vessels, UpdateMemory2 marked
+    // pendingIntents as [] ("nothing left to do") — neutralizing the stall guard
+    // even though no actual retrieval tool (maintenance history, statuses etc)
+    // had been called yet. UpdateMemory2 is context memory, NOT an enforcement signal.
+    //
+    // NEW APPROACH: Purely code-level. Scan requestCycleTurns (tools run in THIS
+    // HTTP request only) for any key that is NOT a discovery tool. If no retrieval
+    // tool has run yet in this request cycle AND the previous turn was discovery,
+    // the guard should fire.
+    // ─────────────────────────────────────────────────────────────────
+    const DISCOVERY_KEY_PATTERNS = [
+        'fleet.query_overview', 
+        'mcp.resolve_entities', 
+        'fleet.query_structures', 
+        'maintenance.query_schedules',
+        'mcp.health', 
+        'mcp.capabilities'
+    ];
+    const isDiscoveryKey = (k: string) => DISCOVERY_KEY_PATTERNS.some(p => k.includes(p));
+    const requestCycleToolResults = rawToolResults.slice(state.startTurnIndex || 0);
+    const hasRetrievalInCurrentRequest = requestCycleToolResults.some(turn =>
+        Object.keys(turn || {}).some(k => !isDiscoveryKey(k))
+    );
+
+    if (
+        currentIter === 1 &&              // Only fire on the first post-discovery turn
+        prevTurnWasDiscovery &&           // Previous turn was a discovery tool
+        !hasRetrievalInCurrentRequest &&  // No retrieval tool has run yet this request cycle (pure code check)
+        finalToolCalls.length === 0 &&    // LLM wants to stop with no retrieval tool
+        finalVerdict === 'SUMMARIZE'      // LLM wants to summarize discovery output directly
+    ) {
+        console.warn(
+            `\x1b[41m\x1b[97m[Orchestrator] \ud83d\uded1 DISCOVERY STALL GUARD FIRED\x1b[0m\x1b[31m` +
+            ` — Previous turn was discovery (${prevTurnKeys.join(', ')}) but current turn proposes` +
+            ` no retrieval tools.` +
+            ` hasRetrievalInCurrentRequest=${hasRetrievalInCurrentRequest} | iter=${currentIter}` +
+            ` — Overriding verdict to FEED_BACK_TO_ME.\x1b[0m`
+        );
+        finalVerdict = 'FEED_BACK_TO_ME';
+        finalReasoning = `[DISCOVERY STALL GUARD] Prior discovery turn (${prevTurnKeys.join(', ')}) completed ` +
+            `successfully but was immediately followed by a SUMMARIZE with no retrieval tools. ` +
+            `The vessel/entity IDs discovered MUST be used to call a specific retrieval tool ` +
+            `(e.g., maintenance.query_execution_history). Looping back to execute the retrieval step.`;
+    } else if (prevTurnWasDiscovery) {
+        console.log(
+            `\x1b[32m[Orchestrator] \u2705 DISCOVERY STALL CHECK: Guard not triggered.\x1b[0m` +
+            ` iter=${currentIter} | prevWasDiscovery=${prevTurnWasDiscovery}` +
+            ` | hasRetrieval=${hasRetrievalInCurrentRequest}` +
+            ` | toolCalls=${finalToolCalls.length} | verdict=${finalVerdict}`
+        );
+    }
+
     // 🛡️ STRATEGIC FIX: Deterministic Unclassified Label Intercept (Identity Turn Mandate)
     // If the LLM identified unclassified labels, we must OVERRIDE any retrieval tools
     // and force a resolution pass. This prevents "hijacking" retrieval parameters.
@@ -826,6 +969,10 @@ Instruction: Proceed with your investigation based on the complete context provi
         toolCalls: finalToolCalls,
         feedBackVerdict: finalVerdict,
         reasoning: finalReasoning,
+        // 🟢 Persist the LLM's reformulated query so the Summarizer can use it
+        // as the clean 'q:' field in the summaryBuffer instead of the raw, fragmented rawQuery.
+        // Only update when the LLM provides a non-empty value; otherwise keep prior value.
+        ...(response.reformulatedQuery ? { reformulatedQuery: response.reformulatedQuery } : {}),
         iterationCount: nextIterationCount,
         // 🟢 CRITICAL: Must be explicit `false`, NOT `undefined`.
         // The graph reducer is: (x, y) => y !== undefined ? y : x

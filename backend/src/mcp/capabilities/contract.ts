@@ -445,10 +445,13 @@ const baseCapabilitiesContract = [
     path: "/api/mcp/fleet/overview",
     requiredQuery: ["organizationID"],
     optionalQuery: ["startDate", "endDate", "limit"],
-    purpose: "Returns fleet vessels with high-level maintenance KPIs, overdue counts, and stats.",
-    whenToUse: "For executive dashboarding or finding the best/worst performing vessels fleet-wide.",
-    typicalQuestions: ["Which vessels consistently exceed fleet averages for PMS compliance?", "Give me a fleet summary."],
-    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
+    // 🧭 DISCOVERY TOOL: Primary role is entity resolution (vessel IDs), not final data delivery.
+    purpose: "DISCOVERY TOOL — Returns the list of fleet vessels and their high-level maintenance KPIs (overdue counts, completion stats). Primary role in org-wide investigations is to resolve all active vessel IDs so they can be passed to per-vessel retrieval tools. Secondary role is executive dashboarding.",
+    whenToUse: "1. As the mandatory first step in any org-wide or fleet-wide investigation (e.g. 'show me cancelled jobs for the whole fleet') — extract the vessel IDs from the result and pass them to maintenance.query_execution_history or maintenance.query_status in the following turn. 2. When the user explicitly asks for a high-level fleet overview or KPI dashboard.",
+    whenNotToUse: "DO NOT treat the KPI counts (overdue counts, completion stats) returned by this tool as the detailed data the user asked for. These are summary indicators only — they do NOT contain job details, performer information, or execution records. After running this tool in an org-wide investigation, you MUST call a retrieval tool (e.g. maintenance.query_execution_history) using the vessel IDs from this result.",
+    typicalQuestions: ["Which vessels consistently exceed fleet averages for PMS compliance?", "Give me a fleet summary.", "Show me org-wide cancelled jobs across all vessels.", "Which vessel has the most overdue jobs?"],
+    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
+    interpretationGuidance: "items[n]._id is the canonical vesselID for that vessel. In an org-wide investigation, ALWAYS extract these IDs and pass them to per-vessel tools such as maintenance.query_execution_history (with vesselID parameter) to retrieve actual job-level data. KPI counts (overdue, upcoming, completedInRange) are navigational signals — not job execution records."
   },
   {
     name: "fleet.query_machinery_status",

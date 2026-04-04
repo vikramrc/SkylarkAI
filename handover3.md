@@ -68,3 +68,232 @@ With these fixes, the Broad Scope Override logic is airtight:
 
 ### Key Takeaway
 The "shitty string detection" was successfully replaced with high-fidelity state checks (`iter`, `isHITLContinuation`) and a deterministic message-type lookup. The system is now significantly more stable for multi-turnorg-wide investigations.
+
+---
+
+## 🛠️ 82. Bug Fix: Summarizer Silently Ignored Re-Surface Requests (No-New-Tools Turn)
+
+### The Symptom
+User asked: *"show for MV Phoenix Demo now"*
+The Orchestrator correctly identified that MV Phoenix Demo's data (`maintenance.query_execution_history_iter1`, 10 rows) was already fetched in a prior turn. It returned `tools: []` and `selectedResultKeys: ["maintenance.query_execution_history_iter1"]`. However, the summarizer responded with **"No Current Result Set for MV Phoenix Demo"**.
+
+### Root Cause: `if (toolEntries.length > 0)` Gate Blocked the History Lookup
+
+The logic in `summarizer.ts` was:
+1. `currentTurns = history.slice(startTurnIndex=6)` → new request had no tool calls → `currentTurns = []`
+2. `toolEntries = []` (from iterating `currentTurns`)
+3. **`if (toolEntries.length > 0)` on line 61 → `false`** → the ENTIRE conductor + history lookup block was skipped.
+4. `allItems` stayed empty, `noToolsCalled = true` → System prompt changed to "Dataset is EMPTY" → Summarizer output "No Current Result Set".
+
+The `CONDUCTOR HISTORY LOOKUP` (which walks all history to find prior results) was inside this guarded block and was unreachable for zero-tool turns.
+
+### The Fix (3 changes to `summarizer.ts`)
+
+**1. Pre-check re-surface path BEFORE the `toolEntries` guard:**
+When `toolEntries.length === 0` AND `selectedResultKeys` is non-empty, the summarizer now walks all history to find the named prior results and injects them into `allItems` immediately.
+
+**2. Guard the empty-dataset system prompt:**
+Added a `hasReSurfacedData` flag. If the re-surface path found data, we do NOT override the system prompt with the "Dataset is EMPTY" version, even if `noToolsCalled` is true.
+
+**3. Guard the message injection:**
+In re-surface mode, the summarizer now receives the full message history (not just the last message) so the LLM has context about what it's re-summarizing.
+
+### Expected Log After Fix
+```
+[LangGraph Summarizer] 🗂️ RE-SURFACE MODE: No new tools this turn. Running history lookup.
+[LangGraph Summarizer] 🗂️ Re-Surface: Found 1 valid prior result(s). Injecting into summarizer dataset.
+[LangGraph Summarizer] 📐 Re-Surface: Flattened 10 rows from 1 prior tool result(s).
+```
+
+### File Modified
+- `backend/src/langgraph/nodes/summarizer.ts`
+
+---
+
+## 🛠️ 83. Bug Fix: Orchestrator Ledger Pollution in Broad-Scope Requests
+
+### The Symptom
+User asked: *"okay show me org wide but restrict it to 2024 and 2025 only"* (following a vessel-specific XXX1 investigation).
+The Orchestrator correctly ran `fleet.query_overview` on turn 1 of the request (iter=0), but on turn 2 (iter=1) it returned `tools: []` and `selectedResultKeys: ["fleet.query_overview_iter1", "maintenance.query_execution_history_iter2"]`.
+
+The vessel-specific `maintenance.query_execution_history_iter2` (7 cancelled jobs for XXX1 from the **prior** conversation) was re-selected as if it satisfied the org-wide request. No fresh org-wide retrieval was called.
+
+### Root Cause: `ledgerTurns = history.slice(-5)` Crossed Conversation Boundaries
+
+The context builder for `PREVIOUS TOOL RESULTS IN THIS REQUEST` used `history.slice(-5)` — the last 5 turns across the entire thread history. Since the new org-wide request started at `startTurnIndex=2`, turns 0 and 1 (from the previous vessel-specific conversation) were still in the ledger window. 
+
+The LLM saw `maintenance.query_execution_history_iter2` (vessel-scoped), recognized it was "cancelled jobs data", and decided it was sufficient to satisfy the request — effectively ignoring the scope change.
+
+### The Fix: Broad-Scope Ledger Isolation in `orchestrator.ts`
+
+In broad-scope mode (`queryContext.isBroadScope === true`), the `ledgerTurns` passed to the context builder is now restricted to `requestCycleTurns` (i.e., `history.slice(startTurnIndex)`) instead of the default `history.slice(-5)`. 
+
+This ensures the LLM **physically cannot see** tool results fetched for prior conversations. It only sees results fetched for the current request, forcing it to correctly plan the next required retrieval step for the broad scope.
+
+```typescript
+// Normal Mode: Last 5 turns for visibility + token diet.
+// Broad Scope Mode: Current request only (startTurnIndex onwards).
+const ledgerTurns = isBroadScopeActive ? requestCycleTurns : history.slice(-5);
+```
+
+### Expected Behavior After Fix
+On turn 2 of a broad-scope request, the Orchestrator's `PREVIOUS TOOL RESULTS` will ONLY show the results of the current request (e.g., discovery). Without the stale vessel-specific result as a temptation, the LLM will call the correct org-wide retrieval tool with the confirmed date filters.
+
+### File Modified
+- `backend/src/langgraph/nodes/orchestrator.ts`
+
+---
+
+## 🛠️ 84. Bug Fix: Summarizer Partial History Drop (Mixed New/Old Data)
+
+### The Symptom
+If the Orchestrator ran a new tool (e.g., `fleet.query_overview`) but *also* requested to re-use an old historical tool in the same turn (e.g., pulling `cancelled_jobs` from memory to compare), the Summarizer would completely ignore the historical data request and only output the new tool's data. 
+
+### Root Cause: `if (finalEntries.length === 0)` Gate
+In `summarizer.ts`, the logic for digging into conversational history was gated behind `if (finalEntries.length === 0)` (meaning "only look at history if there are absolutely zero matching NEW tools"). 
+
+If the Orchestrator successfully matched even 1 new tool, `finalEntries` was not empty. The history lookup was bypassed entirely, and any historical keys the Orchestrator asked for were silently dropped.
+
+### The Fix: Missing Keys Detection
+Changed the logic to actively check for **missing keys**.
+Instead of checking if we have *zero* tools, the Summarizer now checks: "Did the Orchestrator ask for any keys that aren't in my pile of new tools?"
+
+```typescript
+const missingKeys = state.selectedResultKeys.filter(k => !finalEntries.some(e => e.key === k));
+
+if (missingKeys.length > 0) {
+    // Dig into history to find these missing keys and merge them in!
+}
+```
+
+Now, the Summarizer flawlessly merges newly executed tools and historically fetched data into a single, unified view for the LLM to analyze.
+
+### File Modified
+- `backend/src/langgraph/nodes/summarizer.ts`
+
+---
+
+## 🛠️ 85. Hardening: Vessel Gravity Suppression & Discovery Stall Guard
+
+### Overview
+This update addresses two critical failure modes in broad-scope (org-wide) investigations where the Orchestrator would either "snap back" to a previously discussed vessel or "stall" after discovering the fleet list without fetching actual data.
+
+### Fix 1: Vessel Gravity Suppression (Vessel ID Shield)
+**The Problem:**
+Even when `isBroadScope=true` was active and entity filters were cleared from `activeFilters`, the `### 🆔 RESOLVED ENTITIES` block in the Orchestrator prompt still displayed previously resolved vessel IDs (e.g., `XXX1 → 683b...`). This acted as a "magnet" for the LLM, often causing it to ignore the broad-scope warning and anchor its next tool call to that specific vessel ID.
+
+**The Fix:**
+In `orchestrator.ts`, the prompt builder now **completely suppresses** the `RESOLVED ENTITIES` block when `isBroadScope` is active.
+- The IDs remain in the session state (so the user can pivot back to a vessel at any time).
+- The LLM simply **does not see them** during org-wide turns, removing the temptation to use them.
+
+### Fix 2: Discovery Stall Guard (Mandatory Retrieval Pivot)
+**The Problem:**
+Following the "Discovery-First" mandate (Rule 9), the Orchestrator would run `fleet.query_overview` to identify vessels. However, on the very next iteration (`iter=1`), the LLM would occasionally "stall"—reasoning that it had already provided an "org-wide overview" and thus didn't need to call any more tools. It would summarize the discovery result instead of fetching the detailed data the user actually asked for (e.g., cancelled failure jobs).
+
+**The Fix:**
+Implemented a deterministic **Discovery Stall Guard** in `orchestrator.ts`:
+- **Trigger:** If `iterationCount === 1` AND the previous turn was a discovery tool (`fleet.query_overview` or `resolve_entities`) AND the current turn proposes `tools: []` + `SUMMARIZE`.
+- **Action:** Overrides the verdict to `FEED_BACK_TO_ME`, forcing the graph to loop back for another planning turn.
+- **Limit:** Fires exactly once. If the LLM still fails to plan a retrieval on the subsequent turn, it is allowed to summarize to prevent infinite loops.
+
+### Key Takeaway
+Both fixes are **code-level enforcement** that override or hide information from the LLM based on the investigation state. This ensures that the "Discovery-First" protocol is not just a suggestion, but a mandatory two-step sequence (Discovery → Retrieval).
+
+### File Modified
+- `backend/src/langgraph/nodes/orchestrator.ts`
+
+---
+
+## 🛠️ 86. Precision Fixes: System Intercept, Ledger ID Sniffing & Broad-Scope Exit
+
+### Overview
+This final set of hardening fixes ensures that the deterministic guards (Stall Guard & Identity Intercept) are fully visible to the LLM and that the system correctly transitions back to scoped mode after an org-wide investigation.
+
+### Fix 1: System Intercept Injection (Feedback Loop Visibility)
+**The Problem:**
+When the Discovery Stall Guard or Deterministic Vestibule (Identity Intercept) fired, they would force a "loop-back" (`FEED_BACK_TO_ME`). However, on the next turn, the LLM had no visibility into *why* it was intercepted. It would wake up with the same prompt and potentially fall into the same "lazy" pattern again.
+
+**The Fix:**
+In `orchestrator.ts`, the `🛑 SYSTEM INTERCEPT` string is now injected into the prompt whenever `iterationCount > 0` and the previous turn was a discovery turn.
+- It displays the exact `state.reasoning` from the previous turn (e.g., "[DISCOVERY STALL GUARD] ... Looping back to execute the retrieval step.").
+- The `> 0` gate ensures the message sticks throughout the intercepted loop but is cleanly hidden on the very first turn of any *new* query, preventing stale reasoning from leaking across investigations.
+
+### Fix 2: Ledger ID Sniffing — Wide-Scope Correction
+**The Problem:**
+When Ledger Isolation was active (broad-scope mode), the index check `tIdx === history.length - 1` for identifying the "latest turn" was mathematically impossible (since `tIdx` is indexed against the isolated subset, not the full history). Consequently, "Extracted Keys" were never displayed for the latest discovery results during org-wide queries.
+
+**The Fix:**
+Corrected the index to `tIdx === ledgerTurns.length - 1`. ID harvesting now correctly fires on the latest turn regardless of whether the ledger is in isolated (broad-scope) or diet (5-turn) mode.
+
+### Fix 3: Deterministic Broad-Scope Exit
+**The Problem:**
+The `isBroadScope` flag was persistent—once a user triggered an org-wide search, the system stayed in "Vessel ID Shield" mode forever. Subsequent searches for specific vessels would fail because the vessel IDs were permanently suppressed from the prompt.
+
+**The Fix:**
+In `update_memory2.ts`, implemented a clear exit condition:
+- If a `isNewQuery` starts AND it is not explicitly a broad-scope request, `isBroadScope` is reset to `false`.
+- This allows the user to naturally "re-scope" to a specific vessel (e.g., "now show me XXX1 specifically") after completing an org-wide audit.
+
+### Files Modified
+- `backend/src/langgraph/nodes/orchestrator.ts` — `systemInterceptStr` visibility, `isLatestTurn` index fix.
+- `backend/src/langgraph/nodes/update_memory2.ts` — `isBroadScope` exit logic.
+
+---
+
+---
+
+---
+
+## 🛠️ 88. Hardening the Discovery-First Protocol (April 4th)
+**Target:** Elimination of "Stall" conditions and context memory pollution.
+
+### 1. Discovery Stall Guard 2.0 (Orchestrator)
+**The Fix:** Replaced the unreliable LLM-based `hasPendingIntents` signal with a deterministic code-level check: `hasRetrievalInCurrentRequest`. 
+- **The "Running Hours" Correction:** Initial versions used a broad `fleet.query_` wildcard which accidentally flagged retrieval tools (like `running-hours`) as discovery tools. This has been corrected to a strict inclusion list: `fleet.query_overview`, `mcp.resolve_entities`, `fleet.query_structures`, `maintenance.query_schedules`, `mcp.health`, `mcp.capabilities`.
+- **Result:** The system is now physically incapable of terminating a turn if ONLY discovery tools ran in the current request cycle.
+
+### 2. Context Memory Cleanup (Summarizer & State)
+**The Problem:** Storing the `rawQuery` (fragmented across turns) in the `summaryBuffer` was polluting the LLM's long-term context with noisy and misleading instructions.
+**The Fix:** 
+- Added `reformulatedQuery` to `SkylarkState`. 
+- Orchestrator now persists the clean, distilled intent to the state on every turn.
+- Summarizer uses this clean intent for the `q:` field in the `summaryBuffer` roll-up.
+- **Log Visibility:** Added cyan color logs `\x1b[36m` to the Summarizer to confirm when `reformulatedQuery` is successfully utilized.
+
+### 3. Broad-Scope Logic Hardening
+- **System Intercept Gating:** The `🛑 SYSTEM INTERCEPT` reasoning is now gated to `iterationCount > 0`. This ensures it stickies during active re-run loops (Stall Guard/Identity Intercept) but is cleanly suppressed on brand-new queries to avoid stale reasoning pollution.
+- **Ledger Index Fix:** Corrected `isLatestTurn` logic to use `ledgerTurns.length - 1`. This ensures ID sniffing (Harvesting) works correctly even when ledger isolation is active in Broad Scope mode.
+- **Deterministic Exit:** Implemented an explicit reset in `update_memory2.ts` so that starting a new non-broad-scope query correctly clears the `isBroadScope` flag, allowing the user to return to vessel-specific investigations.
+
+### 4. Contract Parity (`SkylarkAI` & `PhoenixCloudBE`)
+- **Fleet Discovery:** Updated `fleet.query_overview` in both repositories to explicitly declare it a **DISCOVERY TOOL**. 
+- **Guidance Enforcement:** Added `whenNotToUse` and `interpretationGuidance` to warn the LLM that KPI counts are Navigational Signals only, and that it **MUST** extract vessel IDs and call retrieval tools (history/status) to fulfill detailed user requests.
+
+**Files Modified:**
+- `SkylarkAI`: `orchestrator.ts`, `summarizer.ts`, `state.ts`, `update_memory2.ts`, `contract.ts`.
+- `PhoenixCloudBE`: `mcp.capabilities.contract.js`.
+
+**Status:** Hardened. TSC Check: **Zero Errors**.
+
+---
+
+## 🛠️ 91. Intent-First Enforcement & Logic Hardening (April 4th)
+**Target:** Eliminate raw/noisy user queries from the loop and harden the query-to-result tracking.
+
+**Issues Addressed:**
+1. **Orchestrator Context Leak:** The Orchestrator was appending a list of raw human message objects to its prompt, causing the LLM to get distracted by fragmented chat logs instead of focused on the distilled intent.
+2. **Context Stagnation:** `UpdateMemory2` (Phase 2) was repeatedly anchoring its `queryContext.rawQuery` to the last human message, effectively ignore the clean reformulation logic.
+3. **Implicit Nullability:** `reformulatedQuery` was optional in the schema, allowing the LLM to occasionally skip the synthesis step.
+4. **Noisy Insights:** `lastTurnInsight` lacked a strict structure, sometimes losing focus on what the user actually asked.
+
+**Comprehensive Fixes:**
+- **Strict Intent Mandate (Orchestrator):** Removed `.nullable()` from the `reformulatedQuery` Zod schema. The LLM is now physically forced to generate a synthesized intent on every turn or the tool call fails validation.
+- **Graph Persistence (CRITICAL):** Registered `reformulatedQuery` as a state channel in `graph.ts`. Without this, LangGraph was correctly producing the value but silently dropping it before it could reach other nodes.
+- **Prompt Unification:** Rewrote the `qnaTranscript` construction in `orchestrator.ts`. It now strictly uses the `summaryBuffer` (past Q&A) + the `reformulatedQuery` (current intent). Raw message objects are now hidden from the LLM after Turn 0.
+- **UpdateMemory2 Handoff:** Modified `update_memory2.ts` to prioritize `state.reformulatedQuery` as its primary `rawQuery` anchor. It now logs: `🎯 Adopted Orchestrator's Reformulated intent`.
+- **Insight Hardening:** Updated Phase 2 system rules to enforce `lastTurnInsight` as **EXACTLY ONE sentence** that MUST combine the user's request with the actual data retrieved.
+
+**Impact:** Every component in the LangGraph loop now speaks a unified, distilled technical language. We have physically eliminated the "raw chat leak" that was causing scope drift and noisy context.
+
+**Status:** Hardened. Persistence Verified.

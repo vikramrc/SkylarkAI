@@ -156,6 +156,11 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // We explicitly DO NOT check `!existingRawQuery`, otherwise follow-up questions
     // would permanently lock onto the very first query's topic.
     //
+    // ─────────────────────────────────────────────────────────────────
+    // Debug Insight: What state context is reaching Phase 2?
+    // ─────────────────────────────────────────────────────────────────
+    console.log(`\x1b[36m[UpdateMemory2] 📊 State snapshot: startTurnIndex=${state.startTurnIndex || 0} | iter=${iter} | isHITL=${state.isHITLContinuation} | reformulatedQuery=${state.reformulatedQuery ? 'YES' : 'NO'}\x1b[0m`);
+
     const existingRawQuery = existingMemory.queryContext?.rawQuery || "";
     const isNewQuery = (iter <= 1) && !state.isHITLContinuation;
 
@@ -184,49 +189,53 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // to declare "metric is unknown" → stall → discovery loop.
     // ─────────────────────────────────────────────────────────────────
     const allMessages = state.messages || [];
-    let rawQuery = existingRawQuery;
+    let rawQuery = state.reformulatedQuery || "";
 
-    if (isNewQuery) {
-        // ─────────────────────────────────────────────────────────────────
-        // CLEAN rawQuery ANCHORING
-        // ─────────────────────────────────────────────────────────────────
-        // At isNewQuery=true (iter ≤ 1 AND not HITL continuation), we are always on the FIRST
-        // tool turn of a brand-new user request. The last HumanMessage in state.messages IS the
-        // new query — no ambiguity, no string scanning needed.
-        //
-        // Why not the INSIGHT scan that was here before?
-        //   - INSIGHT scanning was fragile: looked for literal "[INSIGHT]" but real summaries
-        //     use "[INSIGHT title=...]", so the match was always -1 → wrong boundary.
-        //   - It solved a problem that doesn't exist: "what if the last HumanMessage is a HITL
-        //     answer from the previous conversation?" That can't happen here because if it were
-        //     a HITL continuation, isHITLContinuation=true and isNewQuery would be false.
-        // ─────────────────────────────────────────────────────────────────
-        const lastHumanMsg = [...allMessages].reverse().find((m: any) => {
-            const type = m._getType?.() || m.role;
-            return type === 'human';
-        });
-        const missionTopic = (lastHumanMsg as any)?.content || existingRawQuery || "";
+    if (!rawQuery) {
+        if (isNewQuery) {
+            // ─────────────────────────────────────────────────────────────────
+            // CLEAN rawQuery ANCHORING
+            // ─────────────────────────────────────────────────────────────────
+            // At isNewQuery=true (iter ≤ 1 AND not HITL continuation), we are always on the FIRST
+            // tool turn of a brand-new user request. The last HumanMessage in state.messages IS the
+            // new query — no ambiguity, no string scanning needed.
+            //
+            // Why not the INSIGHT scan that was here before?
+            //   - INSIGHT scanning was fragile: looked for literal "[INSIGHT]" but real summaries
+            //     use "[INSIGHT title=...]", so the match was always -1 → wrong boundary.
+            //   - It solved a problem that doesn't exist: "what if the last HumanMessage is a HITL
+            //     answer from the previous conversation?" That can't happen here because if it were
+            //     a HITL continuation, isHITLContinuation=true and isNewQuery would be false.
+            // ─────────────────────────────────────────────────────────────────
+            const lastHumanMsg = [...allMessages].reverse().find((m: any) => {
+                const type = m._getType?.() || m.role;
+                return type === 'human';
+            });
+            const missionTopic = (lastHumanMsg as any)?.content || existingRawQuery || "";
 
-        if (existingRawQuery && existingRawQuery !== missionTopic) {
-            console.log(`\x1b[32m[UpdateMemory2] ⚓ NEW CONVERSATION DETECTED — TOPIC PIVOT:\x1b[0m`);
-            console.log(`\x1b[36m  From: "${existingRawQuery.substring(0, 80)}"\x1b[0m`);
-            console.log(`\x1b[32m  To:   "${missionTopic.substring(0, 80)}"\x1b[0m`);
+            if (existingRawQuery && existingRawQuery !== missionTopic) {
+                console.log(`\x1b[32m[UpdateMemory2] ⚓ NEW CONVERSATION DETECTED — TOPIC PIVOT:\x1b[0m`);
+                console.log(`\x1b[36m  From: "${existingRawQuery.substring(0, 80)}"\x1b[0m`);
+                console.log(`\x1b[32m  To:   "${missionTopic.substring(0, 80)}"\x1b[0m`);
+            } else {
+                console.log(`\x1b[33m[UpdateMemory2] ⚓ rawQuery anchored to last human message: "${missionTopic.substring(0, 80)}"\x1b[0m`);
+            }
+            rawQuery = missionTopic;
+        } else if (existingRawQuery) {
+            // Internal loop or HITL continuation — the topic was already anchored on isNewQuery=true.
+            rawQuery = existingRawQuery;
+            console.log(`\x1b[33m[UpdateMemory2] ♻️ Using existing rawQuery anchor: "${rawQuery.substring(0, 80)}"\x1b[0m`);
         } else {
-            console.log(`\x1b[33m[UpdateMemory2] ⚓ rawQuery anchored to last human message: "${missionTopic.substring(0, 80)}"\x1b[0m`);
+            // Edge case: very first turn of a thread, no prior rawQuery.
+            const lastHumanMsg = [...allMessages].reverse().find((m: any) => {
+                const type = m._getType?.() || m.role;
+                return type === 'human';
+            });
+            rawQuery = (lastHumanMsg as any)?.content || "";
+            console.log(`\x1b[33m[UpdateMemory2] 🔄 Edge case (no prior rawQuery) — using last human message: "${rawQuery.substring(0, 80)}"\x1b[0m`);
         }
-        rawQuery = missionTopic;
-    } else if (existingRawQuery) {
-        // Internal loop or HITL continuation — the topic was already anchored on isNewQuery=true.
-        rawQuery = existingRawQuery;
-        console.log(`\x1b[33m[UpdateMemory2] ♻️ Using existing rawQuery anchor: "${rawQuery.substring(0, 80)}"\x1b[0m`);
     } else {
-        // Edge case: very first turn of a thread, no prior rawQuery.
-        const lastHumanMsg = [...allMessages].reverse().find((m: any) => {
-            const type = m._getType?.() || m.role;
-            return type === 'human';
-        });
-        rawQuery = (lastHumanMsg as any)?.content || "";
-        console.log(`\x1b[33m[UpdateMemory2] 🔄 Edge case (no prior rawQuery) — using last human message: "${rawQuery.substring(0, 80)}"\x1b[0m`);
+        console.log(`\x1b[36m[UpdateMemory2] 🎯 Adopted Orchestrator's Reformulated intent: "${rawQuery.substring(0, 80)}"\x1b[0m`);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -309,8 +318,25 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
         console.log(`\x1b[35m[UpdateMemory2] 🌐 Broad Scope TRIGGERED — cleared entity-scope filters (vesselID, machineryID, searchTerm, etc.) from session scope. Attribute filters (status, date, limit) handled by Phase 2.\x1b[0m`);
     }
 
-    // Persist the mode so Orchestrator remembers it's doing a broad scope search across iterations
-    const isBroadScopeActive = isBroadScopeTriggered || (existingMemory.queryContext as any)?.isBroadScope === true;
+    // Persist the mode so Orchestrator remembers it's doing a broad scope search across iterations.
+    //
+    // FIX (Bug C): isBroadScope must EXIT when a new query starts that is NOT a broad-scope request.
+    // Previously it was: triggered || existingBroadScope — meaning once true, always true.
+    // A user going "show org wide" followed by "show me XXX1 specifically" would forever stay in
+    // broad scope mode: the Vessel Gravity Shield would hide their vessel ID, ledger isolation would
+    // hide their prior vessel results, and the broad scope prompt would keep firing incorrectly.
+    //
+    // Correct logic:
+    //   - If triggered this turn: ACTIVE (user just asked for broad scope)
+    //   - If previous turn was already broad scope AND this is a continuation (not a new query): ACTIVE
+    //   - If isNewQuery=true AND NOT triggered this turn: RESET (user started a fresh, scoped query)
+    const previouslyBroadScope = (existingMemory.queryContext as any)?.isBroadScope === true;
+    const isBroadScopeActive = isBroadScopeTriggered
+        ? true
+        : isNewQuery
+            ? false   // New query without explicit broad scope request = exit broad scope
+            : previouslyBroadScope; // Continuation turn: carry forward existing mode
+
 
     // Harvest deterministicScope AFTER any old entity-scope keys were cleared
     const deterministicScope = new Set<string>();
@@ -379,7 +405,7 @@ Rules:
    - CRITICAL (ANTI-POISONING): If the "Tools executed this turn" block shows a tool ran with specific parameters (e.g. statusCode="completed"), you MUST update activeFilters to match those parameters, even if the "Previous activeFilters" or the "rawQuery" suggest otherwise. The tool result is the ground truth of the current turn's scope.
    - ENTITY PRESERVATION: If the original 'rawQuery' contains a specific label (e.g. 'XXX1', 'DFGRE') that is NOT yet a canonical 24-char hex ID, you MUST preserve it in 'activeFilters' even if the user provides a different piece of info (like an Organization). Do NOT allow a context refinement to delete an unresolved label.
    - If the user specifies a limit or distribution scope, add them here. Do NOT hallucinate filters that are not clearly requested.
-3. lastTurnInsight: One sentence only. Focus on what was resolved or found. If entities were resolved, mention the count. Max 150 chars.`;
+3. lastTurnInsight: You MUST summarize in EXACTLY ONE sentence ONLY. Your sentence MUST explicitly state BOTH what the user asked for (based on the rawQuery) AND what data was actually retrieved or resolved altogether this turn. Max 300 chars.`;
 
     const userContent = `rawQuery: "${rawQuery}"
 

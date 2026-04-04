@@ -55,6 +55,10 @@ export interface SkylarkState {
   toolResults: Record<string, any>[];
   feedBackVerdict: 'SUMMARIZE' | 'FEED_BACK_TO_ME';
   reasoning?: string;
+  // 🟢 LLM-distilled intent of the current conversation, set by Orchestrator on each turn.
+  // Used by Summarizer to write a clean, de-noised 'q:' field into the summaryBuffer
+  // instead of the raw fragmented rawQuery (e.g., "fleetships, show for XXX1 only").
+  reformulatedQuery?: string;
 
   // 5. Safety Loop Safeguard
   iterationCount: number;
