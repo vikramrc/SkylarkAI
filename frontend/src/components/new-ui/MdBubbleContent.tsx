@@ -51,25 +51,32 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
     URL.revokeObjectURL(url);
   };
 
-  // 🟢 Segment-based Rendering: Split by INSIGHT or TABLE tags (supporting both closed and unclosed tags)
-  const segments = content.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|$)|\[TABLE[\s\S]*?(?:\[\/TABLE\]|$))/g).filter(Boolean);
+  // 🟢 Robust Segment Splitting: Stop matching a block if we hit another tag OR end-of-turn
+  // This prevents unclosed tags from swallowing the entire rest of the message.
+  const segments = content.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|(?=\[INSIGHT)|(?=\[TABLE)|$)|\[TABLE[\s\S]*?(?:\[\/TABLE\]|(?=\[INSIGHT)|(?=\[TABLE)|$))/g).filter(Boolean);
 
   return (
-    <div className="space-y-4 text-base text-gray-800 leading-relaxed">
+    <div className="space-y-4 text-base text-gray-800 leading-relaxed overflow-hidden">
       {segments.map((segment, sIdx) => {
         // 🟢 TABLE block: [TABLE caption="..."] ... pipe table ... [/TABLE]
+        // Resilience: Fallback to empty caption and end-of-string if unclosed.
         const tableMatch = segment.match(/\[TABLE(?:\s+caption="([^"]*)")?\]([\s\S]*?)(?:\[\/TABLE\]|$)/);
         if (tableMatch) {
-          const [, caption, innerContent] = tableMatch;
+          const [, caption = "", innerContent] = tableMatch;
           const lines = innerContent.trim().split('\n');
           const tableLines = lines.filter(l => l.includes('|'));
-          if (tableLines.length >= 2) {
-            const headerLine = tableLines[0]!;
+          if (tableLines.length >= 1) {
+            const headerLine = tableLines[0] || "";
             const headers = headerLine.split('|').map(h => h.trim()).filter(Boolean);
-            const dataLines = tableLines.slice(1).filter(l => !l.includes('---'));
+            if (headers.length === 0) return <p key={`table-fail-${sIdx}`} className="whitespace-pre-wrap">{innerContent}</p>;
+
+            const dataLines = tableLines.slice(1).filter(l => !l.includes('---')); 
             const rows = dataLines.map(line =>
               line.split('|').map(c => c.trim()).filter(Boolean)
-            );
+            ).filter(r => r.length > 0);
+            
+            // ... (rest of table logic remains the same but with safer indexing)
+
             const chartData: ChartData[] = [];
             rows.forEach(row => {
               if (row.length >= 2) {
@@ -131,11 +138,11 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
           }
         }
 
-        // Match both closed and unclosed INSIGHT tags
-        const insightMatch = segment.match(/\[INSIGHT\s+title="([^"]*)"\s+icon="([^"]*)"\s+color="([^"]*)"\]([\s\S]*?)(?:\[\/INSIGHT\]|$)/);
+        // Match [INSIGHT] tags with extreme resilience to missing attributes or unclosed ends.
+        const insightMatch = segment.match(/\[INSIGHT(?:\s+title="([^"]*)")?(?:\s+icon="([^"]*)")?(?:\s+color="([^"]*)")?\]([\s\S]*?)(?:\[\/INSIGHT\]|$)/);
         
         if (insightMatch) {
-          const [, title, icon, color, innerText] = insightMatch;
+          const [, title = "Analytical Insight", icon = "lightbulb", color = "blue", innerText] = insightMatch;
           return (
             <AnalyticalSummary key={`insight-${sIdx}`} title={title} icon={icon} color={color}>
               <MdBubbleContent content={innerText.trim()} />
