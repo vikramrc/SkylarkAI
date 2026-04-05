@@ -1068,6 +1068,38 @@ Instruction: Proceed with your investigation based on the complete context provi
         updates.workingMemory.queryContext.currentScope = []; // Reset transient query scope
     }
 
+    // 🔑 RE-SURFACE ENTITY FILTER CLEANUP (Option A — Singular vesselID, overwrite on pivot)
+    //
+    // PROBLEM: On no-tool SUMMARIZE turns (re-surface mode), the graph routes:
+    //   orchestrator → summarizer   (update_memory is SKIPPED entirely)
+    // This means update_memory2's isNewQuery reset of activeFilters never fires.
+    // Stale entity-identity filters (vesselID, label) survive the checkpoint and poison
+    // the NEXT turn's "Active Filters" grounding block in the Orchestrator prompt, causing
+    // the LLM to re-scope to the OLD entity even after the user pivoted to a new one.
+    //
+    // Example: user goes XXX1 → "show MV Phoenix Demo" (re-surface) → "none in 2025?"
+    // Without this fix: Turn 3 sees Active Filters: { vesselID: XXX1 } → answers about XXX1.
+    // With this fix: vesselID/label are cleared here → update_memory2 re-derives them from
+    // fresh tool results on the next real tool turn → correct entity is active.
+    //
+    // SCOPE: Only entity-identity filters are cleared. Attribute filters (statusCode,
+    // startDate, limit, organization) are intentionally preserved across entity pivots.
+    if (finalToolCalls.length === 0 && updates.feedBackVerdict === 'SUMMARIZE') {
+        const existingFilters = (state.workingMemory?.queryContext?.activeFilters || {}) as Record<string, string>;
+        if (existingFilters.vesselID || existingFilters.label) {
+            const cleanedFilters: Record<string, string> = {};
+            for (const [k, v] of Object.entries(existingFilters)) {
+                if (k !== 'vesselID' && k !== 'label') cleanedFilters[k] = v;
+            }
+            (updates.workingMemory!.queryContext as any).activeFilters = cleanedFilters;
+            console.log(
+                `\x1b[35m[Orchestrator] 🔄 RE-SURFACE ENTITY FILTER CLEANUP: Cleared stale` +
+                ` vesselID="${existingFilters.vesselID ?? 'none'}", label="${existingFilters.label ?? 'none'}"` +
+                ` from activeFilters. Attribute filters preserved.\x1b[0m`
+            );
+        }
+    }
+
     // 🌐 BROAD SCOPE OVERRIDE: Deterministic enforcement when LLM signals isBroadScopeRequest=true.
     // We do NOT trust the LLM to clear currentScope itself — we force it in code.
     if (response.isBroadScopeRequest === true) {

@@ -51,9 +51,9 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
     URL.revokeObjectURL(url);
   };
 
-  // 🟢 Robust Segment Splitting: Stop matching a block if we hit another tag OR end-of-turn
-  // This prevents unclosed tags from swallowing the entire rest of the message.
-  const segments = content.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|(?=\[INSIGHT)|(?=\[TABLE)|$)|\[TABLE[\s\S]*?(?:\[\/TABLE\]|(?=\[INSIGHT)|(?=\[TABLE)|$))/g).filter(Boolean);
+  // 🟢 Robust Segment Splitting: Split by top-level tags but allow nesting (e.g. TABLE inside INSIGHT).
+  // We remove the peek-ahead lookaheads (?=\[TABLE) and (?=\[INSIGHT) that were causeing nested blocks to split prematurely.
+  const segments = content.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|(?=\[INSIGHT)|$)|\[TABLE[\s\S]*?(?:\[\/TABLE\]|(?=\[TABLE)|$))/g).filter(Boolean);
 
   return (
     <div className="space-y-4 text-base text-gray-800 leading-relaxed overflow-hidden">

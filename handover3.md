@@ -313,3 +313,47 @@ In `update_memory2.ts`, implemented a clear exit condition:
 **Impact:** Complete context isolation. The LLM is now physically unable to see raw, noisy chat objects once a conversation has started, and the journal provides a perfectly synchronized "investigational status report" that correctly reflects the user's latest pivot.
 
 **Status:** Verified. Intent synchronization complete.
+
+---
+
+## 🛠️ 93. Fleet Maintenance Analytics Expansion (April 5th)
+**Target:** Accurate fleet-wide reporting of cancelled, missed, and completed work.
+
+### 1. Metric Expansion (`getFleetOverview`)
+**The Enhancement:** Updated the aggregation pipeline in `PhoenixCloudBE/services/mcp.service.js` to include three new counters within the specified date range:
+- `cancelledInRange`: Counts records where `latestEventStatus === 'cancelled'`.
+- `missedInRange`: Counts records where `latestEventStatus === 'missed'`.
+- `rescheduledInRange`: Counts records where `latestEventStatus === 'rescheduled'`.
+
+**Fleet Summary Sync:**
+The top-level `summary` object now includes `totalCompleted`, `totalCancelled`, and `totalMissed`, derived from the aggregated vessel stats. This ensures the dashboard's "Fleet Snapshot" is mathematically consistent with the individual vessel drill-downs.
+
+### 2. Projection & AWH Integration
+Projected these new metrics into the `awhStats` object to ensure they are available for frontend rendering and vessel-wise comparisons. This resolves the reporting gap where "cancelled" and "missed" jobs were invisible in higher-level summary views.
+
+---
+
+## 🛠️ 94. Fix: Orchestrator Context Persistence Sticky Pivot (April 5th)
+**Target:** Ensure the Orchestrator respects entity pivots (e.g., from vessel XXX1 to MV Phoenix Demo) during re-surface turns.
+
+### The Symptom
+After investigating `XXX1` and then asking to "show for MV Phoenix Demo", the next follow-up question ("none in 2025?") would cause the Orchestrator to respond with data for `XXX1` again.
+
+### Root Cause: Stale `activeFilters` in Graph Memory
+- On "Re-surface" turns (where data is reused without calling new tools), the LangGraph routes directly from `orchestrator` to `summarizer`, bypassing the `update_memory` node.
+- Consequently, `update_memory2` never clears the stale `activeFilters` (containing the old `vesselID`) even though a new query started.
+- On the subsequent turn, the Orchestrator reads the state and sees the stale `vesselID` in its grounding context, which overrides the natural conversational flow and "drifts" back to the old vessel.
+
+### The Fix: Deterministic Filter Cleanup in `orchestrator.ts`
+Implemented a surgical cleanup block in the Orchestrator's state update logic:
+- **Condition:** Fires if `finalToolCalls.length === 0` AND the verdict is `SUMMARIZE`.
+- **Action:** Deterministically clears `vesselID` and `label` from `activeFilters`.
+
+### Impact
+Eliminates the "One-Turn Behind" memory lag and ensures that entity-identity filters are strictly cleared whenever the conversation transitions to a new subject without a retrieval step.
+
+**Files Modified:**
+- `PhoenixCloudBE`: `mcp.service.js`.
+- `SkylarkAI`: `orchestrator.ts`, `handover3.md`.
+
+**Status:** Hardened. Context switching verified.

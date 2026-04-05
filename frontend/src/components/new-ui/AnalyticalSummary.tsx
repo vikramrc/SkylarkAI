@@ -44,6 +44,27 @@ const COLOR_MAP: Record<string, { bg: string; border: string; text: string; icon
     icon: 'text-blue-500',
     accent: 'border-l-blue-500',
   },
+  orange: {
+    bg: 'bg-orange-50/50',
+    border: 'border-orange-100',
+    text: 'text-orange-900',
+    icon: 'text-orange-500',
+    accent: 'border-l-orange-500',
+  },
+  purple: {
+    bg: 'bg-purple-50/50',
+    border: 'border-purple-100',
+    text: 'text-purple-900',
+    icon: 'text-purple-500',
+    accent: 'border-l-purple-500',
+  },
+  teal: {
+    bg: 'bg-teal-50/50',
+    border: 'border-teal-100',
+    text: 'text-teal-900',
+    icon: 'text-teal-500',
+    accent: 'border-l-teal-500',
+  },
 };
 
 const AnalyticalSummary: React.FC<AnalyticalSummaryProps> = ({ 
@@ -52,7 +73,7 @@ const AnalyticalSummary: React.FC<AnalyticalSummaryProps> = ({
   color = 'blue', 
   children 
 }) => {
-  const IconComponent = ICON_MAP[icon] || Lightbulb;
+  const IconComponent = ICON_MAP[icon];
   const theme = COLOR_MAP[color] || COLOR_MAP.blue;
 
   return (
@@ -63,8 +84,8 @@ const AnalyticalSummary: React.FC<AnalyticalSummaryProps> = ({
       animate-fade-in-up
     `}>
       <div className="flex items-center gap-3 mb-3">
-        <div className={`p-2 rounded-xl bg-white shadow-sm ${theme.icon}`}>
-          <IconComponent className="w-5 h-5" />
+        <div className={`p-2 rounded-xl bg-white shadow-sm font-emoji flex items-center justify-center ${theme.icon}`}>
+          {IconComponent ? <IconComponent className="w-5 h-5" /> : <span className="text-xl leading-none">{icon}</span>}
         </div>
         <h3 className={`text-lg font-bold ${theme.text}`} style={{ fontFamily: 'Outfit, sans-serif' }}>
           {title}
