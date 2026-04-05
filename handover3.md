@@ -297,3 +297,19 @@ In `update_memory2.ts`, implemented a clear exit condition:
 **Impact:** Every component in the LangGraph loop now speaks a unified, distilled technical language. We have physically eliminated the "raw chat leak" that was causing scope drift and noisy context.
 
 **Status:** Hardened. Persistence Verified.
+
+## 🛠️ 92. HITL Context Isolation & Journal Semantics (April 4th)
+**Target:** Fix the "one-turn-behind" journal lag and eliminate raw context leakage on new HITL turns.
+
+**Issues Addressed:**
+1. **Phase-0 Context Leak:** On new HITL turns (where `iterationCount` resets to 0), the orchestrator was bypassing the QnA masking logic and dumping ALL raw chat history into the prompt. This caused old context (e.g., "cancelled 2025") to flood the LLM's vision even when the user had pivoted to a new topic (e.g., "completed 2026").
+2. **Journal Inversion Bug:** The Session Decision Journal was incorrectly pairing AI messages as "questions" and human follow-ups as "answers." This caused new user investigative pivots to be logged as a resolved answer (`✓ A:`) to the previous AI response, rather than as a new, unanswered question (`? Q:`).
+
+**Targeted Fixes:**
+- **Adaptive Masking Activation (Orchestrator):** Updated the masking condition to trigger whenever `summaryBuffer.length > 0` (existing conversation history) OR `iterationCount > 0` (intermediate looping). This guarantees the LLM *always* sees a clean, distilled transcript regardless of turn type.
+- **Fresh Intent Injection:** For `iter=0` turns where the new query isn't in the `summaryBuffer` yet, the orchestrator now explicitly extracts the latest `HumanMessage` and injects it as the final `HUMAN:` line in the masked prompt.
+- **Investigative Journal Semantics:** Corrected the message-pairing loop in `orchestrator.ts`. It now strictly treats `HumanMessage` as the investigation intent (`? Q:`) and `AIMessage` as the data delivery (`✓ A:`).
+
+**Impact:** Complete context isolation. The LLM is now physically unable to see raw, noisy chat objects once a conversation has started, and the journal provides a perfectly synchronized "investigational status report" that correctly reflects the user's latest pivot.
+
+**Status:** Verified. Intent synchronization complete.

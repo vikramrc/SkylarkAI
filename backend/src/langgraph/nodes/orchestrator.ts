@@ -273,20 +273,28 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         }
     }
 
+    // 🟢 JOURNAL FIX: Correct the investigative-cycle pairing in the session journal.
+    // CONTEXT: This journal tracks ANALYTICAL CYCLES (user investigation request → AI data result),
+    // NOT HITL clarification cycles (AI asks question → human answers it).
+    // A new HumanMessage that requests new data ("now show 2026 completed") is a NEW investigation
+    // question in the journal, regardless of whether the prior AI message was a HITL clarifier.
+    // 
+    // Prior bug: The loop treated AI messages as journal "questions" and human follow-ups as "answers",
+    // which was rooted in HITL semantics. This caused the latest user analytical-pivot message to be
+    // logged as ✓ A: (a resolved answer) instead of ? Q: (the new active investigation goal).
     questionTurns.forEach((msg, idx) => {
         const type = (msg as any)._getType?.() || (msg as any).role || 'human';
-        if (type === 'ai' && (msg as any).content) {
-            const content = (msg as any).content;
-            // A clarifying question usually contains a "?" or marks a new conversational turn
-            if (content.includes("?") || idx > 0) {
-                if (currentEntry) {
-                    journalEntries.push(`? Q: ${currentEntry.question || 'Initial Query'}\n✓ A: ${currentEntry.answer || 'Awaiting User Reply'}\n🚀 Actions: ${currentEntry.tools.join(', ') || 'None'}`);
-                }
-                currentEntry = { question: content, tools: [] };
+        if (type === 'human') {
+            // Each human message is a new question — flush the prior entry if one exists.
+            if (currentEntry && idx > 0) {
+                journalEntries.push(`? Q: ${currentEntry.question || 'Initial Query'}\n✓ A: ${currentEntry.answer || 'Awaiting Execution'}\n🚀 Actions: ${currentEntry.tools.join(', ') || 'None yet'}`);
             }
-        } else if (type === 'human' && idx > 0) {
-            // This is an answer to a previous AI question
-            if (currentEntry) currentEntry.answer = (msg as any).content;
+            if (idx > 0) {
+                currentEntry = { question: (msg as any).content, tools: [] };
+            }
+        } else if (type === 'ai' && (msg as any).content && currentEntry) {
+            // AI response is the answer to the most recent human question.
+            currentEntry.answer = (msg as any).content;
         }
     });
 
@@ -606,18 +614,40 @@ You MUST check the user's current query:
         { role: "system", content: `${formattedInstruction}${memoryBlock}` } as any,
     ];
 
-    if (iterationCount > 0) {
-        // Option C: Passing the Full QnA Sequence cleanly via the unified summary buffer
+    const sessionCtx = state.workingMemory?.sessionContext || {};
+    const summaryBuffer: any[] = sessionCtx.summaryBuffer || [];
+    // 🟢 MASKING FIX: Trigger clean QnA transcript for ALL turns with existing history,
+    // not just iter>0 turns. On a new HITL turn (iter=0), the old logic would dump ALL raw
+    // messages into the prompt, flooding the LLM with prior cancelled/2025 context even when
+    // the user had pivoted to a completely new query (e.g., "completed 2026").
+    // Now: masking fires whenever there is prior conversation history (summaryBuffer.length > 0)
+    // OR we are in an intermediate iteration. This guarantees the LLM always receives a clean,
+    // intent-first view of the conversation regardless of which iteration phase it is in.
+    const hasHistory = summaryBuffer.length > 0 || iterationCount > 0;
+
+    if (hasHistory) {
+        // Build the clean QnA transcript from the summarized history + the current active query.
         let qnaTranscript = "";
-        const session = state.workingMemory?.sessionContext || {};
-        const summaryBuffer = session.summaryBuffer || [];
         
         if (summaryBuffer.length > 0) {
             qnaTranscript = summaryBuffer.map((s: any) => `HUMAN: ${s.q}\n\nASSISTANT: ${s.a}`).join('\n\n');
             qnaTranscript += "\n\n";
         }
         
-        const currentQuery = state.reformulatedQuery || state.workingMemory?.queryContext?.rawQuery || "";
+        // 🟢 For iter=0 of a new HITL turn: the latest user message is NOT yet in the summaryBuffer
+        // (it will be distilled after this turn). We must inject it directly from the raw messages
+        // so the LLM knows what the user JUST asked.
+        const latestHumanMsg = [...(state.messages || [])].reverse().find((m: any) => 
+            (m._getType?.() || m.role) === 'human'
+        ) as any;
+        const latestHumanContent = latestHumanMsg?.content || "";
+
+        // For iter>0, the reformulatedQuery is the clean representation. For iter=0, we may not
+        // have it yet, so fall back to the raw latest human message.
+        const currentQuery = (iterationCount > 0)
+            ? (state.reformulatedQuery || state.workingMemory?.queryContext?.rawQuery || latestHumanContent)
+            : latestHumanContent;
+
         if (currentQuery) {
             qnaTranscript += `HUMAN: ${currentQuery}`;
         }
@@ -634,7 +664,8 @@ Instruction: Proceed with your investigation based on the complete context provi
         promptMessages.push({ role: "user", content: syntheticBody } as any);
         console.log(`\x1b[35m[LangGraph Orchestrator] 🧠 Masking fragmented chat objects with Unified QnA Transcript prompt.\x1b[0m`);
     } else {
-        // Turn 0: Must read raw message objects so the Orchestrator can ingest the user's latest text naturally
+        // True Turn 0: No prior history exists. The Orchestrator must read raw messages
+        // directly to understand the user's first-ever request in this session.
         promptMessages.push(...state.messages);
     }
 
