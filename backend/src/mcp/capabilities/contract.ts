@@ -67,7 +67,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "isFailureEvent":
       return `${requiredLabel} flag. Set to true to filter for maintenance events that were specifically logged as failure-driven outcomes (unplanned/breakdown/CM).`;
     case "statusCode":
-      return `${requiredLabel} status enum filter. Valid values: 'overdue', 'upcoming', 'completed', 'open', 'cancelled', 'rescheduled', 'missed'. Note: 'cancelled', 'rescheduled', and 'missed' match on latestEventStatus and work in both query_status and query_execution_history.`;
+      return `${requiredLabel} status filter. Accepts a SINGLE value OR an ARRAY of values (comma-separated string or JSON array). Valid values: 'overdue', 'upcoming', 'completed', 'open', 'cancelled', 'rescheduled', 'missed'. Pass multiple values (e.g. ["cancelled", "missed", "rescheduled"]) to get combined results in one call. Note: 'cancelled', 'rescheduled', and 'missed' match on latestEventStatus and work in both query_status and query_execution_history.`;
     case "performedBy":
       return `${requiredLabel} performer search. Accepts a 24-character User ID, or a human-readable rank/designation (e.g., 'Chief Engineer', 'Third Officer'). Use to see who completed a task.`;
     case "majorJobsOnly":
@@ -230,7 +230,7 @@ const baseCapabilitiesContract = [
       "Show me rescheduled or missed maintenance"
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
-    interpretationGuidance: "Valid statusCode values: overdue, upcoming, completed, open, cancelled, rescheduled, missed. For 'who did it' (performer, man-hours, comments), use maintenance.query_execution_history instead."
+    interpretationGuidance: "statusCode accepts a SINGLE value OR an ARRAY (e.g. ['overdue','cancelled','missed']). Valid single values: overdue, upcoming, completed, open, cancelled, rescheduled, missed. Omit statusCode entirely to return all statuses. For 'who did it' (performer, man-hours, comments), use maintenance.query_execution_history instead."
   },
   {
     name: "maintenance.query_execution_history",
@@ -242,7 +242,7 @@ const baseCapabilitiesContract = [
     whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution. Use this for all Activity Work History (AWH) queries.",
     typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated.", "Show me the latest committed AWH.", "Show me lube oil levels logged between Jan 1st and Jan 31st.", "List work completed from 2026-01-01 to 2026-02-01.", "Show me the last overhaul date of the Air Compressor."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
-    interpretationGuidance: "Valid values for statusCode: completed, cancelled, rescheduled, missed, created. Use this tool when the user wants to know WHO performed a job (performer, man-hours, comments, parts used). ⚠️ DO NOT add `maintenanceType` (e.g., 'Corrective', 'Preventative') unless the user explicitly asks for a specific type — omitting it returns all types."
+    interpretationGuidance: "statusCode accepts a SINGLE value OR an ARRAY (e.g. ['completed','cancelled','rescheduled','missed']). Valid single values: completed, cancelled, rescheduled, missed, created. Pass multiple values to get combined results in ONE tool call instead of calling the tool separately for each status. Use this tool when the user wants to know WHO performed a job (performer, man-hours, comments, parts used). ⚠️ DO NOT add `maintenanceType` (e.g., 'Corrective', 'Preventative') unless the user explicitly asks for a specific type — omitting it returns all types."
   },
   {
     name: "maintenance.query_compliance_overview",

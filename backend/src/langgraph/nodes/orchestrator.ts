@@ -167,7 +167,17 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 
     let resultsContext = "";
     const toolLines: string[] = [];
-    
+
+    // 🟢 Hoist query early — needed by the KEY REFERENCE hiding filter inside the forEach below.
+    // Without this, the filter's `query?.activeFilters` reference would hit a temporal dead zone
+    // because the canonical `const query` declaration lives further down the function (~line 393).
+    const queryEarlyRef = (state.workingMemory as any)?.queryContext as any;
+    // 🟢 Also hoist secondaryScope early — used by Rule 3 to avoid false entity-mismatch hiding
+    // on pivot turns where activeFilters.vesselID is still the PREVIOUS vessel.
+    const secondaryScopeEarlyIds: string[] = ((state.workingMemory as any)?.sessionContext?.secondaryScope || [])
+        .map((e: any) => e?.id)
+        .filter(Boolean);
+
     // 🟢 Loop over the FULL ledger to build the headers and EXACT keys
     ledgerTurns.forEach((turn: any, tIdx: number) => {
         const iterNum = tIdx + 1; // Absolute turn count in history flawless!
@@ -248,15 +258,111 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
                 if (totalAvailable) line += ` | ${totalAvailable}`;
                 if (count < 2 && count > 0) line += ` | ⚠️ only ${count} match exists — database has no more records for this vessel+filter`;
             }
+            // ─────────────────────────────────────────────────────────────────
+            // 🔑 KEY REFERENCE COMPATIBILITY FILTER
+            // ─────────────────────────────────────────────────────────────────
+            // Before showing this key to the LLM, verify it is compatible with
+            // the CURRENT activeFilters. Incompatible keys are HIDDEN from the
+            // ledger — the LLM cannot select what it cannot see, forcing fresh
+            // tool calls when the investigation context has shifted.
+            //
+            // Rules:
+            //  1. statusCode SCOPE: If active is multi-value ("any status") but
+            //     this key was fetched for a SINGLE specific status (e.g. "completed"),
+            //     it cannot satisfy the broader request → HIDE.
+            //  2. DATE RANGE NARROWING: If active startDate is EARLIER than the
+            //     date this key was fetched with, the result window is too narrow → HIDE.
+            //  3. ENTITY MISMATCH: If the key's vesselID is set and doesn't match any ID
+            //     in the active scope or activeFilters, it's from a different entity → HIDE.
+            // ─────────────────────────────────────────────────────────────────
+            const activeFilters = queryEarlyRef?.activeFilters as Record<string, string> | undefined;
+            const activeStatusCode: string = (activeFilters?.statusCode || '').trim();
+            const activeIsMultiStatus = activeStatusCode.includes(',');
+            const activeStartDate: string = (activeFilters?.startDate || '').trim();
+            const currentScopeIds: string[] = Array.isArray(queryEarlyRef?.currentScope) ? (queryEarlyRef.currentScope as string[]) : [];
+            const activeVesselID: string = (activeFilters?.vesselID || '').trim();
+
+            // Only apply the filter on keys from tools that carry appliedFilters (skip resolve/overview)
+            const isFilterableKey = !key.includes('resolve_entities') && !key.includes('fleet.query_overview');
+            if (!isError && isFilterableKey && activeFilters && typeof data === 'object' && data !== null) {
+                const kFilters = (data.appliedFilters || {}) as Record<string, string | null>;
+                const keyStatusCode: string = (kFilters.statusCode || '').trim();
+                const keyStartDate: string = (kFilters.startDate || '').trim();
+                const keyVesselID: string = (kFilters.vesselID || '').trim();
+
+                // Rule 1 — statusCode scope mismatch
+                // Fires when:
+                //  a) activeStatusCode is multi-value (e.g. "cancelled, missed") and key is single-status, OR
+                //  b) activeStatusCode is empty/null (= "any status" context) and key is single-status.
+                //     Empty means the session established "any status" — a single-status key is too narrow.
+                const activeStatusIsAny = !activeStatusCode; // empty/null/absent = any status
+                if ((activeIsMultiStatus || activeStatusIsAny) && keyStatusCode && !keyStatusCode.includes(',')) {
+                    const activeDesc = activeIsMultiStatus
+                        ? `multi-status ("${activeStatusCode.substring(0, 60)}")`
+                        : `any-status (no restriction — active statusCode is empty)`;
+                    console.log(
+                        `\x1b[35m[Orchestrator] 🙈 LEDGER HIDE: Key "${key}" SUPPRESSED — ` +
+                        `statusCode SCOPE MISMATCH. Active context is ${activeDesc} ` +
+                        `but key was fetched for single status "${keyStatusCode}". ` +
+                        `Key is too narrow for the current any-status investigation.\x1b[0m`
+                    );
+                    return; // skip this key — do not push to toolLines
+                }
+
+                // Rule 2 — date range narrowing
+                if (activeStartDate && keyStartDate && activeStartDate < keyStartDate) {
+                    console.log(
+                        `\x1b[35m[Orchestrator] 🙈 LEDGER HIDE: Key "${key}" SUPPRESSED — ` +
+                        `DATE RANGE MISMATCH. Active startDate "${activeStartDate}" is earlier than ` +
+                        `key's fetched startDate "${keyStartDate}". Key misses records in the active date window.\x1b[0m`
+                    );
+                    return; // skip this key
+                }
+
+                // Rule 3 — entity mismatch
+                // IMPORTANT: do NOT hide keys from entities that are already in secondaryScope.
+                // activeVesselID is from the PREVIOUS turn (stale on pivot turns), so a known entity
+                // that is the target of the pivot would be incorrectly hidden without this exemption.
+                const isKnownEntity = currentScopeIds.includes(keyVesselID) || secondaryScopeEarlyIds.includes(keyVesselID);
+                if (keyVesselID && activeVesselID && keyVesselID !== activeVesselID && !isKnownEntity) {
+                    console.log(
+                        `\x1b[35m[Orchestrator] 🙈 LEDGER HIDE: Key "${key}" SUPPRESSED — ` +
+                        `ENTITY MISMATCH. Key vesselID "${keyVesselID}" is not in active scope ` +
+                        `(activeFilters.vesselID="${activeVesselID}", currentScope=[${currentScopeIds.join(',')}], ` +
+                        `secondaryScope=[${secondaryScopeEarlyIds.join(',')}]).\x1b[0m`
+                    );
+                    return; // skip this key
+                }
+            }
+            // ─────────────────────────────────────────────────────────────────
+
             toolLines.push(line);
+
         });
     });
 
     if (toolLines.length > 0) {
-        // 🟢 Ledger Registry: Provide exact keys to prevent LLM hallucination
-        const allAvailableKeys = ledgerTurns.flatMap((turn: any) => Object.keys(turn || {}));
-        resultsContext = `\n\n### PREVIOUS TOOL RESULTS IN THIS REQUEST:\n${toolLines.join('\n')}\n\n⚠️ EXACT KEY REFERENCE (Copy verbatim into selectedResultKeys — do NOT add or remove suffixes):\n${allAvailableKeys.map(k => `  "${k}"`).join('\n')}\n\n(Consult the 'DEDUPLICATION & CONDUCTOR RULES' in your system instructions for how to handle these results.)`;
+        // 🟢 Ledger Registry: derive exact key list from the ALREADY-FILTERED toolLines
+        // (not from ledgerTurns directly) so that hidden keys are also absent from the
+        // EXACT KEY REFERENCE block — preventing the LLM from selecting them by name.
+        const allowedKeys: string[] = [];
+        const allLedgerKeys = ledgerTurns.flatMap((turn: any) => Object.keys(turn || {}));
+        for (const line of toolLines) {
+            // Each toolLine starts with: - Key: "keyname" | ...
+            const match = line.match(/^- Key: "([^"]+)"/);
+            if (match) allowedKeys.push(match[1]!);
+        }
+        const hiddenKeyCount = allLedgerKeys.length - allowedKeys.length;
+        if (hiddenKeyCount > 0) {
+            console.log(
+                `\x1b[35m[Orchestrator] 🙈 KEY REFERENCE FILTER SUMMARY: ${hiddenKeyCount} key(s) hidden from LLM ledger ` +
+                `(${allowedKeys.length} visible of ${allLedgerKeys.length} total). ` +
+                `LLM cannot select hidden keys, forcing fresh tool calls for mismatched context.\x1b[0m`
+            );
+        }
+        resultsContext = `\n\n### PREVIOUS TOOL RESULTS IN THIS REQUEST:\n${toolLines.join('\n')}\n\n⚠️ EXACT KEY REFERENCE (Copy verbatim into selectedResultKeys — do NOT add or remove suffixes):\n${allowedKeys.map(k => `  "${k}"`).join('\n')}\n\n(Consult the 'DEDUPLICATION & CONDUCTOR RULES' in your system instructions for how to handle these results.)`;
     }
+
 
     // 🟢 SESSION DECISION JOURNAL: Parse messages and tool results to create a causal log of THIS query cycle only.
     const journalEntries: string[] = [];
@@ -1084,7 +1190,19 @@ Instruction: Proceed with your investigation based on the complete context provi
     //
     // SCOPE: Only entity-identity filters are cleared. Attribute filters (statusCode,
     // startDate, limit, organization) are intentionally preserved across entity pivots.
-    if (finalToolCalls.length === 0 && updates.feedBackVerdict === 'SUMMARIZE') {
+    // 🔑 RE-SURFACE ENTITY PIVOT CLEANUP
+    // Fires ONLY at iter===0 (first turn of a brand-new user query) when the Orchestrator
+    // proposes SUMMARIZE without calling any new tools.
+    //
+    // WHY iter===0 only: At iter > 0, tools have already run in this request cycle.
+    // A no-tool SUMMARIZE at iter > 0 means "I have empty/complete results, I'm done."
+    // That is CORRECT behaviour — do NOT interrupt it.
+    //
+    // WHY no FEED_BACK_TO_ME: Forcing a loop-back routes through update_memory2 which
+    // re-narrows activeFilters to a single vesselID, destroying org-wide fleet context.
+    // Clearing vesselID/label from activeFilters is sufficient — the next real user turn
+    // will see clean identity filters and re-derive scope from the full conversation context.
+    if (finalToolCalls.length === 0 && updates.feedBackVerdict === 'SUMMARIZE' && iterationCount === 0) {
         const existingFilters = (state.workingMemory?.queryContext?.activeFilters || {}) as Record<string, string>;
         if (existingFilters.vesselID || existingFilters.label) {
             const cleanedFilters: Record<string, string> = {};
@@ -1093,9 +1211,9 @@ Instruction: Proceed with your investigation based on the complete context provi
             }
             (updates.workingMemory!.queryContext as any).activeFilters = cleanedFilters;
             console.log(
-                `\x1b[35m[Orchestrator] 🔄 RE-SURFACE ENTITY FILTER CLEANUP: Cleared stale` +
+                `\x1b[35m[Orchestrator] 🔄 ENTITY FILTER CLEANUP (iter=0): Cleared stale` +
                 ` vesselID="${existingFilters.vesselID ?? 'none'}", label="${existingFilters.label ?? 'none'}"` +
-                ` from activeFilters. Attribute filters preserved.\x1b[0m`
+                ` from activeFilters. Attribute filters preserved: ${JSON.stringify(cleanedFilters)}.\x1b[0m`
             );
         }
     }

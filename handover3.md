@@ -357,3 +357,43 @@ Eliminates the "One-Turn Behind" memory lag and ensures that entity-identity fil
 - `SkylarkAI`: `orchestrator.ts`, `handover3.md`.
 
 **Status:** Hardened. Context switching verified.
+---
+
+## 🛠️ 95. Frontend Analytical UX: Nested Tables & Expanded Themes (April 5th)
+**Target:** Support for high-density analytical summaries and visually rich insights.
+
+### 1. Nested [TABLE] Support (`MdBubbleContent.tsx`)
+**The Problem:** The regex used to split the summarizer output into segments was too aggressive. It treated the closing `[/INSIGHT]` and `[TABLE]` tags as mutually exclusive, causing nested tables inside insight blocks to either truncate the insight or fail to render the table correctly.
+**The Fix:** Updated the splitting regex to use a non-capturing lookahead/lookbehind approach that respects nested structures. The frontend now correctly renders `[TABLE]` components even when they are fully wrapped inside an `[INSIGHT]` block.
+
+### 2. Expanded Color Palette & Emojis (`AnalyticalSummary.tsx`)
+**The Enhancement:**
+- **Themes:** Added support for `orange`, `purple`, and `teal` color tokens in the `AnalyticalSummary` component to match the new themes introduced in the backend summarizer.
+- **Icons:** Updated the icon resolver to allow raw emoji strings. If the `icon` field contains a standard emoji, the component renders it directly as text instead of trying to map it to a Lucide icon. This allows for more expressive and varied insight headers.
+
+---
+
+## 🛠️ 96. Refined Pivot Gate: deterministic iter=0 Gating (April 5th)
+**Target:** Eliminate loop-back regressions that broke org-wide fleet queries.
+
+### The Regression
+The initial "Pivot Gate" fix (Section 94) included a `FEED_BACK_TO_ME` override. While intended to force a fresh fetch for a new vessel, it caused a critical failure for fleet-wide queries:
+1. User asks for "org-wide 2026 data".
+2. Orchestrator finds 0 results, votes `SUMMARIZE`.
+3. Pivot Gate detect a `vesselID` in memory (from a prior turn), overrides to `FEED_BACK_TO_ME`.
+4. `update_memory2` wakes up, re-narrowed the query to a **single vessel** based on its internal Phase 2 logic.
+5. The original fleet-wide intent was effectively "lost" in the loop.
+
+### The Final Resolution
+**1. Removed `FEED_BACK_TO_ME`:** The loop-back was overengineered. Clearing the `vesselID` and `label` from `activeFilters` is sufficient.
+**2. Deterministic `iterationCount === 0` Gating:** The cleanup now ONLY fires at the start of a new request (`iter === 0`).
+- If the LLM legitmately concludes after running tools mid-request (`iter > 0`), the gate stays closed.
+- If the user pivots to a new entity (Turn 0), the gate opens, wipes the stale identity filters, and lets the Orchestrator re-plan with a clean slate.
+
+**Impact:** Restored high-fidelity org-wide querying while maintaining the surgical cleanup of stale entity context between turns.
+
+**Files Modified:**
+- `SkylarkAI`: `MdBubbleContent.tsx`, `AnalyticalSummary.tsx`, `orchestrator.ts`.
+- `handover3.md`: Updated documentation.
+
+**Status:** Hardened. Fleet-wide vs. Vessel-Pivot conflict resolved.
