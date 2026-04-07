@@ -338,7 +338,7 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
     // Entity-scope keys: vesselID, machineryID, scheduleID, activityID, costCenterID
     // Attribute filters (statusCode, date, limit, etc.) are NOT touched here — they follow LLM reasoning.
     const isBroadScopeTriggered = state.isBroadScopeRequest === true;
-    const entityScopeKeys = ['vesselID', 'machineryID', 'scheduleID', 'activityID', 'costCenterID', 'searchTerm'];
+    const entityScopeKeys = ['vesselID', 'machineryID', 'scheduleID', 'activityID', 'costCenterID', 'searchTerm', 'entityLabel', 'resolvedEntityType'];
     
     if (isBroadScopeTriggered) {
         entityScopeKeys.forEach(k => {

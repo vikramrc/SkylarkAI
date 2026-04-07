@@ -11,6 +11,7 @@ interface AnalyticalSummaryProps {
 const ICON_MAP: Record<string, LucideIcon> = {
   alert: AlertCircle,
   warning: AlertTriangle,
+  'alert-triangle': AlertTriangle,
   calendar: Calendar,
   check: CheckCircle2,
   lightbulb: Lightbulb,

@@ -14,6 +14,9 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
 
   if (!content) return null;
 
+  // 🟢 Pre-process content to aggressively strip any leaked [ENTITIES] blocks
+  const cleanContent = content.replace(/\[ENTITIES\][\s\S]*?(?:\[\/ENTITIES\]|$)/gi, '').trim();
+
   // 🟢 Enhanced Formatter: Bold detector flawlessly flawlessly
   const formatText = (text: string) => {
     if (!text) return null;
@@ -53,7 +56,7 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
 
   // 🟢 Robust Segment Splitting: Split by top-level tags but allow nesting (e.g. TABLE inside INSIGHT).
   // We remove the peek-ahead lookaheads (?=\[TABLE) and (?=\[INSIGHT) that were causeing nested blocks to split prematurely.
-  const segments = content.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|(?=\[INSIGHT)|$)|\[TABLE[\s\S]*?(?:\[\/TABLE\]|(?=\[TABLE)|$))/g).filter(Boolean);
+  const segments = cleanContent.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|(?=\[INSIGHT)|$)|\[TABLE[\s\S]*?(?:\[\/TABLE\]|(?=\[TABLE)|$))/g).filter(Boolean);
 
   return (
     <div className="space-y-4 text-base text-gray-800 leading-relaxed overflow-hidden">
