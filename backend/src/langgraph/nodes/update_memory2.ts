@@ -123,9 +123,15 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                 }
             }
 
-            // C. Harvest ALL organic IDs from any returned array payload (e.g. fleet.query_overview)
-            // This prevents the "Blind LLM" stall where a tool returns 10 vessels but currentScope remains empty.
-            if (Array.isArray(data?.items)) {
+            // C. Harvest ALL organic IDs from any returned array payload ONLY for discovery tools.
+            // This prevents context bleeding from leaf-node tools like 'maintenance.query_status' (which can return 500 tasks).
+            const capabilityStr = typeof data?.capability === 'string' ? data.capability : turnKey;
+            const isDiscovery = capabilityStr.includes('overview') || 
+                                capabilityStr.includes('resolve_entities') || 
+                                capabilityStr.includes('structures') || 
+                                capabilityStr.includes('search');
+            
+            if (isDiscovery && Array.isArray(data?.items)) {
                 data.items.forEach((item: any) => {
                     const id = item._id || item.id;
                     if (typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id)) {
@@ -316,16 +322,13 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
     }
 
     // Build previous query context for Phase 2.
-    // On isNewQuery=true (fresh conversation boundary): wipe ALL activeFilters — the previous
-    // conversation's filters (statusCode, dates, vesselID etc.) are stale context. Phase 2 will
-    // re-derive correct filters from the new rawQuery + tool results. This is always safe because
-    // at isNewQuery=true, at least one tool turn has already run (iter=1), so Phase 2 can read
-    // the applied filters directly from the tool result args (e.g. startDate from fleet.query_overview).
-    //
-    // On continuation turns (HITL or internal loop): soft-carry existing filters — the topic hasn't
-    // changed and the LLM needs continuity to know which filters are still in play.
+    // FIX: DO NOT wipe activeFilters automatically on isNewQuery=true. 
+    // If the user's new query is an implicit continuation or pivot (e.g. "what about 2025" or "and for XXX2"), State resets
+    // but the user expects filters (like 'status=cancelled') to dynamically carry over.
+    // By passing existingMemory.queryContext?.activeFilters, we allow the Phase 2 LLM prompt rule "FILTER INHERITANCE" 
+    // to determine whether the filters still apply to the new rawQuery.
     let previousQueryContext = isNewQuery
-        ? { ...existingMemory.queryContext, rawQuery, pendingIntents: [], lastTurnInsight: "", currentScope: [], activeFilters: {} }
+        ? { ...existingMemory.queryContext, rawQuery, pendingIntents: [], lastTurnInsight: "", currentScope: [], activeFilters: existingMemory.queryContext?.activeFilters || {} }
         : { ...existingMemory.queryContext, rawQuery }; // rawQuery always comes from our resolved value above
 
     // ─────────────────────────────────────────────────────────────────

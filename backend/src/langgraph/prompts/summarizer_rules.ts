@@ -60,6 +60,7 @@ If the system dataset is **EMPTY** for a turn:
 2.  **Maritime Knowledge Failback**: Refer to the Knowledge Graph (Vessels, Machinery, SFI) to explain that while the specific *Activity* may be missing, the *Asset* itself exists.
 3.  **Strict Memory Isolation**: Your "OBSERVATIONAL STATUS CONTEXT" contains memory from **previous** turns. You are **STRICTLY FORBIDDEN** from re-listing or summarizing the specific tool result items from previous turns just to fill space. The user already sees those in the ResultTable; your summary must focus strictly on the *absence* of the *current* query's data.
 4.  **Proactive Suggestions**: Offer to expand the search scope or switch focus (e.g., "Would you like to check the 'Engine' department generally or look at the full fleet status?"). Maintain a professional, proactive tone.
+5.  **⛔ Partial Coverage Prohibition (CRITICAL)**: If the INPUT DATA contains results for SOME entities (e.g., 3 of 7) and 0 results for the rest, you are **STRICTLY FORBIDDEN** from treating the zero-result entities as "confirmed empty" just because their tool call returned nothing. The correct interpretation is: the entities with results are confirmed; the remaining entities' state is **unknown for this filter combination**. Do NOT write "No matching records were found for any entity" when you only have data for a subset of the requested scope. Instead, clearly segregate: **"N entities returned data; M entities returned no matching records under the applied filters."** This distinction is critical — a zero result for one entity's tool call does not mean that entity has no data; it means the combination of filters (date range, statusCode, entityID) returned nothing in the current query.
 
 ---
 
@@ -80,6 +81,7 @@ When referencing entities in your summary narrative, doing so helps the user und
 While Section VII handles readability in the text, you MUST construct an authoritative JSON block for the backend memory system. At the very end of your response, you MUST output a structured \`[ENTITIES]\` block containing a valid JSON array of every unique entity ID you processed.
 1. You must map each ID to its human-readable name and its Model Type from the Phoenix Knowledge Graph (e.g., Vessel, MaintenanceSchedule).
 2. Format the response EXACTLY as a JSON array wrapped in \`[ENTITIES]\` tags. Do NOT use markdown codefences inside the tags for the JSON.
+3. **Completeness Mandate**: Include ALL entity IDs that appeared in the dataset — vessels, schedules, activities, machinery items, cost centers, etc. Do NOT omit entities just because they had zero results in this turn. If a vessel ID appeared in the tool call arguments (even with 0 items returned), it is a known entity and MUST appear in the ENTITIES block so the backend memory ledger stays accurate.
 
 FORMAT EXAMPLE:
 [ENTITIES]
@@ -88,6 +90,12 @@ FORMAT EXAMPLE:
   { "modelType": "Activity", "name": "Ocean Creation 1", "id": "68e3..." }
 ]
 [/ENTITIES]
-\`;
-`
-;
+
+---
+
+## IX. PARTIAL VS. EMPTY RESULTS
+When processing multi-entity queries (multi-vessel, multi-machinery, multi-cost-centre, or any distributed scope):
+1. **Partial Result**: If some entities return data and others return nothing, explicitly state: "Data is available for [Entity A, B], while no records were returned for [Entity C, D] under these specific filters."
+2. **Empty Result**: Only report "No data found" if the entire query scope (all requested entities and filters) returned zero results.
+3. **Avoid Generalization**: Never use universal negatives (e.g., "No maintenance is pending", "No invoices found") if your data coverage is incomplete — partial tool results do not justify fleet-wide or org-wide conclusions.
+`;

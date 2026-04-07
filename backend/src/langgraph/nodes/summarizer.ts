@@ -57,6 +57,7 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     const allItems: any[] = [];
     const emptyTools: string[] = [];
     let toolCountSummary = "";
+    const runTimeNames: Record<string, {name: string, type: string}> = {};
 
 
     if (toolEntries.length > 0) {
@@ -81,6 +82,23 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
                 }
             }
             return { key, data };
+        });
+
+        // 🟢 GAP-1 FIX (Propagation Delay): Extract runtime ID-to-Name maps from ALL
+        // tools (including discovery ones we are about to strip) so we can name them
+        // in the ledger if they haven't synced to secondaryScope yet.
+        unpackedEntries.forEach((entry: {key: string, data: any}) => {
+            const items = Array.isArray(entry.data?.items) ? entry.data.items : [];
+            items.forEach((item: any) => {
+                const id = item._id || item.id; // Only use the item's own PK — FK fields like vesselID are excluded to prevent name corruption
+                const name = item.name || item.vesselName || item.costCenterName || item.budgetGroupName || item.title || item.partName || item.machineryName;
+                if (id && name && typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id)) {
+                    runTimeNames[id] = { 
+                        name: String(name), 
+                        type: entry.data?.capability ? entry.data.capability.split('.')[0] : "Entity" 
+                    };
+                }
+            });
         });
 
         // Discovery Isolation: suppress internal/intermediate tools from the summary.
@@ -187,6 +205,53 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     const promptMessages = [
         { role: "system", content: systemPrompt } as any,
     ];
+
+    // 🟢 GAP-1 FIX: Inject the entity ledger so the Summarizer can name entities
+    // that returned 0 results. Without this, the LLM has no ID-to-name mapping
+    // for empty tool calls and cannot fulfill Rules VIII (ENTITIES Completeness)
+    // and IX (Partial vs. Empty Results) in summarizer_rules.ts.
+    // The orchestrator has full access to secondaryScope/currentScope/resolvedLabels
+    // but the summarizer previously received none of this — making Section VIII's
+    // "Completeness Mandate" aspirationally correct but physically impossible.
+    const sessionCtxForSummarizer = state.workingMemory?.sessionContext;
+    const queryCtxForSummarizer = state.workingMemory?.queryContext;
+    const resolvedLabelsForSummarizer = (sessionCtxForSummarizer?.scope as any)?.resolvedLabels || {};
+    const currentScopeForSummarizer = (queryCtxForSummarizer as any)?.currentScope || [];
+    const secondaryScopeForSummarizer = (sessionCtxForSummarizer as any)?.secondaryScope || [];
+
+    const ledgerLines: string[] = [];
+    // Resolved Labels — current conversation (highest priority)
+    Object.entries(resolvedLabelsForSummarizer).forEach(([label, info]: [string, any]) => {
+        ledgerLines.push(`  - ${info.type}: "${label}" → ID = "${info.id}"`);
+    });
+    // Current Scope — organic discoveries from this investigation
+    currentScopeForSummarizer.forEach((id: string) => {
+        const fromSecondary = secondaryScopeForSummarizer.find((e: any) => e.id === id);
+        const fromRunTime = runTimeNames[id];
+        
+        if (fromSecondary) {
+            ledgerLines.push(`  - ${fromSecondary.modelType}: "${fromSecondary.name}" → ID = "${id}"`);
+        } else if (fromRunTime) {
+            ledgerLines.push(`  - ${fromRunTime.type.charAt(0).toUpperCase() + fromRunTime.type.slice(1)}: "${fromRunTime.name}" → ID = "${id}" (discovered this turn)`);
+        } else {
+            ledgerLines.push(`  - [Unknown Type]: ID = "${id}" (name not yet in ledger)`);
+        }
+    });
+    // Secondary Scope — rolling window from recent conversations (fallback)
+    secondaryScopeForSummarizer.forEach((e: any) => {
+        const alreadyListed = ledgerLines.some(l => l.includes(`"${e.id}"`));
+        if (!alreadyListed) {
+            ledgerLines.push(`  - ${e.modelType}: "${e.name}" → ID = "${e.id}" (Conv ${e.conversationIndex})`);
+        }
+    });
+
+    if (ledgerLines.length > 0) {
+        promptMessages.push({
+            role: "system",
+            content: `### 🗂️ ENTITY IDENTITY LEDGER\nUse this as your ID-to-Name dictionary when referencing entities in your summary, especially for tool calls that returned 0 results. This is the ONLY authoritative source of entity names for IDs in this response.\n${ledgerLines.join('\n')}`
+        } as any);
+        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🗂️ Entity Ledger Injected: ${ledgerLines.length} known entities.\x1b[0m`);
+    }
 
     const legacySummaryBuffer = (state.workingMemory as any)?.summaryBuffer;
     if (legacySummaryBuffer) {
