@@ -70,10 +70,7 @@ export interface SkylarkState {
   // 7. Request Isolation
   startTurnIndex: number;
 
-  // 8. Conductor Result Selection
-  selectedResultKeys?: string[];
-
-  // 9. Broad Scope Override Flag
+  // 8. Broad Scope Override Flag
   // Emitted by Orchestrator when user explicitly requests org/fleet-wide scope.
   // Consumed by UpdateMemory2 to clear entity-scope filters and persist isBroadScope.
   isBroadScopeRequest?: boolean;

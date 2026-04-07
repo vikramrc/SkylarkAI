@@ -397,3 +397,156 @@ The initial "Pivot Gate" fix (Section 94) included a `FEED_BACK_TO_ME` override.
 - `handover3.md`: Updated documentation.
 
 **Status:** Hardened. Fleet-wide vs. Vessel-Pivot conflict resolved.
+
+---
+
+## 🛠️ 97. Architectural Pivot: Always-Execute & The Death of `selectedResultKeys` (April 6th)
+
+**Target:** Eliminate fragile short-circuiting and context-reuse hallucinations for 100% deterministic execution.
+
+### 1. The Core Objective
+The previous `selectedResultKeys` mechanism was a high-maintenance "short-circuit" that allowed the LLM to skip tool execution if it thought a prior result was sufficient. This led to "stale data" hallucinations during entity pivots (e.g., showing XXX1's jobs when asked for Phoenix Demo) and required a complex, brittle "Hiding Algorithm" (~250 lines of code) to prevent context pollution.
+
+**The Solution:** The entire pipeline has been refactored to an **"Executor-First"** model. The agent is now physically incapable of "selecting" old results. Every turn REQUIRES explicit tool calls with full parameters.
+
+### 2. Physical Deletions (Removing the Debt)
+- **State & Graph:** Deleted the `selectedResultKeys` field from `SkylarkState` and its corresponding channel in `graph.ts`.
+- **Orchestrator Schema:** Removed the field from the Zod output schema. The LLM can no longer even attempt to use it.
+- **The Hiding Algorithm:** Excised the ~240-line "Ledger Hiding" block that calculated entity-status mismatches.
+- **Smart Promotion:** Removed the "Promotion Bridge" that injected historical keys into the state.
+- **Summarizer Re-Surface:** Deleted the entire 60-line `RE-SURFACE PATH` that handled zero-tool turns.
+
+### 3. New Deterministic Patterns
+- **Always-Execute Mandate:** Updated `orchestrator_rules.ts` (Section IV) with a hard mandate: "You ALWAYS call tools fresh. You MUST NEVER attempt to reuse prior result data."
+- **Discovery Isolation (Summarizer):** Replaced the 90-line conductor filter with a clean 8-line name-pattern match. The summarizer now receives ALL current-turn results but suppresses internal discovery tools (`resolve_entities`, `fleet.query_overview`, etc.) from the final prose report based on their tool names.
+- **Request Isolation (Workflow):** Simplified SSE emission and MongoDB persistence (`workflow.ts`). The system now strictly slices `allTurns.slice(startTurnIndex)`. Only tools run in the ACTIVE HTTP request are shown in the UI tabs or saved to the message history.
+
+### 4. Impact & Performance
+- **Zero Hallucination Switch:** Entity pivots (e.g., "now for Vessel B") are now 100% reliable because the agent MUST call the tool with Vessel B's ID to get any data.
+- **Leaner Logic:** Reduced total codebase size by ~400 lines of complex conditional logic.
+- **Unified Memory:** `summaryBuffer` (analytical Q&A) is now the SOLE source of conversational context, while `toolResults` are treated as ephemeral current-request data.
+
+**Files Modified:**
+- `SkylarkAI`: `orchestrator.ts`, `summarizer.ts`, `state.ts`, `graph.ts`, `orchestrator_rules.ts`, `workflow.ts`.
+
+**Status:** Architecture Stabilized. Protocol: **Always-Execute**.
+
+---
+
+## 🛠️ 98. Bug Fix: Discovery Isolation — Overly Broad Prefix (April 6th)
+
+**Target:** Prevent legitimate retrieval tools from being silenced in the summarizer's final prose report.
+
+### The Bug
+The `DISCOVERY_PREFIXES` list in `summarizer.ts` contained the entry `'fleet.query'`. Because the isolation check is a substring match (`key.includes(p)`), this would match **all** fleet tools — including user-facing retrieval tools like `fleet.query_running_hours` and `fleet.query_machinery_status`. If either of these ran alongside a discovery tool in the same turn, their results would be silently suppressed from the prose summary even though the user explicitly asked for them.
+
+The edge-case fallback (line 95 — "if ALL entries are discovery, pass through all") only rescues the case where 100% of tools are discovery tools. It does **not** protect a mixed turn where one tool is real data and another happens to match the too-broad prefix.
+
+### The Fix
+Removed the catch-all `'fleet.query'` from the list and replaced with precise, semantically unambiguous entries. The final `DISCOVERY_TOOLS` list is:
+
+```typescript
+const DISCOVERY_TOOLS = [
+    'resolve_entities',  // Label-to-ID mapping — always intermediate
+    'query_overview',    // fleet.query_overview — vessel ID discovery step
+    '.health',           // MCP health check — never user-facing
+    '.capabilities',     // Cap listing — never user-facing
+];
+```
+
+### Why These Four
+Every entry in this list is a tool that is **never** the final deliverable — there is no user request for which seeing raw `fleet.query_overview` or `mcp.resolve_entities` output in the summary prose would be correct. All other tools (including `fleet.query_running_hours`, `fleet.query_machinery_status`, `maintenance.query_schedules`, etc.) have legitimate user-facing scenarios and are therefore intentionally excluded from suppression.
+
+### File Modified
+- `SkylarkAI/backend/src/langgraph/nodes/summarizer.ts`
+
+**Status:** Discovery Isolation hardened. No retrieval tool data can be silently suppressed.
+
+---
+
+## 🛠️ 99. Fleet Overview UI Redesign: Compact KPI Cards (April 6th)
+
+**Target:** Replace the generic table view for fleet discoveries with a "cute and cosy" high-density KPI layout.
+
+### 1. New Component: `FleetOverviewCards`
+**The Enhancement:** Implemented a new card-based renderer in `ResultTable.tsx` specifically for the `fleet.query_overview` tool.
+*   **Design:** Compact, tight formation with minimal whitespace.
+*   **Metrics:** Displays Vessel Name, Machinery Count, and the expanded `awhStats` (Completed, Cancelled, Missed, Rescheduled) in a badge-based grid.
+*   **Integration:** `ResultTable` now detects the `fleet.query_overview` tab and conditionally renders the cards instead of the standard `ToolTable`.
+
+### 2. Analytical Icon Expansion
+**The Enhancement:** Expanded the `ICON_MAP` in `AnalyticalSummary.tsx` to support a wider range of Lucide icons commonly used in the fleet dashboard, including:
+*   `trending-up`, `warning`, `info`, `file`, `shield`, `search`, `cancel`, `user-x`.
+*   This ensures that the summary insights always display professional iconography rather than falling back to blank space.
+
+---
+
+## 🛠️ 100. Orchestrator Hardening: Topic Pivot Guards (April 6th)
+
+**Target:** Prevent "Stale Scope Bleed" where new queries (e.g., a broad 2026 search) incorrectly anchor to vessels from the previous query (e.g., XXX1).
+
+### 1. `TOPIC PIVOT SCOPE GUARD` (Prompt-Level)
+**The Problem:** On the very first turn of a new investigation (`iter=0`), the `currentScope` (Organic Discoveries) in the prompt still contained the ID of the vessel from the *previous* request. Rule VIII.2 (Specificity) forced the LLM to skip discovery and stick to that vessel.
+**The Fix:** Added a textual pivot check (`anchoredRawQuery !== query.rawQuery`). If a pivot is detected at `iter=0`, the `displayCurrentScope` is forced to `[]` in the prompt, regardless of the underlying state.
+
+### 2. `TOPIC PIVOT ACCUM GUARD` (State-Level)
+**The Problem:** Even if the LLM output `currentScope: []`, the orchestrator would merge that with the `previouslyAccumulated` scope from memory, re-inserting the old vessel ID into the state for the next turn.
+**The Fix:** The accumulation logic now uses the same pivot check to discard the prior scope from the final merge on Turn 0.
+
+---
+
+## 🛠️ 101. Memory Management: Scope Boundary Isolation & Stale ID Deletion (April 6th)
+
+**Target:** Fix the "Ghost Entity Resurrection" where stale IDs would reappear on turn 2 of a new query.
+
+### 1. `isGenuineTopicPivot` Alignment (Gap 2 Fix)
+**The Problem:** `update_memory2` was clearing scope based purely on `iter <= 1`, while the Orchestrator used textual comparison. This caused "Split-Brain" behavior on query retries or exact-match queries.
+**The Fix:** Aligned `update_memory2.ts` to use identical textual comparison (`rawQuery.trim() !== existingRawQuery.trim()`) to define a genuine topic pivot.
+
+### 2. Mandatory Stale ID Deletion (Gap 1 Fix)
+**The Problem:** Masking IDs from `currentScope` wasn't enough; the key (e.g., `vesselID`) remained in `sessionContext.scope`. On Turn 2 (`iter=2`), when the pivot guards were no longer active, the code would re-extract the stale ID and "resurrect" it into the investigation.
+**The Fix:** 
+*   **Snapshotting:** Before Phase 1 runs, we capture a `Map<key, value>` of inherited entity pointers (`inheritedEntityScopeSnapshot`).
+*   **Surgical Deletion:** During deterministic scope extraction, if we are on a `isGenuineTopicPivot` boundary, we now **explicitly `delete`** any key from the session scope that matches both the key and the specific value in the snapshot.
+*   **Selective Promotion:** If Phase 1 freshly resolves a *new* ID (different value) for the same key (e.g., a different vessel), the value mismatch ensures it is **not** deleted and is promoted to `currentScope` correctly.
+
+### Impact
+The "Executor-First" model is now airtight. The Organic Discovery scope is strictly isolated to the active investigation, while the "Ambiguity Bridge" (`resolvedLabels`) and the 7-turn ledger (`secondaryScope`) maintain the system's long-term intelligence.
+
+**Files Modified:**
+- `SkylarkAI`: `orchestrator.ts`, `update_memory2.ts`, `ResultTable.tsx`, `AnalyticalSummary.tsx`.
+
+**Status:** Hardened. Ghost entities eliminated. Context isolation complete.
+
+---
+
+## 🛠️ 102. Memory Management: The "Blind LLM" Loop Fix (April 6th)
+
+**Target:** Prevent infinite discovery loops by ensuring array-based entity results (e.g., from `fleet.query_overview`) are correctly ingested into `currentScope`.
+
+### 1. The Symptom: The Infinite Discovery Loop
+With the GAP-30 "Ghost Entity" patch, `update_memory2.ts` became the strict dictator of `currentScope`, overwriting whatever the Orchestrator LLM thought the scope should be based on deterministic Phase 1 extraction.
+However, Phase 1 only had logic to extract *singular* `vesselID` strings from the `mcp.resolve_entities` tool.
+When an array-based discovery tool like `fleet.query_overview` ran and returned 7 vessels, Phase 1 ignored the array, built an empty `deterministicScope`, and wiped `currentScope` to `[]`.
+The Orchestrator would wake up, see an empty `currentScope`, assume discovery failed or hadn't happened, and re-run `fleet.query_overview` infinitely until the LangGraph 8-iteration hard limit was hit.
+
+### 2. The Fix: Universal Organic ID Harvesting
+Added an "Organic Harvester" to Phase 1 of `update_memory2.ts` that dynamically scans the results of *any* tool that ran during the current request loop.
+
+**Logic:**
+*   It creates an `organicallyDiscoveredIds` Set before looping over the `latestTurn` tool results.
+*   If any tool returns an array in `data.items`, it iterates through the payloads.
+*   If it finds a valid 24-character hexadecimal `_id` or `id`, it automatically adds it to the `organicallyDiscoveredIds` Set.
+*   Finally, `organicallyDiscoveredIds` is used to seed `deterministicScope`, merging seamlessly with any singular `vesselID`s bound in `sessionStateCommit.scope`.
+
+### Impact
+The Orchestrator's "Discovery-First" mandate (Rule 9) now functions perfectly. 
+1. The Orchestrator runs `fleet.query_overview`.
+2. The tool returns N vessels.
+3. `update_memory2.ts` harvests all N hex IDs deterministically and populates `currentScope`.
+4. The Orchestrator wakes up, sees the IDs securely seated in `currentScope`, and proceeds directly to the data retrieval phase (e.g., calling `maintenance.query_execution_history`).
+
+**Files Modified:**
+- `SkylarkAI/backend/src/langgraph/nodes/update_memory2.ts`
+
+**Status:** Hardened. Array-based ID harvesting natively supported. Pipeline stall fully resolved.

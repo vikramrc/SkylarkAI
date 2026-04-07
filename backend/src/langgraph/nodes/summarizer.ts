@@ -58,69 +58,6 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     const emptyTools: string[] = [];
     let toolCountSummary = "";
 
-    // ─────────────────────────────────────────────────────────────────
-    // 🔍 RE-SURFACE PATH: No new tools this turn, but Orchestrator named specific prior results.
-    // ─────────────────────────────────────────────────────────────────
-    // This handles the "show for MV Phoenix Demo" case where the data was fetched in a prior
-    // conversation turn and Orchestrator says "re-use maintenance.query_execution_history_iter1".
-    // Without this path, the entire conductor block is skipped (toolEntries is empty) and the
-    // summarizer falls through to conversational mode → "No Current Result Set".
-    //
-    // We run the history lookup HERE, before the toolEntries guard, so that re-surface turns
-    // populate allItems correctly and get the full summarizer treatment.
-    // ─────────────────────────────────────────────────────────────────
-    if (toolEntries.length === 0 && state.selectedResultKeys && state.selectedResultKeys.length > 0) {
-        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🗂️ RE-SURFACE MODE: No new tools this turn. Orchestrator selected prior result keys: [${state.selectedResultKeys.join(', ')}]. Running history lookup.\x1b[0m`);
-        const allHistoryEntries: { key: string; data: any }[] = [];
-        history.forEach((turn: any) => {
-            Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
-                let data: any = res;
-                if (data?.content?.[0]?.text) {
-                    const text = data.content[0].text;
-                    if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
-                        try { const parsed = JSON.parse(text); if (parsed) data = parsed; } catch (e) {}
-                    }
-                }
-                allHistoryEntries.push({ key, data });
-            });
-        });
-
-        const reSurfaceEntries = allHistoryEntries.filter(e =>
-            state.selectedResultKeys?.includes(e.key) &&
-            !e.data?.isError &&
-            Array.isArray(e.data?.items) &&
-            e.data.items.length > 0
-        );
-
-        if (reSurfaceEntries.length > 0) {
-            console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🗂️ Re-Surface: Found ${reSurfaceEntries.length} valid prior result(s). Injecting into summarizer dataset.\x1b[0m`);
-            for (const entry of reSurfaceEntries) {
-                const { key, data: result } = entry;
-                const capability = result?.capability ?? 'unknown';
-                const items = Array.isArray(result?.items) ? result.items : [result];
-                toolCountSummary += `\n- **${key}** (${capability}) [re-surfaced from prior turn]: ${items.length} rows`;
-                for (const item of items) {
-                    const sanitizedItem: any = { ...item };
-                    for (const [k, v] of Object.entries(sanitizedItem)) {
-                        if (typeof v === 'string') sanitizedItem[k] = v.replace(/\s+/g, ' ').trim();
-                    }
-                    allItems.push({ _tool: key, ...sanitizedItem });
-                }
-                // Inject contract shape
-                const capDef = capabilitiesContract.find(c => c.name === capability);
-                if (capDef?.responseShape) {
-                    schemaHint = `Contract Keys (${capability}): ${JSON.stringify(capDef.responseShape)}\n` + schemaHint;
-                    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📄 Injected local contract shape for: ${capability}\x1b[0m`);
-                }
-            }
-            const prepped = prepareMongoForLLM(allItems);
-            schemaHint = prepped.schemaHint;
-            jsonlData = prepped.jsonlData;
-            console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 📐 Re-Surface: Flattened ${allItems.length} rows from ${reSurfaceEntries.length} prior tool result(s).\x1b[0m`);
-        } else {
-            console.warn(`\x1b[33m${ts()} [LangGraph Summarizer] ⚠️ Re-Surface: Orchestrator selected [${state.selectedResultKeys}] but no valid prior data found. Falling through to conversational mode.\x1b[0m`);
-        }
-    }
 
     if (toolEntries.length > 0) {
 
@@ -146,100 +83,25 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
             return { key, data };
         });
 
-        // ─────────────────────────────────────────────────────────────────
-        // 🟢 Conductor Selection Filter: If the Orchestrator explicitly picked results, ignore everything else!
-        // This prevents "Discovery" turns or "Internal Thinking" tools from bloating the final summary.
-        let finalEntries = unpackedEntries;
-        if (state.selectedResultKeys && state.selectedResultKeys.length > 0) {
-            console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🎯 Conductor Selection Active: Filtering for ${state.selectedResultKeys.length} specific tool(s)\x1b[0m`);
-            finalEntries = unpackedEntries.filter(e => state.selectedResultKeys?.includes(e.key));
-            
-            // 🟢 Deterministic Selection Fidelity Guard (Ghosting Protection)
-            // Ensure retrieval results from the LATEST query turns are promoted if the LLM forgot them.
-            // We ignore Turn 1 (Discovery) if we are on Turn 2+ (Analysis) to avoid ghosting old data.
-            const currentTurnIndex = state.startTurnIndex || 0;
-            const currentQueryTurns = history.slice(currentTurnIndex);
-            
-            currentQueryTurns.forEach((turn: any) => {
-                Object.keys(turn).forEach(k => {
-                    // 🟢 Discovery Isolation: ONLY suppress true internal/discovery tools, NOT retrieval tools.
-                    // Use precise prefix matching: mcp.resolve_entities, *.query_overview, fleet.*, *.health, *.capabilities
-                    // ⚠️ CRITICAL: DO NOT match 'query_status' generically — maintenance.query_status is a RETRIEVAL tool!
-                    const isDiscovery = 
-                        k.includes('resolve_entities') ||
-                        k.includes('query_overview') ||
-                        k.includes('fleet.query') ||
-                        k.includes('health') ||
-                        k.includes('capabilities');
-                    if (!isDiscovery && !state.selectedResultKeys?.includes(k)) {
-                        const entry = unpackedEntries.find(e => e.key === k);
-                        if (entry) {
-                            console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🛡️ Selection Fidelity Guard: Auto-promoted missing retrieval result: ${k}\x1b[0m`);
-                            finalEntries.push(entry);
-                        }
-                    } else if (isDiscovery && !state.selectedResultKeys?.includes(k)) {
-                        console.log(`\x1b[38;5;240m${ts()} [LangGraph Summarizer] 🌫️ Discovery Isolation: Suppressed internal tool from UI: ${k}\x1b[0m`);
-                    }
-                });
-            });
+        // Discovery Isolation: suppress internal/intermediate tools from the summary.
+        // In an always-execute world, the summarizer always receives ALL current-turn results.
+        // We suppress ONLY tools that are always structural/intermediate and never a final
+        // user-facing deliverable. Broad catch-alls (e.g., 'fleet.query') are intentionally
+        // avoided because they would silently swallow real retrieval tools like
+        // fleet.query_running_hours or fleet.query_machinery_status.
+        const DISCOVERY_TOOLS = [
+            'resolve_entities',  // Label-to-ID mapping — always intermediate
+            'query_overview',    // fleet.query_overview — vessel ID discovery step
+            '.health',           // MCP health check — never user-facing
+            '.capabilities',     // Cap listing — never user-facing
+        ];
+        const isDiscoveryEntry = (key: string) => DISCOVERY_TOOLS.some(p => key.includes(p));
+        let finalEntries = unpackedEntries.filter(e => !isDiscoveryEntry(e.key));
+        // Edge case: if ALL tools this turn were discovery tools (pure fleet-overview turn),
+        // pass them through so the summarizer doesn't fall into empty-dataset mode incorrectly.
+        if (finalEntries.length === 0) finalEntries = unpackedEntries;
+        console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🔍 Discovery Isolation: ${unpackedEntries.length - finalEntries.length} discovery tool(s) suppressed, ${finalEntries.length} retrieval result(s) forwarded\x1b[0m`);
 
-            // ─────────────────────────────────────────────────────────────────
-            // CONDUCTOR HISTORY LOOKUP (GAP-HIST-1 FIX)
-            // ─────────────────────────────────────────────────────────────────
-            // When selectedResultKeys are empty after filtering currentTurns, it could mean:
-            //   (a) The AI hallucinated a key name → true fallback case
-            //   (b) The key exists in a PRIOR TURN (before startTurnIndex) → re-group use case
-            //
-            // Example: User asks "show me per vessel" after already seeing 29 cancelled jobs.
-            // The 29-item result is at turn 0 (before startTurnIndex=1). The Conductor correctly
-            // names that key, but `currentTurns = history.slice(1)` doesn’t include turn 0.
-            // We MUST search all history for a valid (non-error, has items) match before giving up.
-            //
-            // This avoids the failure mode where the Summarizer says "no data" even though the
-            // data was already successfully retrieved in a prior step of the same conversation.
-            // ─────────────────────────────────────────────────────────────────
-            const missingKeys = state.selectedResultKeys.filter((k: string) => !finalEntries.some(e => e.key === k));
-
-            if (missingKeys.length > 0) {
-                // Walk ALL history (not just currentTurns) to find missing Conductor-named keys.
-                // Prefer entries that: (1) match the missing key, (2) are not errors, (3) have actual items.
-                const allHistoryEntries: { key: string; data: any }[] = [];
-                history.forEach((turn: any) => {
-                    Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
-                        let data = res;
-                        if (data?.content?.[0]?.text) {
-                            const text = data.content[0].text;
-                            if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
-                                try { const parsed = JSON.parse(text); if (parsed) data = parsed; } catch (e) {}
-                            }
-                        }
-                        allHistoryEntries.push({ key, data });
-                    });
-                });
-
-                const historicalMatches = allHistoryEntries.filter(e =>
-                    missingKeys.includes(e.key) &&
-                    !e.data?.isError &&
-                    Array.isArray(e.data?.items) &&
-                    e.data.items.length > 0
-                );
-
-                if (historicalMatches.length > 0) {
-                    console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🗂️ Conductor History Lookup: Found ${historicalMatches.length} valid missing result(s) in prior turns. Merging historical data for re-grouping.\x1b[0m`);
-                    historicalMatches.forEach(match => {
-                        if (!finalEntries.some(e => e.key === match.key)) {
-                            finalEntries.push(match);
-                        }
-                    });
-                } else if (finalEntries.length === 0) {
-                    // True fallback ONLY if we found absolutely nothing new OR old: hallucination.
-                    console.warn(`\x1b[33m${ts()} [LangGraph Summarizer] ⚠️ Conductor picked keys [${state.selectedResultKeys}] but none matched anywhere (current or history). Falling back to all current results.\x1b[0m`);
-                    finalEntries = unpackedEntries;
-                } else {
-                    console.warn(`\x1b[33m${ts()} [LangGraph Summarizer] ⚠️ Conductor asked for missing keys [${missingKeys}] but they weren't found in history. Proceeding with the ${finalEntries.length} valid new result(s).\x1b[0m`);
-                }
-            }
-        }
 
 
         // 🔴 CRITICAL FIX: extract the actual *items* arrays from each tool result wrapper
@@ -316,12 +178,9 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
 
     const noToolsCalled = !state.toolCalls || state.toolCalls.length === 0;
     // 🔴 CRITICAL FALLBACK: If tools were called but returned 0 items overall, treat it as empty conversational mode.
-    // EXCEPTION: If the re-surface path above already populated allItems (noToolsCalled but selectedResultKeys found
-    // prior data), we have real data to summarize — do NOT override the system prompt with the empty-dataset version.
     const emptyDataset = toolEntries.length > 0 && typeof allItems !== 'undefined' && allItems.length === 0;
-    const hasReSurfacedData = noToolsCalled && allItems.length > 0; // Re-surface path found prior results
 
-    if ((noToolsCalled && !hasReSurfacedData) || emptyDataset) {
+    if (noToolsCalled || emptyDataset) {
         systemPrompt = loadSummarizerPrompt().replace("%%SCHEMA_CONTEXT%%", "Dataset is EMPTY. Refer to Rule V in system instructions.");
     }
 
@@ -337,11 +196,11 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         } as any);
     }
 
-    if ((noToolsCalled && !hasReSurfacedData || emptyDataset) && state.messages && state.messages.length > 0) {
+    if ((noToolsCalled || emptyDataset) && state.messages && state.messages.length > 0) {
         // Purely conversational mode (no data at all) — only push the last user message
         promptMessages.push(state.messages[state.messages.length - 1]);
     } else {
-        // Data mode OR re-surface mode — push full message history for context
+        // Data mode — push full message history for context
         promptMessages.push(...state.messages);
     }
 

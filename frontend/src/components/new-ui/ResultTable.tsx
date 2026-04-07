@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Database, FileText, Anchor, Ship, Package, Users, FileCheck, Wrench, BarChart2, ChevronRight } from 'lucide-react';
+import { Database, FileText, Anchor, Ship, Package, Users, FileCheck, Wrench, BarChart2, ChevronRight, AlertCircle, Clock, CheckCircle } from 'lucide-react';
 
 interface ResultTableProps {
   results: Record<string, any>;
@@ -116,6 +116,66 @@ function renderCell(key: string, value: any, row?: any): React.ReactNode {
   }
 
   return <span className="text-gray-700">{vStr}</span>;
+}
+
+// ─── Fleet overview specific layout ────────────────────────────────────────────
+
+function FleetOverviewCards({ items }: { items: any[] }) {
+  if (items.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-gray-400">
+        <Ship className="w-8 h-8 mb-2 opacity-40" />
+        <p className="text-sm">No fleet data returned.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3 bg-gray-50/40">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+        {items.map((vessel, idx) => {
+          const stats = vessel.awhStats || {};
+          return (
+            <div key={idx} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col hover:border-gray-200 hover:shadow-md transition-all">
+              <div className="px-3 py-2 border-b border-gray-50 flex items-center justify-between bg-blue-50/20">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Ship className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                  <span className="text-xs font-bold text-gray-800 truncate">{vessel.vesselName || vessel.VESSEL_NAME || 'Unknown Vessel'}</span>
+                </div>
+                <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-2">{vessel.vesselImoNumber || vessel.VESSEL_IMO_NUMBER || '--'}</span>
+              </div>
+              <div className="p-2 grid grid-cols-2 gap-1.5">
+                <div className="flex flex-col bg-red-50/80 rounded p-1.5 border border-red-50">
+                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-red-600 tracking-wide mb-0.5">
+                    <AlertCircle className="w-2.5 h-2.5" /> Overdue
+                  </span>
+                  <span className="text-sm font-bold text-red-700 leading-none">{stats.overdue || 0}</span>
+                </div>
+                <div className="flex flex-col bg-amber-50/80 rounded p-1.5 border border-amber-50">
+                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-amber-600 tracking-wide mb-0.5">
+                    <Clock className="w-2.5 h-2.5" /> Upcoming
+                  </span>
+                  <span className="text-sm font-bold text-amber-700 leading-none">{stats.upcoming7d || 0}</span>
+                </div>
+                <div className="flex flex-col bg-emerald-50/80 rounded p-1.5 border border-emerald-50">
+                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-emerald-600 tracking-wide mb-0.5">
+                    <CheckCircle className="w-2.5 h-2.5" /> Completed
+                  </span>
+                  <span className="text-sm font-bold text-emerald-700 leading-none">{stats.completedInRange || 0}</span>
+                </div>
+                <div className="flex flex-col bg-gray-50/80 rounded p-1.5 border border-gray-100">
+                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-gray-500 tracking-wide mb-0.5">
+                    <Wrench className="w-2.5 h-2.5" /> Rescheduled
+                  </span>
+                  <span className="text-sm font-bold text-gray-700 leading-none">{stats.rescheduledInRange || 0}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ─── Single tool table ─────────────────────────────────────────────────────────
@@ -276,6 +336,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
     const [toolName, payload] = toolEntries[0]!;
     const meta = getToolMeta(toolName);
     const items = extractItems(payload);
+    const isFleetOverview = toolName.includes('fleet.query_overview');
     return (
       <div className="w-full rounded-xl border border-gray-100 shadow-sm overflow-hidden bg-white">
         {/* Count pill */}
@@ -286,7 +347,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
           </span>
           <span className="ml-auto text-xs text-gray-400">{items.length} {items.length === 1 ? 'record' : 'records'}</span>
         </div>
-        <ToolTable toolName={toolName} rawPayload={payload} />
+        {isFleetOverview ? <FleetOverviewCards items={items} /> : <ToolTable toolName={toolName} rawPayload={payload} />}
       </div>
     );
   }
@@ -345,7 +406,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
           <span className="text-xs text-gray-400">{activeItems.length} {activeItems.length === 1 ? 'record' : 'records'}</span>
         </div>
 
-        <ToolTable toolName={activeName} rawPayload={activePayload} />
+        {activeName.includes('fleet.query_overview') ? <FleetOverviewCards items={activeItems} /> : <ToolTable toolName={activeName} rawPayload={activePayload} />}
       </div>
     </div>
   );

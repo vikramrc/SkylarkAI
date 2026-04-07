@@ -24,7 +24,6 @@ export const orchestratorSchema = z.object({
     clarifyingQuestion: z.string().describe("Use this to Ask the user a question if mandatory parameters (e.g., Organization ID/Name) are missing and no tools can be called.").nullable(),
     reformulatedQuery: z.string().describe("Synthesize the entire conversational history (the original request plus any subsequent clarifications or filters) into a single, comprehensive goal statement. This should reflect your complete understanding of the user's final intent and parameters without assuming any missing constraints."),
     reasoning: z.string().describe("Your internal technical thought process. If you pick FEED_BACK_TO_ME, explain exactly what gap you are trying to fill (e.g., 'Fetched Job IDs, now need to fetch their specific form contents' or 'Direct query failed, trying standard tool fallback')."),
-    selectedResultKeys: z.array(z.string()).describe("A list of specific tool result keys (e.g., 'maintenance.query_status_iter2_0') from previous turns that you want to promote to the final answer and UI. If provided, the system will ONLY summarize and show these tools. Use this to skip re-running tools you already have data for."),
     unclassifiedLabels: z.array(z.object({
         label: z.string().describe("The ambiguous label or code extracted from the query (e.g., 'XXX1', 'Grease up')."),
         likelyEntityTypes: z.array(z.string()).describe("Top 3 most likely entity types from the supported mcp.resolve_entities list (e.g., 'Vessel', 'Machinery', 'Activity') based on Knowledge Graph and Context.")
@@ -125,245 +124,10 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 
 
 
-    // ─────────────────────────────────────────────────────────────────
-    // LEDGER vs. DATA SPLIT (GAP-4 FIX)
-    // ─────────────────────────────────────────────────────────────────
-    // We provide a "Technical Ledger" (keys + one-line headers) for recent results so the AI can
-    // identify and re-select data from a prior conversation without re-running the tool.
-    //
-    // GAP-4 FIX: We cap the ledger at the LAST 5 TURNS (not all history).
-    // Rationale from Section 62 (Orchestrator Diet):
-    //   - The Section 62 "Diet" exists to prevent token explosion in deep multi-turn sessions.
-    //   - The full history can reach 30 turns (×5 tools = 150 header lines per call).
-    //   - 5 turns is enough to cover any active investigation window while keeping tokens bounded.
-    //   - For truly old data, the AI's `currentScope` (Notebook) and `secondaryScope` (7-conv ledger)
-    //     carry the entity IDs that matter — the Orchestrator doesn't need the raw result headers.
-    // ─────────────────────────────────────────────────────────────────
     const history = Array.isArray(state.toolResults) ? state.toolResults : (state.toolResults ? [state.toolResults] : []);
     
     // REQUEST CYCLE: Only the turns from THIS specific HTTP request (for journal + loop breaker).
     const requestCycleTurns = history.slice(state.startTurnIndex || 0);
-
-    // ─────────────────────────────────────────────────────────────────
-    // LEDGER ISOLATION FOR BROAD SCOPE REQUESTS
-    // ─────────────────────────────────────────────────────────────────
-    // NORMAL MODE: Scoped to the last 5 turns (diet to prevent token explosion on deep multi-turn sessions).
-    //
-    // BROAD SCOPE MODE: Scoped to the CURRENT REQUEST only (requestCycleTurns).
-    //
-    // WHY: In broad-scope mode, prior vessel-specific results (e.g., maintenance.query_execution_history
-    // with vesselID from Conv 1) are stale and insufficient for the org-wide request. Showing them to
-    // the LLM causes it to erroneously re-select them ("I already have cancelled jobs data") and call
-    // no new tools, instead of fetching a fresh org-wide result. Restricting the ledger to the current
-    // request turns eliminates this temptation deterministically — the LLM only sees what was fetched
-    // FOR this broad-scope request, and is forced to plan the correct next retrieval step.
-    // ─────────────────────────────────────────────────────────────────
-    const isBroadScopeActive = (state.workingMemory as any)?.queryContext?.isBroadScope === true;
-    const ledgerTurns = isBroadScopeActive ? requestCycleTurns : history.slice(-5);
-
-    if (isBroadScopeActive && requestCycleTurns.length < history.slice(-5).length) {
-        console.log(`\x1b[35m[Orchestrator] 🌐 BROAD SCOPE LEDGER ISOLATION: Restricting tool result context to current-request turns only (${requestCycleTurns.length} turns vs ${history.slice(-5).length} in last-5 window). Prior vessel-specific results hidden.\x1b[0m`);
-    }
-
-    let resultsContext = "";
-    const toolLines: string[] = [];
-
-    // 🟢 Hoist query early — needed by the KEY REFERENCE hiding filter inside the forEach below.
-    // Without this, the filter's `query?.activeFilters` reference would hit a temporal dead zone
-    // because the canonical `const query` declaration lives further down the function (~line 393).
-    const queryEarlyRef = (state.workingMemory as any)?.queryContext as any;
-    // 🟢 Also hoist secondaryScope early — used by Rule 3 to avoid false entity-mismatch hiding
-    // on pivot turns where activeFilters.vesselID is still the PREVIOUS vessel.
-    const secondaryScopeEarlyIds: string[] = ((state.workingMemory as any)?.sessionContext?.secondaryScope || [])
-        .map((e: any) => e?.id)
-        .filter(Boolean);
-
-    // 🟢 Loop over the FULL ledger to build the headers and EXACT keys
-    ledgerTurns.forEach((turn: any, tIdx: number) => {
-        const iterNum = tIdx + 1; // Absolute turn count in history flawless!
-        const entries = Object.entries(turn || {});
-        
-        // 🟢 ID Sniffing: Only perform heavy ID harvesting/preview for the LATEST turn results
-        // This keeps the context window lean for the Orchestrator diet.
-        // FIX (Bug A): Use ledgerTurns.length-1, NOT history.length-1.
-        // tIdx is an index into ledgerTurns (which may be a subset of history in broad scope mode).
-        // Using history.length-1 caused isLatestTurn to always be false in broad scope,
-        // meaning ID harvesting never fired on the latest discovery results.
-        const isLatestTurn = tIdx === ledgerTurns.length - 1;
-
-        entries.forEach(([key, res]: [string, any]) => {
-            let data: any = res;
-            let errorMsg = "";
-            let isError = !!data?.isError;
-
-            if (data?.content?.[0]?.text) {
-                const text = data.content[0].text;
-                if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
-                    try { 
-                        data = JSON.parse(text); 
-                        isError = isError || !!data?.isError;
-                    } catch {}
-                } else if (isError) {
-                    errorMsg = text;
-                }
-            }
-            if (isError && !errorMsg) {
-                errorMsg = data?.error || data?.message || "Unknown tool execution error";
-            }
-
-            const label = data?.uiTabLabel || key;
-            const items = Array.isArray(data?.items) ? data.items : [];
-            const count = items.length;
-            
-            const filters = data?.appliedFilters || {};
-            const filterParts = Object.entries(filters)
-                .filter(([k, v]) => v !== null && v !== undefined && v !== '' && k !== 'organizationID')
-                .map(([k, v]) => `${k}:${v}`);
-            const fLabel = filterParts.length > 0 ? ` [filters: ${filterParts.join(', ')}]` : '';
-
-            // Per-tool counts if available (Restored for high-fidelity reasoning)
-            const overdue = items.filter((i: any) => i?.isOverdue === true || i?.statusCode === 'overdue').length;
-            const upcoming = items.filter((i: any) => i?.isUpcoming === true || i?.statusCode === 'upcoming').length;
-            const totalAvailable = data?.summary?.overdueCount !== undefined
-                ? `total available: overdue=${data.summary.overdueCount} upcoming=${data.summary.upcomingCount}`
-                : '';
-
-            // 🟢 Generic ID Sniffer: Only harvest relational IDs from the LATEST turn results
-            // to save tokens and prevent context window explosion.
-            let extractedIds: string[] = [];
-            if (isLatestTurn) {
-                items.forEach((item: any) => {
-                    Object.entries(item).forEach(([k, v]) => {
-                        // Extract any string field ending in 'ID' or exactly '_id'
-                        if (typeof v === 'string' && (k.endsWith('ID') || k === '_id' || k.endsWith('Id'))) {
-                            // Skip organizationID to prevent noise, only harvest relational IDs
-                            if (k !== 'organizationID' && k !== 'organizationId') {
-                                const pair = `${k}:${v}`;
-                                if (!extractedIds.includes(pair)) extractedIds.push(pair);
-                            }
-                        }
-                    });
-                });
-            }
-            // Limit to 15 to prevent context window explosion
-            const idPreview = extractedIds.length > 0 ? ` | Extracted Keys: [${extractedIds.slice(0, 15).join(', ')}]` : '';
-
-            let line = `- Key: "${key}" | Label: "${label}"${fLabel} | Count: ${count} items (Turn ${iterNum})${idPreview}`;
-            if (isError) {
-                line = `- Key: "${key}" | Label: "${label}"${fLabel} | Turn ${iterNum} | ❌ TOOL FAILED WITH ERROR: ${errorMsg}`;
-            } else if (count === 0) {
-                line += ` | ⚠️ EMPTY — no matching records exist for this vessel+filter`;
-            } else {
-                if (overdue > 0 || upcoming > 0) line += ` | returned: overdue=${overdue}, upcoming=${upcoming}`;
-                if (totalAvailable) line += ` | ${totalAvailable}`;
-                if (count < 2 && count > 0) line += ` | ⚠️ only ${count} match exists — database has no more records for this vessel+filter`;
-            }
-            // ─────────────────────────────────────────────────────────────────
-            // 🔑 KEY REFERENCE COMPATIBILITY FILTER
-            // ─────────────────────────────────────────────────────────────────
-            // Before showing this key to the LLM, verify it is compatible with
-            // the CURRENT activeFilters. Incompatible keys are HIDDEN from the
-            // ledger — the LLM cannot select what it cannot see, forcing fresh
-            // tool calls when the investigation context has shifted.
-            //
-            // Rules:
-            //  1. statusCode SCOPE: If active is multi-value ("any status") but
-            //     this key was fetched for a SINGLE specific status (e.g. "completed"),
-            //     it cannot satisfy the broader request → HIDE.
-            //  2. DATE RANGE NARROWING: If active startDate is EARLIER than the
-            //     date this key was fetched with, the result window is too narrow → HIDE.
-            //  3. ENTITY MISMATCH: If the key's vesselID is set and doesn't match any ID
-            //     in the active scope or activeFilters, it's from a different entity → HIDE.
-            // ─────────────────────────────────────────────────────────────────
-            const activeFilters = queryEarlyRef?.activeFilters as Record<string, string> | undefined;
-            const activeStatusCode: string = (activeFilters?.statusCode || '').trim();
-            const activeIsMultiStatus = activeStatusCode.includes(',');
-            const activeStartDate: string = (activeFilters?.startDate || '').trim();
-            const currentScopeIds: string[] = Array.isArray(queryEarlyRef?.currentScope) ? (queryEarlyRef.currentScope as string[]) : [];
-            const activeVesselID: string = (activeFilters?.vesselID || '').trim();
-
-            // Only apply the filter on keys from tools that carry appliedFilters (skip resolve/overview)
-            const isFilterableKey = !key.includes('resolve_entities') && !key.includes('fleet.query_overview');
-            if (!isError && isFilterableKey && activeFilters && typeof data === 'object' && data !== null) {
-                const kFilters = (data.appliedFilters || {}) as Record<string, string | null>;
-                const keyStatusCode: string = (kFilters.statusCode || '').trim();
-                const keyStartDate: string = (kFilters.startDate || '').trim();
-                const keyVesselID: string = (kFilters.vesselID || '').trim();
-
-                // Rule 1 — statusCode scope mismatch
-                // Fires when:
-                //  a) activeStatusCode is multi-value (e.g. "cancelled, missed") and key is single-status, OR
-                //  b) activeStatusCode is empty/null (= "any status" context) and key is single-status.
-                //     Empty means the session established "any status" — a single-status key is too narrow.
-                const activeStatusIsAny = !activeStatusCode; // empty/null/absent = any status
-                if ((activeIsMultiStatus || activeStatusIsAny) && keyStatusCode && !keyStatusCode.includes(',')) {
-                    const activeDesc = activeIsMultiStatus
-                        ? `multi-status ("${activeStatusCode.substring(0, 60)}")`
-                        : `any-status (no restriction — active statusCode is empty)`;
-                    console.log(
-                        `\x1b[35m[Orchestrator] 🙈 LEDGER HIDE: Key "${key}" SUPPRESSED — ` +
-                        `statusCode SCOPE MISMATCH. Active context is ${activeDesc} ` +
-                        `but key was fetched for single status "${keyStatusCode}". ` +
-                        `Key is too narrow for the current any-status investigation.\x1b[0m`
-                    );
-                    return; // skip this key — do not push to toolLines
-                }
-
-                // Rule 2 — date range narrowing
-                if (activeStartDate && keyStartDate && activeStartDate < keyStartDate) {
-                    console.log(
-                        `\x1b[35m[Orchestrator] 🙈 LEDGER HIDE: Key "${key}" SUPPRESSED — ` +
-                        `DATE RANGE MISMATCH. Active startDate "${activeStartDate}" is earlier than ` +
-                        `key's fetched startDate "${keyStartDate}". Key misses records in the active date window.\x1b[0m`
-                    );
-                    return; // skip this key
-                }
-
-                // Rule 3 — entity mismatch
-                // IMPORTANT: do NOT hide keys from entities that are already in secondaryScope.
-                // activeVesselID is from the PREVIOUS turn (stale on pivot turns), so a known entity
-                // that is the target of the pivot would be incorrectly hidden without this exemption.
-                const isKnownEntity = currentScopeIds.includes(keyVesselID) || secondaryScopeEarlyIds.includes(keyVesselID);
-                if (keyVesselID && activeVesselID && keyVesselID !== activeVesselID && !isKnownEntity) {
-                    console.log(
-                        `\x1b[35m[Orchestrator] 🙈 LEDGER HIDE: Key "${key}" SUPPRESSED — ` +
-                        `ENTITY MISMATCH. Key vesselID "${keyVesselID}" is not in active scope ` +
-                        `(activeFilters.vesselID="${activeVesselID}", currentScope=[${currentScopeIds.join(',')}], ` +
-                        `secondaryScope=[${secondaryScopeEarlyIds.join(',')}]).\x1b[0m`
-                    );
-                    return; // skip this key
-                }
-            }
-            // ─────────────────────────────────────────────────────────────────
-
-            toolLines.push(line);
-
-        });
-    });
-
-    if (toolLines.length > 0) {
-        // 🟢 Ledger Registry: derive exact key list from the ALREADY-FILTERED toolLines
-        // (not from ledgerTurns directly) so that hidden keys are also absent from the
-        // EXACT KEY REFERENCE block — preventing the LLM from selecting them by name.
-        const allowedKeys: string[] = [];
-        const allLedgerKeys = ledgerTurns.flatMap((turn: any) => Object.keys(turn || {}));
-        for (const line of toolLines) {
-            // Each toolLine starts with: - Key: "keyname" | ...
-            const match = line.match(/^- Key: "([^"]+)"/);
-            if (match) allowedKeys.push(match[1]!);
-        }
-        const hiddenKeyCount = allLedgerKeys.length - allowedKeys.length;
-        if (hiddenKeyCount > 0) {
-            console.log(
-                `\x1b[35m[Orchestrator] 🙈 KEY REFERENCE FILTER SUMMARY: ${hiddenKeyCount} key(s) hidden from LLM ledger ` +
-                `(${allowedKeys.length} visible of ${allLedgerKeys.length} total). ` +
-                `LLM cannot select hidden keys, forcing fresh tool calls for mismatched context.\x1b[0m`
-            );
-        }
-        resultsContext = `\n\n### PREVIOUS TOOL RESULTS IN THIS REQUEST:\n${toolLines.join('\n')}\n\n⚠️ EXACT KEY REFERENCE (Copy verbatim into selectedResultKeys — do NOT add or remove suffixes):\n${allowedKeys.map(k => `  "${k}"`).join('\n')}\n\n(Consult the 'DEDUPLICATION & CONDUCTOR RULES' in your system instructions for how to handle these results.)`;
-    }
-
-
     // 🟢 SESSION DECISION JOURNAL: Parse messages and tool results to create a causal log of THIS query cycle only.
     const journalEntries: string[] = [];
     const messages = state.messages || [];
@@ -405,16 +169,15 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     });
 
     // ─────────────────────────────────────────────────────────────────
-    // DECISION JOURNAL — TOOL MATCHING (GAP-2 FIX)
+    // DECISION JOURNAL — TOOL MATCHING
     // ─────────────────────────────────────────────────────────────────
     // The journal's mandate is: "Do NOT repeat the SAME Tool+Parameter in the CURRENT REQUEST."
     // This prevents pointless re-fetches within a single agentic loop (e.g., fetching fleet
     // overview twice in the same chain because the AI forgot it already did it).
     //
-    // GAP-2 FIX: This MUST use requestCycleTurns, NOT ledgerTurns.
-    // Using ledgerTurns (full history) would show tools from PREVIOUS conversations in the journal.
-    // The AI would then refuse to re-run a tool from yesterday's conversation even if the user
-    // explicitly asks for fresh data today, because the journal says "already done".
+    // The journal uses requestCycleTurns (the history of only THIS specific user query)
+    // to ensure the AI doesn't refuse to run a tool just because it was run in a 
+    // previous conversation.
     // ─────────────────────────────────────────────────────────────────
     requestCycleTurns.forEach((turn: any) => {
         Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
@@ -608,11 +371,12 @@ You MUST check the user's current query:
             : `✅ HITL Continuation Active: The user has just answered your clarifying question. Extract the organization from their latest message and use it directly in your tool calls. ⚠️ CRITICAL MANDATE: The Discovery-First Mandate still applies! If the request implies a "per-vessel" or "fleet-wide" scope, you MUST use fleet.query_overview first to resolve the vessels. DO NOT call data-retrieval tools directly at the organization level without vessel IDs.`;
 
     // 🌐 BROAD SCOPE OVERRIDE BLOCK: Inject when user explicitly requested org/fleet-wide data.
-    // This prevents the LLM from recycling prior vessel-specific results in subsequent iterations.
+    // This ensures the LLM performs a fresh fleet-wide discovery rather than staying scoped
+    // to a previously targeted vessel.
     const broadScopeStr = query?.isBroadScope
         ? `\n🌐 BROAD SCOPE MODE ACTIVE — User explicitly requested org/fleet-wide data in this conversation.\n` +
-          `⚠️ MANDATORY: Prior vessel-specific tool results (e.g., single-vessel data from a prior conversation) are INSUFFICIENT. ` +
-          `You MUST fetch fresh data at the organization or fleet level. ` +
+          `⚠️ MANDATORY: Prior vessel-specific focus (e.g., single-vessel context from a prior conversation) is INSUFFICIENT for this request. ` +
+          `You MUST fetch fresh data at the organization or fleet level to provide a complete report. ` +
           `Do NOT populate currentScope with historical vessel IDs from secondaryScope — leave it empty until fresh discovery runs.\n` +
           `🔎 ATTRIBUTE FILTERS: Apply your Active Filters (statusCode, date range, etc.) at the new broader scope ` +
           `UNLESS the user's latest message explicitly removed a specific filter (e.g., 'ignore the date range').`
@@ -642,6 +406,20 @@ You MUST check the user's current query:
         ? `\n🛑 SYSTEM INTERCEPT (Previous Turn): ${state.reasoning}\n`
         : "";
 
+    // 🟢 TOPIC PIVOT SCOPE GUARD: On iter=0, if the active anchored query has pivoted away
+    // from the stored rawQuery, the currentScope in state belongs to the PREVIOUS investigation.
+    // Showing it in the prompt pollutes the new query — the LLM will see a verified vessel ID
+    // (e.g., XXX1) and per Rule VIII.2, will be MANDATED to use it directly, skipping fleet
+    // discovery for the new broad/org-wide pivot (e.g., "vessel wise" for 2026 completed jobs).
+    // Fix: Display an EMPTY scope in the Current Query Context block when a topic pivot is detected,
+    // even if the underlying state still holds the old IDs (they're preserved in secondaryScope).
+    const currentIterForPivot = state.iterationCount || 0;
+    const isTopicPivotAtIter0 = currentIterForPivot === 0 && !!query?.rawQuery && anchoredRawQuery !== query?.rawQuery;
+    const displayCurrentScope = isTopicPivotAtIter0 ? [] : (query?.currentScope || []);
+    if (isTopicPivotAtIter0 && (query?.currentScope || []).length > 0) {
+        console.log(`\x1b[35m[Orchestrator] 🧹 TOPIC PIVOT SCOPE GUARD: Suppressed stale currentScope [${(query?.currentScope || []).join(', ')}] from prompt. Starting fresh for new query.\x1b[0m`);
+    }
+
     const memoryContext = [
         `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
         systemInterceptStr,
@@ -652,12 +430,12 @@ You MUST check the user's current query:
         secondaryStr,
         labelStr,
         query?.rawQuery || anchoredRawQuery
-            ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${(query?.currentScope || []).join(', ')}]` 
+            ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${displayCurrentScope.join(', ')}]` 
             : "",
-        resultsContext,
         deadEndStr,
         decisionJournal,
     ].filter(Boolean).join('\n');
+
 
 
     console.log(`\n\x1b[36m[Orchestrator] 🧠 Memory Context Injected:\x1b[0m\n${memoryContext}\n`);
@@ -1124,36 +902,22 @@ Instruction: Proceed with your investigation based on the complete context provi
         // even after the turn has been fully processed.
         isHITLContinuation: false,
         error: undefined,
-        selectedResultKeys: response.selectedResultKeys || []
     };
 
-
-    // 🟢 SMART PROMOTION BRIDGE: If we are summarizing WITH actual retrieval tools (no HITL interrupt),
-    // automatically promote all current-turn tools to selectedResultKeys.
-    // Guard: skip if clarifyingQuestion is set — that path zeroes out toolCalls and goes to HITL.
-    // 🟢 BUG-3 FIX: Use updates.feedBackVerdict (the authoritative written value) not response.feedBackVerdict
-    // (raw LLM output). The HITL guard below may override response.feedBackVerdict to 'SUMMARIZE',
-    // causing the Smart Promotion check to fire incorrectly on a HITL turn.
-    if (updates.feedBackVerdict === 'SUMMARIZE' && response.tools.length > 0 && !response.clarifyingQuestion) {
-        console.log(`[LangGraph Orchestrator] 🚀 Smart Promotion Active: Verifying UI visibility for ${response.tools.length} current tools...`);
-        response.tools.forEach((t: any, idx: number) => {
-            // Skip discovery/infrastructure tools in the UI unless explicitly named
-            if (t.name === 'mcp.resolve_entities') return;
-            
-            // Generate the prospective keys that execute_tools will use
-            const baseKey = `${t.name}_iter${nextIterationCount}`;
-            const indexedKey = `${baseKey}_${idx}`;
-            
-            if (!updates.selectedResultKeys!.includes(baseKey)) updates.selectedResultKeys!.push(baseKey);
-            if (!updates.selectedResultKeys!.includes(indexedKey)) updates.selectedResultKeys!.push(indexedKey);
-        });
-        console.log(`[LangGraph Orchestrator] 🎯 Promoted Keys:`, JSON.stringify(updates.selectedResultKeys));
-    }
 
     // 🟢 SECONDARY SCOPE ACCUMULATION: Reliably store any 'currentScope' ID output by the LLM
     // across all iterations, so it's not lost if the final SUMMARIZE turn outputs []
     const incomingIds: string[] = (response.currentScope || []).filter((id: any) => typeof id === 'string' && id.length > 0);
-    const previouslyAccumulated = state.workingMemory?.queryContext?.currentScope || [];
+    // 🟢 TOPIC PIVOT ACCUMULATION GUARD: On iter=0 when a topic pivot has occurred, do NOT
+    // merge the prior query's accumulated IDs into the new query's scope. The old IDs belong
+    // to a different investigation and should not contaminate the new query's currentScope state.
+    // Without this fix, even if the LLM outputs `currentScope: []`, the merge would re-introduce
+    // the old vessel ID (e.g., XXX1) into the state, causing EVERY subsequent prompt in this
+    // new query to also show it as an "Organic Discovery."
+    const previouslyAccumulated = isTopicPivotAtIter0 ? [] : (state.workingMemory?.queryContext?.currentScope || []);
+    if (isTopicPivotAtIter0 && (state.workingMemory?.queryContext?.currentScope || []).length > 0) {
+        console.log(`\x1b[35m[Orchestrator] 🧹 TOPIC PIVOT ACCUM GUARD: Discarding prior scope [${(state.workingMemory?.queryContext?.currentScope || []).join(', ')}] from accumulation on new query.\x1b[0m`);
+    }
     const finalIdsToPromote = [...new Set([...previouslyAccumulated, ...incomingIds])];
 
     if (!updates.workingMemory) updates.workingMemory = { 
@@ -1249,7 +1013,7 @@ Instruction: Proceed with your investigation based on the complete context provi
         console.log(`\x1b[33m[LangGraph Orchestrator] 🔄 Reformulated Ask: "${response.reformulatedQuery}"\x1b[0m`);
     }
 
-    console.log(`[LangGraph Orchestrator] Verdict: ${updates.feedBackVerdict} | Tools Requested: ${JSON.stringify(response.tools.map((t: any) => `${t.name} (conf: ${t.confidence})`))} | Selection: ${JSON.stringify(updates.selectedResultKeys)}`);
+    console.log(`[LangGraph Orchestrator] Verdict: ${updates.feedBackVerdict} | Tools Requested: ${JSON.stringify(response.tools.map((t: any) => `${t.name} (conf: ${t.confidence})`))} `);
 
     return updates;
 }

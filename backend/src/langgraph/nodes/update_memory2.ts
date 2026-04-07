@@ -54,6 +54,23 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
         scope: { ...existingMemory.sessionContext?.scope },
     };
 
+    // ─────────────────────────────────────────────────────────────────
+    // SNAPSHOT: Record which entity-scope keys+values are INHERITED from the previous session.
+    // This must be captured BEFORE Phase 1 runs, so we can distinguish precisely between:
+    //   (a) stale pointers from prior queries (same key AND same value as inherited)
+    //   (b) freshly resolved IDs from THIS turn's tools (same key type, DIFFERENT new hex value)
+    //
+    // Using a Map<key, value> instead of a Set<key>: if Phase 1 resolves "MV Blue Sky" to a
+    // new vesselID 'abc123' but the inherited vesselID was '683b...', the value mismatch ensures
+    // the fresh ID is promoted correctly to currentScope (not mistakenly excluded as stale).
+    // ─────────────────────────────────────────────────────────────────
+    const TRANSIENT_SCOPE_KEYS = ['vesselID', 'machineryID', 'scheduleID', 'activityID', 'costCenterID', 'searchTerm', 'label'];
+    const inheritedEntityScopeSnapshot = new Map<string, string>(
+        TRANSIENT_SCOPE_KEYS
+            .filter(k => !!(existingMemory.sessionContext?.scope as any)?.[k])
+            .map(k => [k, (existingMemory.sessionContext?.scope as any)[k] as string])
+    );
+
     // Flatten latest tool results
     const rawResults = state.toolResults || [];
     const history = Array.isArray(rawResults) ? rawResults : [rawResults];
@@ -66,6 +83,7 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
 
     // Extract scope + resolved entities from ALL current turns
     const labelToMatches: Record<string, any[]> = {};
+    const organicallyDiscoveredIds = new Set<string>();
 
     for (const turn of currentTurns) {
         for (const [turnKey, res] of Object.entries(turn || {})) {
@@ -104,10 +122,21 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                   });
                 }
             }
+
+            // C. Harvest ALL organic IDs from any returned array payload (e.g. fleet.query_overview)
+            // This prevents the "Blind LLM" stall where a tool returns 10 vessels but currentScope remains empty.
+            if (Array.isArray(data?.items)) {
+                data.items.forEach((item: any) => {
+                    const id = item._id || item.id;
+                    if (typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id)) {
+                        organicallyDiscoveredIds.add(id);
+                    }
+                });
+            }
         }
     }
 
-    // C. Resolve Ambiguities or Promote Singular Hits
+    // D. Resolve Ambiguities or Promote Singular Hits
     const ambiguousMatches: any[] = [];
     if (!sessionStateCommit.scope.resolvedLabels) {
         sessionStateCommit.scope.resolvedLabels = (existingMemory.sessionContext.scope as any).resolvedLabels || {};
@@ -338,10 +367,54 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
             : previouslyBroadScope; // Continuation turn: carry forward existing mode
 
 
-    // Harvest deterministicScope AFTER any old entity-scope keys were cleared
-    const deterministicScope = new Set<string>();
+    // ─────────────────────────────────────────────────────────────────
+    // GAP-2 FIX: Align scope clearing with orchestrator.ts's textual pivot check.
+    // isNewQuery (structural: iter<=1) is too broad — if the user retries with the EXACT same
+    // query text, isNewQuery=true but orchestrator shows the old scope (text didn't change),
+    // causing a split-brain: Orchestrator's iter=0 prompt says "you have vessel XXX1" but
+    // update_memory2's iter=1 writes currentScope=[] — the LLM acted on XXX1 but the scope
+    // is wiped before it gets confirmation. Scope clearing must be gated on CONTENT change.
+    //
+    // isGenuineTopicPivot = structural new query AND the query text actually changed.
+    // This precisely mirrors orchestrator.ts: anchoredRawQuery !== query?.rawQuery.
+    // ─────────────────────────────────────────────────────────────────
+    const isGenuineTopicPivot = isNewQuery && !!existingRawQuery && rawQuery.trim() !== existingRawQuery.trim();
+    if (isNewQuery) {
+        console.log(`\x1b[35m[UpdateMemory2] 🔀 Scope Pivot Check: isNewQuery=${isNewQuery} | isGenuineTopicPivot=${isGenuineTopicPivot} | existingRawQuery="${existingRawQuery.substring(0, 50)}" | newRawQuery="${rawQuery.substring(0, 50)}"\x1b[0m`);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // SCOPE BOUNDARY ISOLATION: deterministicScope extraction
+    // ─────────────────────────────────────────────────────────────────
+    // On a genuine topic pivot (isGenuineTopicPivot=true), sessionStateCommit.scope holds STALE
+    // TRANSIENT entity-scope pointers from the PREVIOUS investigation.
+    //
+    // We exclude these INHERITED STALE pointers from deterministicScope AND delete them from
+    // sessionStateCommit.scope entirely.
+    //
+    // GAP-1 FIX — why delete is mandatory:
+    // Without deletion, the stale key survives in sessionStateCommit.scope and gets written to
+    // LangGraph state. On iter=2+, isGenuineTopicPivot is false (only applies at iter=1),
+    // so the filter doesn't run — and the stale vesselID is resurrected into deterministicScope,
+    // re-contaminating currentScope mid-investigation.
+    //
+    // Stale-vs-fresh detection: A key is stale if BOTH the key AND value match the inherited
+    // snapshot (Map<key, value>). If Phase 1 freshly resolved the same key type to a NEW hex ID
+    // (e.g., vesselID for a different vessel), value mismatch excludes it from deletion.
+    //
+    // The knowledge is NOT lost — stale IDs remain in:
+    //   - resolvedLabels (label → hex ID mapping for re-use when user mentions "XXX1" again)
+    //   - secondaryScope (rolling 7-conv entity ledger in summarizer.ts)
+    const deterministicScope = new Set<string>(organicallyDiscoveredIds);
     Object.entries(sessionStateCommit.scope).forEach(([k, v]) => {
         if (typeof v === 'string' && /^[0-9a-fA-F]{24}$/.test(v) && k !== 'organizationID') {
+            const inheritedValue = inheritedEntityScopeSnapshot.get(k);
+            const isStaleInherited = inheritedValue !== undefined && v === inheritedValue;
+            if (isGenuineTopicPivot && !isBroadScopeTriggered && isStaleInherited) {
+                console.log(`\x1b[35m[UpdateMemory2] 🧹 SCOPE BOUNDARY: Deleted stale "${k}" (${v.substring(0, 8)}…) from scope. Preserved in resolvedLabels + secondaryScope.\x1b[0m`);
+                delete sessionStateCommit.scope[k]; // GAP-1 FIX: remove from scope to block resurrection at iter=2+
+                return; // Exclude from deterministicScope
+            }
             deterministicScope.add(v);
         }
     });

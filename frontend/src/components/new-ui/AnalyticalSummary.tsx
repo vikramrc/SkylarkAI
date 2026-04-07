@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, Calendar, CheckCircle2, Lightbulb, type LucideIcon } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Calendar, CheckCircle2, Lightbulb, TrendingUp, UserX, XCircle, Info, FileText, Shield, Search, type LucideIcon } from 'lucide-react';
 
 interface AnalyticalSummaryProps {
   title: string;
@@ -10,9 +10,17 @@ interface AnalyticalSummaryProps {
 
 const ICON_MAP: Record<string, LucideIcon> = {
   alert: AlertCircle,
+  warning: AlertTriangle,
   calendar: Calendar,
   check: CheckCircle2,
   lightbulb: Lightbulb,
+  'trending-up': TrendingUp,
+  'user-x': UserX,
+  cancel: XCircle,
+  info: Info,
+  file: FileText,
+  shield: Shield,
+  search: Search,
 };
 
 const COLOR_MAP: Record<string, { bg: string; border: string; text: string; icon: string; accent: string }> = {

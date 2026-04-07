@@ -114,62 +114,24 @@ export function createLangGraphWorkflowRouter() {
                         res.write(`event: status_update\ndata: ${JSON.stringify({ stage: 'error', message: errorMsg })}\n\n`);
                     }
 
-                    // 🟢 D. Emit Raw Tool Results — shared helper used by both execute_tools and summarizer nodes
-                    // currentTurnOnly=true (D1 path): emit only results from THIS request's turns (slice from startTurnIndex).
-                    //   This prevents old result tabs (e.g. cancelled-jobs from a prior turn) from bleeding into
-                    //   the UI when the user asks a different question that fires new tools.
-                    // currentTurnOnly=false (D2 path, default): use selectedResultKeys conductor logic as before,
-                    //   allowing the Summarizer to surface cross-turn context when no new tools were run.
-                    const emitToolResults = async (nodeLabel: string, currentTurnOnly = false) => {
+                    // 🟢 D. Emit Raw Tool Results — always emits results from THIS request's turns only.
+                    // In the always-execute model there is no cross-turn result reuse, so we always
+                    // slice from startTurnIndex to isolate the current HTTP request's tool outputs.
+                    const emitToolResults = async (nodeLabel: string) => {
                         try {
                             const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
                             const currentState = finalState.values;
-
                             const rawResults = currentState.toolResults || [];
                             const allTurns = Array.isArray(rawResults) ? rawResults : [rawResults];
-                            
-                            // 🟢 CONDUCTOR SELECTION: If the Orchestrator picked specific keys, promote them across all turns!
+
+                            // Always: only emit results from turns generated during THIS HTTP request
                             const mergedResults: Record<string, any> = {};
-                            const selection = currentState.selectedResultKeys || [];
-
-                            if (currentTurnOnly) {
-                                // D1: Only emit results generated during THIS request — ignore selectedResultKeys
-                                // to avoid surfacing historical turns loaded for Summarizer context.
-                                const currentTurns = allTurns.slice(startTurnIndex);
-                                currentTurns.forEach(turn => {
-                                    Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
-                                        mergedResults[key] = { ...val };
-                                    });
+                            const currentTurns = allTurns.slice(startTurnIndex);
+                            currentTurns.forEach(turn => {
+                                Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                                    mergedResults[key] = { ...val };
                                 });
-                            } else if (selection.length > 0) {
-                                // 🟢 D2 CONTEXT-AWARE CONDUCTOR SELECTION:
-                                // If this HTTP request produced ANY of the selected keys (they exist in current-request turns),
-                                // restrict the search scope to current-request turns only. This prevents old result tabs
-                                // (from prior HTTP requests) from bleeding into the UI alongside new results.
-                                //
-                                // Only fall back to ALL turns when the current request produced ZERO matching keys —
-                                // that is the pure "re-surface" scenario (no new tools ran, LLM wants to show old data).
-                                const currentRequestTurns = allTurns.slice(startTurnIndex);
-                                const currentRequestKeySet = new Set(
-                                    currentRequestTurns.flatMap((turn: any) => Object.keys(turn || {}))
-                                );
-                                const hasCurrentHits = selection.some((k: string) => currentRequestKeySet.has(k));
-                                const turnsToSearch = hasCurrentHits ? currentRequestTurns : allTurns;
-
-                                console.log(`[Workflow Route] 🎯 Conductor Selection: Promoting ${selection.length} keys to UI (scope: ${hasCurrentHits ? 'current-request only' : 'all-turns re-surface'})`);
-                                turnsToSearch.forEach((turn: any) => {
-                                    Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
-                                        if (selection.includes(key)) {
-                                            mergedResults[key] = { ...val };
-                                        }
-                                    });
-                                });
-                            } else {
-                                // Fallback: Default to only the VERY LAST turn results (Section 71 behavior)
-                                const turns = allTurns.slice(startTurnIndex);
-                                const finalTurn = turns.length > 0 ? turns[turns.length - 1] : {};
-                                Object.entries(finalTurn).forEach(([k, v]) => mergedResults[k] = { ...v as any });
-                            }
+                            });
 
                             // 🟢 Promote uiTabLabel normalization for Table mapping
                             Object.values(mergedResults).forEach((entry: any) => {
@@ -204,7 +166,7 @@ export function createLangGraphWorkflowRouter() {
                             const isFinalTurn = lastVerdict === "SUMMARIZE" || standsAmbiguous || (currentState.iterationCount || 0) >= 8;
                             
                             if (isFinalTurn) {
-                                await emitToolResults("execute_tools", true);
+                                await emitToolResults("execute_tools");
                                 toolResultsEmitted = true; // 🟢 Mark as sent so D2 doesn't double-emit
                             }
                         } catch (e) {
@@ -262,23 +224,14 @@ export function createLangGraphWorkflowRouter() {
                     const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
                     const rawResults = finalState.values?.toolResults || [];
                     const allTurns = Array.isArray(rawResults) ? rawResults : [rawResults];
-                    // 🟢 Final Turn Isolation: Respect Conductor's selection for DB persistence!
+                    // Always-execute: persist only the current-request turns
                     const mergedResults: Record<string, any> = {};
-                    const selection = finalState.values?.selectedResultKeys || [];
-
-                    if (selection.length > 0) {
-                        allTurns.forEach(turn => {
-                            Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
-                                if (selection.includes(key)) {
-                                    mergedResults[key] = { ...val };
-                                }
-                            });
+                    const currentTurns = allTurns.slice(startTurnIndex);
+                    currentTurns.forEach(turn => {
+                        Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                            mergedResults[key] = { ...val };
                         });
-                    } else {
-                        const currentTurns = allTurns.slice(startTurnIndex);
-                        const finalTurn = currentTurns.length > 0 ? currentTurns[currentTurns.length - 1] : {};
-                        Object.entries(finalTurn).forEach(([k, v]) => mergedResults[k] = { ...v as any });
-                    }
+                    });
 
                     // Normalize label for frontend ResultTable.tsx
                     Object.values(mergedResults).forEach((entry: any) => {

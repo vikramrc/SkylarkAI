@@ -83,10 +83,6 @@ const workflow = new StateGraph<SkylarkState>({
         reducer: (x: boolean | undefined, y: boolean | undefined) => y !== undefined ? y : x,
         default: () => undefined as any,
     },
-    selectedResultKeys: { 
-        reducer: (x: string[], y: string[]) => y?.length ? y : (x || []), // 🟢 Latest decision wins flawless!
-        default: () => [] 
-    },
     // 🌐 BROAD SCOPE FIX: Must be declared as a channel or orchestrator writes are silently dropped.
     // (x, y) => y ?? x: the most recent explicit value (true or false) always wins.
     // 🟢 Intent-First Persistence: Register reformulatedQuery as a state channel.

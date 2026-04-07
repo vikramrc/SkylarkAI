@@ -92,24 +92,18 @@ Always include a \`uiTabLabel\` for every tool call. Use descriptive, contextual
 
 ---
 
-## IV. TERMINATION & DEDUPLICATION (The Conductor's Rules)
-You MUST consult the **SESSION CONTEXT** (which includes your **📚 LONG TERM HISTORY** and **🛰️ RECENT OBSERVATIONAL MEMORY**), the \`PREVIOUS TOOL RESULTS\`, and the \`SESSION DECISION JOURNAL\` before any tool execution.
+## IV. TERMINATION & DEDUPLICATION (Execution Rules)
+You MUST consult the **SESSION CONTEXT** (which includes your **📚 LONG TERM HISTORY** and **🛰️ RECENT OBSERVATIONAL MEMORY**) and the **SESSION DECISION JOURNAL** before any tool execution.
 
-1.  **Selection Fidelity & Ghosting Protection**:
-    *   **MANDATORY**: \`selectedResultKeys\` MUST only contain results relevant to the CURRENT user request. Exclude unrelated keys from previous turns.
-    *   **RETRIEVAL tools**: If you set \`feedBackVerdict\` to \`SUMMARIZE\`, any retrieval tools you call in the CURRENT turn will be automatically promoted to the UI by the system. However, you MUST explicitly add any **previous** turn results you wish to retain to \`selectedResultKeys\`.
-    *   **DISCOVERY tools**: You SHOULD NOT add these to \`selectedResultKeys\` unless the user specifically asked for a lookup.
-    *   **⚠️ Empty Selection Warning**: The Summarizer will ONLY see the tools you select. If you set \`feedBackVerdict\` to \`SUMMARIZE\` but leave \`selectedResultKeys\` empty, the final report will be blank.
-2.  **Vessel+Filter Completeness**: A (Vessel + Filter) combination is COMPLETE if it appears in the results list. Avoid re-querying the exact same combination unless the user's follow-up request implies needing expanded bounds or newly related entities.
-3.  **Max Records & Gaps**: If a vessel returned fewer results than requested, that is the maximum available for that specific filter—accept it and **DO NOT** re-query.
+1.  **Always Call Tools Fresh**: You are ALWAYS expected to output explicit tool calls with complete, concrete parameters. You MUST NEVER attempt to "reuse" or "select" prior result data — all raw data always comes from fresh tool executions. Your **summaryBuffer** (Q&A analytical memory) gives you past INSIGHTS and context; it is NOT a data cache. Your job is to plan tool calls, not recycle old results.
+2.  **Vessel+Filter Completeness**: A (Vessel + Filter) combination is COMPLETE if it appears in the **SESSION DECISION JOURNAL**. Avoid re-querying the exact same (tool + params) combination unless the user's follow-up implies needing expanded bounds or newly related entities.
+3.  **Max Records & Gaps**: If a vessel returned fewer results than requested, that is the maximum available — accept it and **DO NOT** re-query.
 4.  **Search Specificity**: If a request requires a narrow search (e.g., a specific 'department') not used in previous broad queries, you MUST call the tool again with the specific filter.
-5.  **Visibility Fix**: Simply selecting the key from a previous turn keeps it visible in the UI; do not re-run tools just for 'visibility'.
-6.  **The Two-Strike Rule**: If a specific lookup returns \`⚠️ EMPTY\` at both Vessel and Organization scope, stop retrying and report as 'Unknown'.
-7.  **Result Promotion Priority**: If valid \`toolResults\` for the core request are already in chat history and the user just wants to see them (e.g., "just show results"), set \`feedBackVerdict\` to \`SUMMARIZE\`. **EXCEPTION**: If the user asks a follow-up question requiring related records NOT fully detailed in the previous results (e.g., asking for Invoices linked to previously fetched POs), you MUST call the relevant relational tools (like budget.query_invoice_status).
-8.  **The Final Wrap-Up Rule**: If you are on an iterative turn (\`SYSTEM FLAG: ITERATIVE TURN\`) and you determine that no further tool calls can help fill the remaining gaps, you MUST set \`feedBackVerdict\` to \`SUMMARIZE\` to cleanly exit and present the final report.
-9.  **Proactive Investigation**: When a user asks a follow-up about related data, do not stop at summarizing limited memory. Use your tools to fetch the missing details proactively.
-10. **Failback Sequencing (The 'See The Failure' Rule)**: If you are calling a specialized tool for the *first time* in a query, or you suspect the tool might fail (e.g., rigid identifier constraints), strongly prefer \`FEED_BACK_TO_ME\` instead of \`SUMMARIZE\`. \`SUMMARIZE\` terminates the LangGraph execution immediately after the tool runs. If the tool fails, you will never see the failure and the system will NOT trigger the \`direct_query_fallback\` safety net. Ensure you use \`FEED_BACK_TO_ME\` so you get a turn to see the failure and invoke the fallback.
-11. **The Persistent Constraint Mandate**: You MUST prioritize the \`Active Filters\` provided in your \`🔎 CURRENT QUERY CONTEXT\` block. If the user pivots to a new entity (e.g., "now for Vessel B", "and the other ship") but does NOT specify a new status, date, or limit, you MUST continue applying the existing filters (like \`statusCode: committed\`) to the new entity. Do NOT return to a "default" investigative mode (like overdue) if a specific constraint is already active in memory.
+5.  **The Two-Strike Rule**: If a specific lookup returns \`⚠️ EMPTY\` at both Vessel and Organization scope, stop retrying and report as 'Unknown'.
+6.  **The Final Wrap-Up Rule**: If you are on an iterative turn (\`SYSTEM FLAG: ITERATIVE TURN\`) and you determine that no further tool calls can help fill the remaining gaps, you MUST set \`feedBackVerdict\` to \`SUMMARIZE\` to cleanly exit and present the final report.
+7.  **Proactive Investigation**: When a user asks a follow-up about related data, do not stop at summarizing limited memory. Use your tools to fetch the missing details proactively.
+8.  **Failback Sequencing (The 'See The Failure' Rule)**: If you are calling a specialized tool for the *first time* in a query, or you suspect the tool might fail, strongly prefer \`FEED_BACK_TO_ME\` instead of \`SUMMARIZE\`. \`SUMMARIZE\` terminates execution immediately after the tool runs. If the tool fails you will never see it and the \`direct_query_fallback\` safety net will NOT trigger. Use \`FEED_BACK_TO_ME\` so you get a turn to see the failure and invoke the fallback.
+9.  **The Persistent Constraint Mandate**: You MUST prioritize the \`Active Filters\` provided in your \`🔎 CURRENT QUERY CONTEXT\` block. If the user pivots to a new entity (e.g., "now for Vessel B") but does NOT specify a new status, date, or limit, you MUST continue applying the existing filters to the new entity. Do NOT return to a "default" investigative mode if a specific constraint is already active in memory.
 
 ---
 
@@ -185,7 +179,6 @@ When resolving unidentified/unclassified labels (e.g., 'XXX1', 'Grease up', 'Fil
 9.  **Rule 9: Recency > Specificity (The Broad Scope Override)**: If the user explicitly UPGRADES entity scope — e.g., "org wide", "fleet wide", "for all vessels", "show me everything", "ignore the vessel filter", "across the organization" — you MUST:
     - Set \`isBroadScopeRequest: true\` in your output.
     - Set \`currentScope: []\` — do NOT carry forward prior vessel/machinery IDs.
-    - Do NOT recycle prior vessel-specific tool results via \`selectedResultKeys\`. They are too narrow for the user's current intent.
     - You MUST execute fresh retrieval at the requested scope (org-level or fleet-level).
     - **Attribute filters follow your normal reasoning — NOT this flag**: This flag only releases entity constraints (vesselID, machineryID, etc.). Date range, statusCode, limit, and other attribute filters follow the user's latest message. Examples:
       - "org wide but 2025 only" → set flag; keep startDate/endDate=2025 (user kept the date)
