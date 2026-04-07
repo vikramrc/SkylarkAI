@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, AlertTriangle, Calendar, CheckCircle2, Lightbulb, TrendingUp, UserX, XCircle, Info, FileText, Shield, Search, Ship, Paperclip, type LucideIcon } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Calendar, CheckCircle2, Lightbulb, TrendingUp, UserX, XCircle, Info, FileText, Shield, Search, Ship, Paperclip, ClipboardCheck, ShieldAlert, Settings, type LucideIcon } from 'lucide-react';
 
 interface AnalyticalSummaryProps {
   title: string;
@@ -24,6 +24,9 @@ const ICON_MAP: Record<string, LucideIcon> = {
   search: Search,
   ship: Ship,
   paperclip: Paperclip,
+  'clipboard-check': ClipboardCheck,
+  'shield-alert': ShieldAlert,
+  settings: Settings,
 };
 
 const COLOR_MAP: Record<string, { bg: string; border: string; text: string; icon: string; accent: string }> = {

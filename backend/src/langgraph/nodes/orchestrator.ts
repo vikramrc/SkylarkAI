@@ -316,6 +316,39 @@ ${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matches: ${m.
         console.log(`\x1b[35m[Orchestrator] 🚫 VESSEL GRAVITY SHIELD: Suppressed ${labelLines.length} resolvedLabel(s) from prompt (broad scope active). IDs stay in state.\x1b[0m`);
     }
 
+    // 🟢 FATAL DISCOVERY ERROR INTERCEPT
+    // Insert catastrophic errors directly into the Orchestrator prompt instead of aborting the node,
+    // so the LLM itself generates the clarifyingQuestion and sets the SUMMARIZE terminator natively.
+    let fatalErrorInstruction = "";
+    if ((state.iterationCount || 0) > 0 && requestCycleTurns.length > 0) {
+        const lastTurnResults = requestCycleTurns[requestCycleTurns.length - 1];
+        if (lastTurnResults) {
+            for (const [key, res] of Object.entries(lastTurnResults)) {
+                let data: any = res;
+                if (data?.content?.[0]?.text) {
+                    try { data = JSON.parse(data.content[0].text); } catch { /* ignore */ }
+                    if (data?.content) data = res; // Fallback if parsing didn't produce the object
+                }
+                const rawText = data?.content?.[0]?.text || data?.error || data?.message || "";
+                if (data?.isError && (rawText.includes("Organization not found") || rawText.includes("Vessel not found"))) {
+                    console.log(`\x1b[31m[LangGraph Orchestrator] 🚨 FATAL DISCOVERY DETECTED. Injecting intercept into LLM prompt.\x1b[0m`);
+                    fatalErrorInstruction = `\n🛑 SYSTEM EXCEPTION (Previous Turn): The previous tool call failed with the following fatal error: "${rawText}".\n` +
+                        `⚠️ MANDATORY ACTION: You MUST set \`clarifyingQuestion\` to ask the user for the correct organization or vessel name, set \`tools\` to [], and set \`feedBackVerdict\` to SUMMARIZE.\n`;
+                    
+                    // We must clear the bad org/vessel from the session state so it isn't treated as confirmed
+                    if (session?.scope) {
+                        delete session.scope.organizationID;
+                        delete session.scope.organizationShortName;
+                    }
+                    if (state.workingMemory?.queryContext?.activeFilters) {
+                        delete state.workingMemory.queryContext.activeFilters.organization;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     // ─── ORG CONTEXT GUARD (replaces passive scopeLine) ──────────────────────
     // When no org is in memory AND it's not a HITL continuation (user answering
     // a previous clarifying question), we inject a hard mandatory block so the
@@ -343,9 +376,9 @@ ${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matches: ${m.
             const prevType = prev._getType?.() || prev.role || 'ai';
             if (curType === 'human' && (prevType === 'ai' || prevType === 'assistant')) {
                 const prevContent: string = prev.content || '';
-                // If the preceding AI message looks like a short clarifying question, treat
-                // this human reply as a potential org answer and suppress the warning.
-                if (prevContent.includes('?') && prevContent.length < 400) {
+                // If the preceding AI message looks like a short clarifying question or explicitly requests verification,
+                // treat this human reply as a potential org answer and suppress the missing warning.
+                if ((prevContent.includes('?') || prevContent.toLowerCase().includes('what is') || prevContent.toLowerCase().includes('verify it')) && prevContent.length < 400) {
                     orgFoundInMessages = true;
                     console.log(`\x1b[33m[Orchestrator] 🛡️ OrgGuard: Org not yet in scope but detected HITL Q→A pair in messages. Suppressing ORG MISSING warning.\x1b[0m`);
                     break;
@@ -422,6 +455,7 @@ You MUST check the user's current query:
 
     const memoryContext = [
         `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
+        fatalErrorInstruction,
         systemInterceptStr,
         broadScopeStr,
         orgContextBlock,
@@ -681,6 +715,15 @@ Instruction: Proceed with your investigation based on the complete context provi
     let finalToolCalls = filteredTools;
     let finalVerdict = response.feedBackVerdict;
     let finalReasoning = response.reasoning;
+
+    // 🟢 LOOP BREAKER: If the Anti-Placeholder Guard stripped ALL requested tools,
+    // we MUST override FEED_BACK_TO_ME to SUMMARIZE. Otherwise, the graph executes 0 tools,
+    // loops back to UpdateMemory2 with no new data, and repeats infinitely!
+    if (finalToolCalls.length === 0 && (response.tools || []).length > 0 && finalVerdict === 'FEED_BACK_TO_ME') {
+        console.warn(`[LangGraph Orchestrator] 🛑 Loop Breaker: Anti-Placeholder Guard stripped all tools. Forcing SUMMARIZE to escape infinite loop.`);
+        finalVerdict = 'SUMMARIZE';
+        finalReasoning = `[ANTI-PLACEHOLDER GUARD] All requested tools were stripped because they contained invalid placeholder parameters. Forcing SUMMARIZE. Original Reasoning: ` + finalReasoning;
+    }
 
     // ─────────────────────────────────────────────────────────────────
     // FIX — DISCOVERY STALL GUARD

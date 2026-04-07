@@ -129,6 +129,7 @@ export function createLangGraphWorkflowRouter() {
                             const currentTurns = allTurns.slice(startTurnIndex);
                             currentTurns.forEach(turn => {
                                 Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                                    if (val && val.__from_feedback_loop === true) return;
                                     mergedResults[key] = { ...val };
                                 });
                             });
@@ -229,6 +230,7 @@ export function createLangGraphWorkflowRouter() {
                     const currentTurns = allTurns.slice(startTurnIndex);
                     currentTurns.forEach(turn => {
                         Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
+                            if (val && val.__from_feedback_loop === true) return;
                             mergedResults[key] = { ...val };
                         });
                     });

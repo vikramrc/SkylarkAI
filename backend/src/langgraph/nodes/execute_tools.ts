@@ -101,6 +101,14 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                     if (result && typeof result === 'object' && toolCall.uiTabLabel) {
                         result.uiTabLabel = toolCall.uiTabLabel;
                     }
+                    
+                    // 🟢 Only hide pure identity/discovery tools from the UI tabs!
+                    // Previously we hid EVERYTHING executed during a FEED_BACK_TO_ME turn, 
+                    // which caused multi-step data retrievals (like schedules -> machineries)
+                    // to drop the intermediate tables before reaching the UI.
+                    if (result && typeof result === 'object' && name === 'mcp.resolve_entities') {
+                        result.__from_feedback_loop = true;
+                    }
 
                     // 🟢 Capture tool failures as "data" so the Orchestrator can react to them flawlessly!
                     if (result && result.__ambiguity_stop === true) {

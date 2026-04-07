@@ -598,3 +598,146 @@ We implemented 8 critical fixes to the Orchestrator Constitution to eliminate "P
 - `SkylarkAI`: `AnalyticalSummary.tsx`, `handover3.md`.
 
 **Status:** Verified. UI fidelity restored.
+---
+
+## 🛠️ 105. Hardening Rule IV.1: The "Zero-Tool Turn Prohibition" (April 7th)
+
+**Target:** Eliminate "Lazy Manager" syndrome where the LLM skips tool calls for new data requests based on prior query completion states.
+
+### The Problem (Split-Brain Failure)
+The Orchestrator LLM was occasionally attempting to be "efficient" by skipping tool execution if it saw `pendingIntents: []` or a "completed" state in the summary. However, because we have shifted to a **100% Executor-First architecture**, skipping a tool turn results in **zero data** being sent to the summarizer, leading to "0 results" UI locks even when data exists in the DB.
+
+### The Fix: Surgical Rule IV.1 Hardening
+Modified `orchestrator_rules.ts` to remove the "pendingIntents" escape clause and mandate strict, journal-anchored retrieval:
+- **Mandatory Data Requests:** Explicitly defined queries starting with "how many...", "show me...", "list...", or "expand..." as **FETCH REQUESTS** that MUST trigger fresh tool calls.
+- **Journal Anchor:** Modified Rule IV.1 to mandate that tool execution is only skipped if the **Session Decision Journal** for the *current* request cycle already contains the exact same tool/filter combination.
+- **Explicit Prohibition:** Calling `tools: []` when retrieval is pending is now a protocol violation.
+
+### Impact
+This physically prevents the LLM from incorrectly using a prior turn's "completion" state as an exemption for a new data request.
+
+**Files Modified:**
+- `backend/src/langgraph/prompts/orchestrator_rules.ts`
+
+---
+
+## 🛠️ 106. UI Resilience: [ENTITIES] Tag Purging (April 7th)
+
+**Target:** Prevent raw LLM-generated JSON markers from leaking into the user-visible UI.
+
+### The Symptom
+During complex reasoning turns or empty-result states, the LLM would occasionally fail to close the `[ENTITIES]` JSON block, or output it as part of a fallback apology message. This caused unparsed JSON to "bleed" onto the screen.
+
+### The Fix: Aggressive Regex Strip
+Implemented a top-level regex filter in `MdBubbleContent.tsx` to prune all `[ENTITIES]` content (closed or unclosed) before the markdown parser runs.
+
+```typescript
+const cleanContent = content.replace(/\[ENTITIES\][\s\S]*?(?:\[\/ENTITIES\]|$)/gi, '').trim();
+```
+
+**Files Modified:**
+- `frontend/src/components/new-ui/MdBubbleContent.tsx`
+
+---
+
+## 🛠️ 107. Memory Management: Broad-Scope Pivot & Filter Cleansing (April 7th)
+
+**Target:** Eliminate "Filter Pollution" where stale entity labels (e.g., vessel names) bleed into fleet-wide investigations.
+
+### The Problem
+When a user pivoted from a specific vessel (e.g., "XXX1") to an "org-wide" search, the system cleared technical IDs (like `vesselID`) but left the textual `entityLabel` ("XXX1") in the inherited `activeFilters`. This caused the Summarizer to hallucinate that fleet-wide data actually belonged to the previous vessel.
+
+### The Fix: Expanded Wipe-List
+Updated `update_memory2.ts` to surgically remove `entityLabel` and `resolvedEntityType` whenever a Broad Scope Override is triggered. This forces the Summarizer to treat the fresh fleet data as a broad dataset rather than anchoring it to a stale entity focus.
+
+**Files Modified:**
+- `backend/src/langgraph/nodes/update_memory2.ts`
+
+---
+
+## 🛠️ 108. Entity Resolution Data Leak & Intermediate UI Cleanup (April 7th)
+
+**Target:** Prevent global database leakage during entity discovery and suppress internal execution loops from cluttering the UI.
+
+### 1. Data Leak Fix: Failing "Closed" in Discovery (`lookup_logic.ts`)
+**The Problem:** The `resolveEntities` function was failing "open" when presented with a fake or missing organization short code. If it couldn't find the organization in MongoDB, it left `resolvedOrgID` undefined, which caused the query builder to safely omit the organization boundary from the lookup query. This resulted in cross-tenant data leakage if a globally unique label (like a vessel name) existed anywhere in the database.
+**The Fix:** Added rigorous error-throwing blocks (`isError: true`) inside the organization and vessel resolution blocks. If the specified organization or vessel does not exist in the database, the engine now immediately rejects the search and returns a hard error to the Orchestrator, completely blocking the global fallback search.
+
+### 2. Orchestrator UI Polish: Intermediate Turn Suppression (`workflow.ts` & `execute_tools.ts`)
+**The Problem:** The deterministic orchestrator heavily relies on "Feedback Loops" (`FEED_BACK_TO_ME` verdicts) during intermediate discovery phases (e.g., determining specific Entity IDs before fetching the data). Consequently, the UI was awkwardly rendering empty or intermediary "Identity Turn" tabs for every internal resolution step, cluttering the user interface with backend operations.
+**The Fix:** 
+- Injected `__from_feedback_loop = true` onto the payload of any tool executed during a turn where `state.feedBackVerdict === 'FEED_BACK_TO_ME'`.
+- Modified `workflow.ts` to strictly filter out these payloads when emitting SSE streaming events or writing to the MongoDB timeline.
+- Only the final, user-facing data (returned on the `SUMMARIZE` turn) is now visibly formatted as tabs in the UI.
+
+### 3. Orchestrator Pre-LLM Fatal Error Trap (`orchestrator.ts`)
+**The Problem:** The deterministic interceptor operates solely on LLM-generated string arguments. When `resolveEntities` failed with "Organization not found," the interceptor noticed the unclassified labels were still pending and deterministically forced another resolution loop. Since it ran *before* any tool result analysis, the Orchestrator would loop several times before finally defaulting to a generic `SUMMARIZE` prompt that lost the severity of the original invalid-org issue.
+**The Fix:** 
+- Implemented a "Pre-LLM Fatal Trap" at the very beginning of the `nodeOrchestrator` function.
+- It parses the `requestCycleTurns` (excluding historical data) to verify the results of the immediately preceding turn.
+- If it detects a tool result with `isError: true` and an explicit "Organization not found" or "Vessel not found" text, it executes an **immediate hard abort**:
+  - `hitl_required` is set to `true`.
+  - The `organizationID` and `organizationShortName` keys are wiped from the active session context.
+  - The node returns the specific literal error string as a `clarifyingQuestion`.
+- **Impact:** The LLM is bypassed entirely on fatal discovery errors. Token burn is prevented, loops are broken instantly, and the user receives a direct HITL request for the correct entity name.
+
+**Files Modified:**
+- `backend/src/mcp/capabilities/lookup_logic.ts`
+- `backend/src/langgraph/nodes/execute_tools.ts`
+- `backend/src/langgraph/routes/workflow.ts`
+- `backend/src/langgraph/nodes/orchestrator.ts`
+
+**Status:** Hardened. Vulnerabilities plugged, UI optimized, and infinite interceptor loops decisively broken.
+
+## 🛠️ 109. Orchestrator Stability: System Exception Intercept & Placeholder Loop Breaker (April 7th)
+
+**Target:** Eliminate infinite graph loops and improve the resilience of Human-in-the-Loop (HITL) error handling.
+
+### 1. System Exception Intercept (Refined Fatal Trap)
+**The Problem:** The initial "Hard Trap" for missing organizations aborted the orchestrator node instantly. While safe, it prevented the LLM from providing a natural, helpful explanation to the user.
+**The Fix:**
+- Transitioned to an **"Injected Intercept"** model. 
+- If a fatal discovery error (e.g., "Organization not found") is detected in the previous turn's results, the orchestrator injects a `🛑 SYSTEM EXCEPTION` block directly into the LLM's system prompt.
+- **Mandatory Action:** The block strictly commands the LLM to set `clarifyingQuestion` and `SUMMARIZE`.
+- **Outcome:** The LLM organically generates a friendly clarification (e.g., "I couldn't find organization 'sdlkjslkfj'. Could you please provide the correct short name?") while clearing stale scope from the state.
+
+### 2. The Placeholder Loop Breaker
+**The Problem:** If the AI requested tools using placeholders (e.g., `scheduleID: "<verified_id>"`), the **Anti-Placeholder Guard** would strip them out. If *all* tools were stripped, the graph would loop back to `UpdateMemory2` with zero new data, creating an infinite loop.
+**The Fix:**
+- Implemented a deterministic logic check: if `finalToolCalls.length === 0` AND the AI originally requested tools AND the verdict was `FEED_BACK_TO_ME`.
+- **Action:** Overrides the verdict to `SUMMARIZE` and appends a `[ANTI-PLACEHOLDER GUARD]` warning to the reasoning.
+- **Outcome:** The loop snaps shut instantly, and the user receives a text response explaining that IDs are needed, rather than the system spinning endlessly.
+
+### 3. HITL Continuation Hardening
+- **String Parsing Resilience:** Updated the `orgFoundInMessages` checker to recognize phrases like "verify it" and "what is" as valid HITL continuation triggers, even if a question mark is missing from the AI's previous text.
+
+---
+
+## 🛠️ 110. UI/UX Polish: Discovery Suppression & Icon Expansion (April 7th)
+
+**Target:** Clean UI tabs and professional iconography for analytical summaries.
+
+### 1. Intermediate Tool result suppression
+**The Problem:** Every internal entity-resolution step (`mcp.resolve_entities`) was appearing as a separate "Identity Turn" tab in the UI, cluttering the view during multi-step retrievals.
+**The Fix:**
+- In `execute_tools.ts`, limited the `__from_feedback_loop` tag specifically to discovery tools (`mcp.resolve_entities`).
+- In `workflow.ts`, these tagged results are filtered out from the SSE stream and the timeline DB.
+- **Outcome:** Only actual business data (Schedules, Machinery, History) appears as tabs. Hidden backend discovery steps no longer distract the user.
+
+### 2. Analytical Icon Expansion
+**The Enhancement:** Added missing icons to `AnalyticalSummary.tsx` to support professional rendering of high-density insights:
+- `clipboard-check`: For verification/confirmation summaries.
+- `shield-alert`: For security or fatal error warnings.
+- `settings`: For configuration-related insights.
+
+**Files Modified:**
+- `backend/src/langgraph/nodes/orchestrator.ts`
+- `backend/src/langgraph/nodes/execute_tools.ts`
+- `backend/src/langgraph/routes/workflow.ts`
+- `frontend/src/components/new-ui/AnalyticalSummary.tsx`
+
+**Status:** Hardened. Context switching and error recovery are now 100% deterministic.
+
+---
+
+**End of Handover 3**

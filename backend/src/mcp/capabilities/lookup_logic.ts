@@ -163,7 +163,15 @@ export async function resolveEntities(args: {
             : { organizationName: new RegExp(`^${organizationName}$`, 'i') },
           { projection: { _id: 1 } }
         );
-        if (org) resolvedOrgID = String(org._id);
+        if (org) {
+            resolvedOrgID = String(org._id);
+        } else {
+            console.warn(`[Discovery Engine] ⚠️ Organization not found. Rejecting open search.`);
+            return {
+                content: [{ type: "text", text: `Error: Organization not found for "${organizationShortName || organizationName}"` }],
+                isError: true
+            };
+        }
     }
 
     // Resolve Vessel if Name supplied
@@ -175,7 +183,15 @@ export async function resolveEntities(args: {
           },
           { projection: { _id: 1 } }
         );
-        if (ves) resolvedVesselID = String(ves._id);
+        if (ves) {
+            resolvedVesselID = String(ves._id);
+        } else {
+            console.warn(`[Discovery Engine] ⚠️ Vessel not found. Rejecting open search.`);
+            return {
+                content: [{ type: "text", text: `Error: Vessel not found for "${vesselName}"` }],
+                isError: true
+            };
+        }
     }
 
     // 2. Build Query Filters
