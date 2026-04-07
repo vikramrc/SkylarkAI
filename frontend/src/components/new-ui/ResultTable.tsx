@@ -163,6 +163,18 @@ function FleetOverviewCards({ items }: { items: any[] }) {
                   </span>
                   <span className="text-sm font-bold text-emerald-700 leading-none">{stats.completedInRange || 0}</span>
                 </div>
+                <div className="flex flex-col bg-rose-50/80 rounded p-1.5 border border-rose-50">
+                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-rose-600 tracking-wide mb-0.5">
+                    <AlertCircle className="w-2.5 h-2.5" /> Cancelled
+                  </span>
+                  <span className="text-sm font-bold text-rose-700 leading-none">{stats.cancelledInRange || 0}</span>
+                </div>
+                <div className="flex flex-col bg-purple-50/80 rounded p-1.5 border border-purple-50">
+                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-purple-600 tracking-wide mb-0.5">
+                    <Clock className="w-2.5 h-2.5" /> Missed
+                  </span>
+                  <span className="text-sm font-bold text-purple-700 leading-none">{stats.missedInRange || 0}</span>
+                </div>
                 <div className="flex flex-col bg-gray-50/80 rounded p-1.5 border border-gray-100">
                   <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-gray-500 tracking-wide mb-0.5">
                     <Wrench className="w-2.5 h-2.5" /> Rescheduled
@@ -325,7 +337,20 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
 // ─── Main component ────────────────────────────────────────────────────────────
 
 const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
-  const toolEntries = Object.entries(results).filter(([, payload]) => extractItems(payload).length > 0);
+  const rawEntries = Object.entries(results).filter(([, payload]) => extractItems(payload).length > 0);
+  
+  // Deduplicate entries based on stringified items to prevent overlapping tabs 
+  // when the orchestrator calls the same tool repeatedly across multiple iterations
+  const uniqueEntriesMap = new Map<string, [string, any]>();
+  rawEntries.forEach(([key, payload]) => {
+    const items = extractItems(payload);
+    const dataHash = JSON.stringify(items);
+    if (!uniqueEntriesMap.has(dataHash)) {
+      uniqueEntriesMap.set(dataHash, [key, payload]);
+    }
+  });
+  
+  const toolEntries = Array.from(uniqueEntriesMap.values());
 
   const [activeTab, setActiveTab] = useState(0);
 

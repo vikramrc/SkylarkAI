@@ -852,7 +852,7 @@ Instruction: Proceed with your investigation based on the complete context provi
         const orgKey = orgID ? "organizationID" : (orgShortName ? "organizationShortName" : null);
         const orgValue = orgID || orgShortName;
 
-        if (orgKey && orgValue && !shouldShowOrgWarning) {
+        if (orgKey && orgValue) {
             actualUnclassified.forEach((item: any) => {
                 // Only resolve types explicitly guessed by the grounded AI (Capped at 3)
                 if (Array.isArray(item.likelyEntityTypes) && item.likelyEntityTypes.length > 0) {
