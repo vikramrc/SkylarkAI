@@ -99,7 +99,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   }
 
   return (
-    <div className="w-80 bg-white/60 backdrop-blur-xl border-r border-white/20 flex flex-col flex-shrink-0 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10">
+    <div className="w-80 bg-white/60 backdrop-blur-xl border-r border-gray-200 flex flex-col flex-shrink-0 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10">
       {/* Sidebar Header */}
       <div className="p-4 border-b border-gray-100/50 flex items-center justify-between flex-shrink-0">
         <h2 className="font-medium text-gray-900">{t('app.conversations')}</h2>
@@ -264,7 +264,7 @@ function ConversationItem({ conversation, isActive, onSelect, onTogglePin, onDel
 
   return (
     <div
-      className={`p-3 rounded-xl border transition-all duration-200 group relative ${
+      className={`p-3 rounded-lg border transition-all duration-200 group relative ${
         isActive
           ? 'bg-blue-50/90 border-blue-200 shadow-none'
           : 'bg-transparent border-transparent hover:bg-white/60 hover:border-gray-100 hover:shadow-sm'

@@ -115,7 +115,7 @@ function renderCell(key: string, value: any, row?: any): React.ReactNode {
       : <span className="text-gray-400 text-xs">No</span>;
   }
 
-  return <span className="text-gray-700">{vStr}</span>;
+  return <span className="text-gray-900">{vStr}</span>;
 }
 
 // ─── Fleet overview specific layout ────────────────────────────────────────────
@@ -131,55 +131,43 @@ function FleetOverviewCards({ items }: { items: any[] }) {
   }
 
   return (
-    <div className="p-3 bg-gray-50/40">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+    <div className="py-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {items.map((vessel, idx) => {
           const stats = vessel.awhStats || {};
           return (
-            <div key={idx} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col hover:border-gray-200 hover:shadow-md transition-all">
-              <div className="px-3 py-2 border-b border-gray-50 flex items-center justify-between bg-blue-50/20">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <Ship className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                  <span className="text-xs font-bold text-gray-800 truncate">{vessel.vesselName || vessel.VESSEL_NAME || 'Unknown Vessel'}</span>
+            <div key={idx} className="bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col hover:border-gray-300 transition-all shadow-none">
+              <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between bg-transparent">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Ship className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span className="text-[13px] font-semibold text-gray-900 truncate">{vessel.vesselName || vessel.VESSEL_NAME || 'Unknown Vessel'}</span>
                 </div>
-                <span className="text-[10px] text-gray-400 font-mono shrink-0 ml-2">{vessel.vesselImoNumber || vessel.VESSEL_IMO_NUMBER || '--'}</span>
+                <span className="text-[11px] text-gray-400 font-mono shrink-0 ml-2">{vessel.vesselImoNumber || vessel.VESSEL_IMO_NUMBER || '--'}</span>
               </div>
-              <div className="p-2 grid grid-cols-2 gap-1.5">
-                <div className="flex flex-col bg-red-50/80 rounded p-1.5 border border-red-50">
-                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-red-600 tracking-wide mb-0.5">
-                    <AlertCircle className="w-2.5 h-2.5" /> Overdue
+              <div className="p-3 grid grid-cols-2 gap-3">
+                <div className="flex flex-col">
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 tracking-tight mb-1">
+                    <AlertCircle className="w-3 h-3 text-red-500" /> Overdue
                   </span>
-                  <span className="text-sm font-bold text-red-700 leading-none">{stats.overdue || 0}</span>
+                  <span className="text-base font-semibold text-red-600 leading-none">{stats.overdue || 0}</span>
                 </div>
-                <div className="flex flex-col bg-amber-50/80 rounded p-1.5 border border-amber-50">
-                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-amber-600 tracking-wide mb-0.5">
-                    <Clock className="w-2.5 h-2.5" /> Upcoming
+                <div className="flex flex-col">
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 tracking-tight mb-1">
+                    <Clock className="w-3 h-3 text-amber-500" /> Upcoming
                   </span>
-                  <span className="text-sm font-bold text-amber-700 leading-none">{stats.upcoming7d || 0}</span>
+                  <span className="text-base font-semibold text-amber-600 leading-none">{stats.upcoming7d || 0}</span>
                 </div>
-                <div className="flex flex-col bg-emerald-50/80 rounded p-1.5 border border-emerald-50">
-                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-emerald-600 tracking-wide mb-0.5">
-                    <CheckCircle className="w-2.5 h-2.5" /> Completed
+                <div className="flex flex-col">
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 tracking-tight mb-1">
+                    <CheckCircle className="w-3 h-3 text-emerald-500" /> Completed
                   </span>
-                  <span className="text-sm font-bold text-emerald-700 leading-none">{stats.completedInRange || 0}</span>
+                  <span className="text-base font-semibold text-emerald-600 leading-none">{stats.completedInRange || 0}</span>
                 </div>
-                <div className="flex flex-col bg-rose-50/80 rounded p-1.5 border border-rose-50">
-                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-rose-600 tracking-wide mb-0.5">
-                    <AlertCircle className="w-2.5 h-2.5" /> Cancelled
+                <div className="flex flex-col">
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 tracking-tight mb-1">
+                    <Clock className="w-3 h-3 text-purple-500" /> Missed
                   </span>
-                  <span className="text-sm font-bold text-rose-700 leading-none">{stats.cancelledInRange || 0}</span>
-                </div>
-                <div className="flex flex-col bg-purple-50/80 rounded p-1.5 border border-purple-50">
-                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-purple-600 tracking-wide mb-0.5">
-                    <Clock className="w-2.5 h-2.5" /> Missed
-                  </span>
-                  <span className="text-sm font-bold text-purple-700 leading-none">{stats.missedInRange || 0}</span>
-                </div>
-                <div className="flex flex-col bg-gray-50/80 rounded p-1.5 border border-gray-100">
-                  <span className="flex items-center gap-1 text-[9px] uppercase font-bold text-gray-500 tracking-wide mb-0.5">
-                    <Wrench className="w-2.5 h-2.5" /> Rescheduled
-                  </span>
-                  <span className="text-sm font-bold text-gray-700 leading-none">{stats.rescheduledInRange || 0}</span>
+                  <span className="text-base font-semibold text-purple-600 leading-none">{stats.missedInRange || 0}</span>
                 </div>
               </div>
             </div>
@@ -210,20 +198,26 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
     key !== '_id' && key !== '__v' && typeof firstItem[key] !== 'object'
   );
 
-  const formatHeader = (key: string) =>
-    key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
+  const formatHeader = (key: string) => {
+    // Handle specific common acronyms first so they don't get split up
+    let formatted = key.replace(/ID/g, 'Id');
+    // Split on camelCase
+    formatted = formatted.replace(/([a-z])([A-Z])/g, '$1 $2');
+    // Capitalize each word (Title Case)
+    return formatted.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase()).trim();
+  };
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-100 text-sm">
+      <table className="min-w-full divide-y divide-gray-100 text-[15px] leading-relaxed">
         <thead>
-          <tr className="bg-gray-50/60">
-            <th className="w-6 px-4 py-2.5"></th>
+          <tr className="border-b border-gray-200 bg-white">
+            <th className="w-6 px-4 py-4"></th>
             {columns.map((col, idx) => (
               <th
                 key={idx}
                 scope="col"
-                className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 tracking-wide uppercase"
+                className="px-4 py-2 text-left text-xs font-semibold text-gray-500"
               >
                 {formatHeader(col)}
               </th>
@@ -242,11 +236,11 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
                   onClick={() => setExpandedRow(isExpanded ? null : rowIdx)} 
                   className="hover:bg-blue-50/30 transition-colors duration-100 cursor-pointer"
                 >
-                  <td className="px-4 py-2.5 whitespace-nowrap align-middle">
+                  <td className="px-4 py-4 whitespace-nowrap align-middle">
                     <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform duration-120 ${isExpanded ? 'rotate-90 text-blue-500' : ''}`} />
                   </td>
                   {columns.map((col, colIdx) => (
-                    <td key={colIdx} className="px-4 py-2.5 whitespace-nowrap align-middle">
+                    <td key={colIdx} className="px-4 py-4 whitespace-nowrap align-middle">
                       {renderCell(col, row[col], row)}
                     </td>
                   ))}
@@ -359,19 +353,10 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
   // Single tool — no tabs needed, just render the table directly
   if (toolEntries.length === 1) {
     const [toolName, payload] = toolEntries[0]!;
-    const meta = getToolMeta(toolName);
     const items = extractItems(payload);
     const isFleetOverview = toolName.includes('fleet.query_overview');
     return (
-      <div className="w-full rounded-xl border border-gray-100 shadow-sm overflow-hidden bg-white">
-        {/* Count pill */}
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100 bg-gray-50/50">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500">
-            {meta.icon}
-            <span style={{ color: meta.color }} className="font-semibold">{payload.uiTabLabel || humanizeToolName(toolName)}</span>
-          </span>
-          <span className="ml-auto text-xs text-gray-400">{items.length} {items.length === 1 ? 'record' : 'records'}</span>
-        </div>
+      <div className="w-full">
         {isFleetOverview ? <FleetOverviewCards items={items} /> : <ToolTable toolName={toolName} rawPayload={payload} />}
       </div>
     );
@@ -383,13 +368,12 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
   const activeItems = extractItems(activePayload);
 
   return (
-    <div className="w-full rounded-xl border border-gray-100 shadow-sm overflow-hidden bg-white">
+    <div className="w-full flex flex-col gap-2">
       {/* Tab bar */}
-      <div className="flex items-stretch border-b border-gray-100 bg-gray-50/50 overflow-x-auto">
+      <div className="flex items-stretch overflow-x-auto">
         {toolEntries.map(([toolName, payload], idx) => {
           const meta = getToolMeta(toolName);
           const isActive = idx === activeTab;
-          const count = extractItems(payload).length;
           const displayLabel = payload.uiTabLabel || humanizeToolName(toolName);
 
           return (
@@ -397,21 +381,14 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
               key={idx}
               onClick={() => setActiveTab(idx)}
               className={`
-                flex items-center gap-2 px-4 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 transition-all duration-150 outline-none
+                flex items-center gap-2 px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-all duration-150 outline-none
                 ${isActive
-                  ? 'border-blue-500 text-blue-600 bg-white'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-white/60'}
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 bg-transparent'}
               `}
             >
               <span style={{ color: isActive ? meta.color : undefined }}>{meta.icon}</span>
               <span>{displayLabel}</span>
-              <span className={`
-                ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold
-                ${isActive ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'}
-              `}>
-                {count}
-              </span>
-              {isActive && <ChevronRight className="w-3 h-3 ml-auto opacity-50" />}
             </button>
           );
         })}
@@ -423,14 +400,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
       </div>
 
       {/* Active tab content */}
-      <div className="relative">
-        {/* Active tab metadata bar */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-50 bg-white">
-          <span style={{ color: activeMeta.color }} className="font-medium text-xs">{activePayload.uiTabLabel || humanizeToolName(activeName)}</span>
-          <span className="text-gray-300 text-xs">·</span>
-          <span className="text-xs text-gray-400">{activeItems.length} {activeItems.length === 1 ? 'record' : 'records'}</span>
-        </div>
-
+      <div className="relative mt-2">
         {activeName.includes('fleet.query_overview') ? <FleetOverviewCards items={activeItems} /> : <ToolTable toolName={activeName} rawPayload={activePayload} />}
       </div>
     </div>

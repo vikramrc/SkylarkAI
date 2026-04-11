@@ -59,7 +59,7 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
   const segments = cleanContent.split(/(\[INSIGHT[\s\S]*?(?:\[\/INSIGHT\]|(?=\[INSIGHT)|$)|\[TABLE[\s\S]*?(?:\[\/TABLE\]|(?=\[TABLE)|$))/g).filter(Boolean);
 
   return (
-    <div className="space-y-4 text-base text-gray-800 leading-relaxed overflow-hidden">
+    <div className="space-y-4 text-[15px] text-gray-900 leading-relaxed overflow-hidden">
       {segments.map((segment, sIdx) => {
         // 🟢 TABLE block: [TABLE caption="..."] ... pipe table ... [/TABLE]
         // Resilience: Fallback to empty caption and end-of-string if unclosed.
@@ -129,10 +129,10 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
                 {isShowingChart && isChartable ? (
                   <InlineChart type={activeChartType} data={chartData} title={headers[0]!} />
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-indigo-100 bg-white/60 shadow-sm">
-                    <table className="min-w-full divide-y divide-gray-200 text-sm">
-                      <thead className="bg-indigo-50/50"><tr>{headers.map((h, i) => <th key={i} className="px-4 py-3 text-left font-semibold text-indigo-800 tracking-tight">{h}</th>)}</tr></thead>
-                      <tbody className="divide-y divide-gray-100 bg-white">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-4 py-3 text-gray-700">{cell}</td>)}</tr>)}</tbody>
+                  <div className="overflow-x-auto border-t border-b border-gray-200 pt-1 pb-1 mt-3 mb-4 bg-transparent">
+                    <table className="min-w-full divide-y divide-gray-100 text-[13px]">
+                      <thead className="bg-transparent"><tr>{headers.map((h, i) => <th key={i} className="px-3 py-2 text-left font-semibold text-gray-800">{h}</th>)}</tr></thead>
+                      <tbody className="divide-y divide-gray-50 bg-transparent">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-3 py-2 text-gray-700 align-top max-w-[300px] truncate hover:whitespace-normal hover:break-words">{cell}</td>)}</tr>)}</tbody>
                     </table>
                   </div>
                 )}
@@ -227,10 +227,10 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
                 {isShowingChart && isChartable ? (
                   <InlineChart type={activeChartType} data={chartData} title={headers[0]} />
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-gray-100 bg-white/60 shadow-sm">
-                    <table className="min-w-full divide-y divide-gray-200 text-sm">
-                      <thead className="bg-gray-50/50"><tr>{headers.map((h, i) => <th key={i} className="px-4 py-3 text-left font-semibold text-gray-800 tracking-tight">{h}</th>)}</tr></thead>
-                      <tbody className="divide-y divide-gray-100 bg-white">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-4 py-3 text-gray-700">{cell}</td>)}</tr>)}</tbody>
+                  <div className="overflow-x-auto border-t border-b border-gray-200 pt-1 pb-1 mt-3 mb-4 bg-transparent">
+                    <table className="min-w-full divide-y divide-gray-100 text-[13px]">
+                      <thead className="bg-transparent"><tr>{headers.map((h, i) => <th key={i} className="px-3 py-2 text-left font-semibold text-gray-800">{h}</th>)}</tr></thead>
+                      <tbody className="divide-y divide-gray-50 bg-transparent">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-3 py-2 text-gray-700 align-top max-w-[300px] truncate hover:whitespace-normal hover:break-words">{cell}</td>)}</tr>)}</tbody>
                     </table>
                   </div>
                 )}

@@ -371,9 +371,9 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
   }, [messages]);
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden">
+    <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-white">
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-6" ref={scrollContainerRef}>
+      <div className="flex-1 overflow-y-auto px-4 md:px-8 pt-6 pb-32" ref={scrollContainerRef}>
         {showWelcome ? (
           <div className="flex-1 h-full flex items-center justify-center p-6 relative overflow-hidden">
             <div className="max-w-3xl w-full text-center z-10">
@@ -414,13 +414,13 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
               </div>
 
               <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="w-full">
-                <div className="relative">
+                <div className="relative bg-white rounded-2xl border border-black/15 shadow-sm focus-within:shadow-md transition-all duration-200">
                   <textarea
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={t('chat.placeholder')}
-                    className="w-full px-5 py-4 pr-12 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none text-base bg-white shadow-sm"
-                    rows={4}
+                    className="w-full px-4 pt-[16px] pb-[12px] pr-14 outline-none resize-none text-[15px] bg-transparent leading-relaxed min-h-[52px] rounded-2xl"
+                    rows={1}
                     disabled={isProcessing}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
@@ -430,55 +430,69 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                     type="button" 
                     onClick={handleSubmit} 
                     disabled={!query.trim() || isProcessing} 
-                    className="absolute bottom-3 right-3 p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                    className={`absolute right-2.5 bottom-2 p-2 rounded-xl transition-all ${
+                      !query.trim()
+                        ? 'bg-gray-50 text-gray-400'
+                        : 'bg-black hover:bg-gray-800 text-white shadow-sm'
+                    }`}
                   >
-                    <Send className="w-4 h-4" />
+                    <Send className="w-5 h-5 flex-shrink-0" />
                   </button>
                 </div>
               </form>
             </div>
           </div>
         ) : (
-          <div className="max-w-4xl mx-auto space-y-6">
-            {messages.map((message) => (
-              <div key={message.id} className="flex flex-col">
+          <div className="max-w-4xl mx-auto w-full">
+            {messages.map((message, index) => {
+              const prevMsg = index > 0 ? messages[index - 1] : null;
+              // 32px gap (mt-8) for turn transitions (User -> AI) to hit target spacing
+              // 48px gap (mt-12) for entirely new clusters (Turn Gap)
+              const isFirst = index === 0;
+              let spacingClass = isFirst ? '' : 'mt-12';
+              if (prevMsg && message.type !== 'user') {
+                 spacingClass = 'mt-8';
+              }
+
+              return (
+              <div key={message.id} className={`flex flex-col w-full ${spacingClass}`}>
                 {message.type === 'user' && (
                   <div className="flex justify-end animate-fade-in-up">
-                    <div className="bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white rounded-2xl rounded-tr-sm px-5 py-3.5 shadow-sm max-w-2xl">
-                      <p className="text-sm font-medium whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                    <div className="bg-[#f4f4f4] text-gray-900 rounded-xl px-4 py-3 shadow-none max-w-[65%] text-[15px]">
+                      <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                     </div>
                   </div>
                 )}
                 {message.type === 'ai' && (
-                  <div className="flex justify-start animate-fade-in-up">
-                    <div className="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-5 py-4 shadow-sm max-w-3xl w-full">
+                  <div className="flex justify-start animate-fade-in-up w-full">
+                    <div className="grow bg-transparent border-0 rounded-none p-0 shadow-none max-w-full w-full text-[15px] text-gray-900">
                       <MdBubbleContent content={message.content} />
                     </div>
                   </div>
                 )}
                 {message.type === 'timeline' && timelineStatuses[message.id] && (
-                  <div className="max-w-2xl mx-auto w-full">
+                  <div className="w-full max-w-[65%] flex justify-start">
                     <StreamingTimeline status={timelineStatuses[message.id]} />
                   </div>
                 )}
                 {message.type === 'disambiguation' && (
-                  <div className="max-w-3xl">
+                  <div className="max-w-[65%] w-full">
                     <InlineDisambiguation conversation={message.content} onComplete={() => {}} phoenixUseStream={false} />
                   </div>
                 )}
                 {message.type === 'table' && (
-                  <div className="max-w-4xl mx-auto w-full mb-4 animate-fade-in-up">
+                  <div className="w-full animate-fade-in-up">
                     <ResultTable results={message.content} />
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
             {/* 🟢 Glowing Orb Loader for Pending Summaries stream layouts */}
             {isProcessing && messages.length > 0 && messages[messages.length - 1].type !== 'ai' && (
-              <div className="max-w-2xl mx-auto w-full mt-4 flex justify-start animate-fade-in-up">
-                <div className="flex items-center space-x-2 text-indigo-500 text-sm font-medium px-5 py-3 bg-white border border-gray-100 rounded-xl shadow-sm animate-pulse">
-                   <div className="w-2 h-2 bg-indigo-500 rounded-full animate-ping" />
-                   <span className="text-gray-600">Generating analytical synthesis...</span>
+              <div className="max-w-[65%] mx-auto ml-0 w-full mt-3 flex justify-start animate-fade-in-up">
+                <div className="flex items-center space-x-2 text-gray-500 text-sm font-medium px-2 py-1 bg-transparent animate-pulse">
+                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-ping" />
                 </div>
               </div>
             )}
@@ -489,40 +503,40 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
 
       {/* Floating Viewport Input Area (Transparent center anchor) */}
       {!showWelcome && (
-        <div className="bg-transparent px-4 pb-10 pt-4 z-20">
-          <div className="max-w-4xl mx-auto">
+        <div className="absolute bottom-0 w-full left-0 bg-gradient-to-t from-white via-white/90 to-transparent pb-6 pt-12 px-4 z-20 pointer-events-none">
+          <div className="max-w-3xl mx-auto pointer-events-auto">
             <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="w-full">
-              <div className="relative bg-white rounded-xl border border-gray-200 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/30 shadow-sm transition-all duration-200">
+              <div className="relative bg-white rounded-2xl border border-black/15 shadow-sm focus-within:shadow-md transition-all duration-200 group">
                 <textarea
                   ref={textareaRef}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={isProcessing ? "Processing response..." : (t('chat.placeholder') as string)}
+                  placeholder={isProcessing ? "Processing response..." : "Ask me anything about your maintenance operations..."}
                   disabled={isProcessing}
-                  rows={4}
-                  className="w-full px-5 py-4 pr-14 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-400 text-base rounded-xl"
+                  rows={1}
+                  className="w-full px-4 pt-[16px] pb-[12px] pr-14 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-500 text-[15px] rounded-2xl leading-relaxed min-h-[52px]"
                 />
                 
                 {isProcessing ? (
                   <button
                     type="button"
                     onClick={handleStop}
-                    className="absolute right-3 bottom-3 p-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-sm transition-all animate-pulse"
+                    className="absolute right-2.5 bottom-2 p-2 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-sm transition-all animate-pulse"
                   >
-                    <Square className="w-5 h-5" />
+                    <Square className="w-4 h-4" />
                   </button>
                 ) : (
                   <button
                     type="submit"
                     disabled={!query.trim()}
-                    className={`absolute right-3 bottom-3 p-2.5 rounded-xl transition-all ${
+                    className={`absolute right-2.5 bottom-2 p-2 rounded-xl transition-all ${
                       !query.trim()
                         ? 'bg-gray-50 text-gray-400'
-                        : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
+                        : 'bg-black hover:bg-gray-800 text-white shadow-sm'
                     }`}
                   >
-                    <Send className="w-5 h-5" />
+                    <Send className="w-5 h-5 flex-shrink-0" />
                   </button>
                 )}
               </div>
