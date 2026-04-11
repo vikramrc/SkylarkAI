@@ -70,8 +70,32 @@
       "execute": "クエリを実行しています...",
       "active": "アクティブ"
     },
+    "thought_process": "思考プロセス",
+    "thought_completed": "思考プロセスが完了しました",
+    "searching_kb": "ナレッジベースを参照中",
+    "analyzing_budget": "予算制約を分析中",
+    "mapping_schedules": "メンテナンススケジュールをマッピング中",
+    "retrieving_records": "レコードを取得中",
+    "querying_db": "データベースをクエリ中",
+    "orchestrating_tools": "ツールを編成中... 🔍",
+    "executing_tools": "並列ツールを実行中... 🛠️",
+    "updating_memory": "観察メモリを更新中... 🧠",
+    "finalizing_analysis": "分析を最終処理中... 📝",
+    "explaining_error": "エラーを説明中... 🚨",
     "error_stream": "ストリーミングエラー",
     "error_generic": "クエリの処理に失敗しました",
+    "error_pipeline": "⚠️ エラー実行パイプライン",
+    "stream_failed": "ストリーム接続が失敗したか、タイムアウトしました 🛑",
+    "stream_interrupted": "ストリームが中断されました 🛑",
+    "processing_response": "応答を処理中...",
+    "show_table": "テーブルを表示",
+    "show_chart": "チャートを表示",
+    "bar": "バー",
+    "pie": "パイ",
+    "copied": "コピーしました！",
+    "copy": "コピー",
+    "export": "エクスポート",
+    "analytical_insight": "分析的インサイト",
     "helper_send": "Enterで送信、Shift+Enterで改行"
   },
   "disambiguation": {
@@ -135,7 +159,14 @@
     "none_found": "結果が見つかりませんでした",
     "try_adjusting": "クエリや検索条件を調整してください",
     "table": "テーブル",
-    "page_of": "{{current}} / {{total}} ページ"
+    "page_of": "{{current}} / {{total}} ページ",
+    "no_fleet_data": "フリートデータが返されませんでした",
+    "unknown_vessel": "不明な船舶",
+    "no_tool_data": "このツールに対して返されたデータはありません",
+    "form_contents": "フォームの内容",
+    "unfilled": "未記入",
+    "template_files": "テンプレートの静的ファイル",
+    "sources_count": "{{count}}個のソース"
   },
   "bool": {
     "yes": "はい",
@@ -291,6 +322,8 @@
   "sidebar": {
     "new_chat": "新しいチャット",
     "search_placeholder": "チャットを検索...",
+    "no_conversations_found": "会話が見つかりませんでした",
+    "try_different_search": "別の検索キーワードを試してください",
     "delete_conversation_title": "会話の削除",
     "delete_conversation_message": "この会話を削除してもよろしいですか？この操作は取り消せません。"
   },

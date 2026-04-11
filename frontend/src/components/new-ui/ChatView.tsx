@@ -142,7 +142,7 @@ const ChatView: React.FC<ChatViewProps> = ({
     setMessages((prev) => [...prev, timelineMessage]);
     setTimelines((prev) => ({
       ...prev,
-      [tlId]: { stage: 'ambiguity', message: 'Analyzing request...', startTime: Date.now() },
+      [tlId]: { stage: 'ambiguity', message: t('status.analyzing'), messageKey: 'status.analyzing', startTime: Date.now() },
     }));
     currentTlIdRef.current = tlId;
 

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Database, FileText, Anchor, Ship, Package, Users, FileCheck, Wrench, BarChart2, ChevronRight, AlertCircle, Clock, CheckCircle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface ResultTableProps {
   results: Record<string, any>;
@@ -7,21 +8,21 @@ interface ResultTableProps {
 
 // ─── Tool icon / label helpers ───────────────────────────────────────────────
 
-const TOOL_META: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
-  maintenance: { icon: <Wrench className="w-3.5 h-3.5" />,   label: 'Maintenance',  color: '#f59e0b' },
-  budget:      { icon: <BarChart2 className="w-3.5 h-3.5" />, label: 'Budget',       color: '#10b981' },
-  procurement: { icon: <Package className="w-3.5 h-3.5" />,  label: 'Procurement',  color: '#6366f1' },
-  fleet:       { icon: <Ship className="w-3.5 h-3.5" />,      label: 'Fleet',        color: '#3b82f6' },
-  crew:        { icon: <Users className="w-3.5 h-3.5" />,     label: 'Crew',         color: '#ec4899' },
-  inventory:   { icon: <Database className="w-3.5 h-3.5" />,  label: 'Inventory',    color: '#8b5cf6' },
-  documents:   { icon: <FileCheck className="w-3.5 h-3.5" />, label: 'Documents',    color: '#0ea5e9' },
-  analytics:   { icon: <BarChart2 className="w-3.5 h-3.5" />, label: 'Analytics',    color: '#f43f5e' },
-  voyage:      { icon: <Anchor className="w-3.5 h-3.5" />,    label: 'Voyage',       color: '#14b8a6' },
+const TOOL_META: Record<string, { icon: React.ReactNode; labelKey: string; color: string }> = {
+  maintenance: { icon: <Wrench className="w-3.5 h-3.5" />,   labelKey: 'aiResults.section.work_history',  color: '#f59e0b' },
+  budget:      { icon: <BarChart2 className="w-3.5 h-3.5" />, labelKey: 'aiResults.section.other',       color: '#10b981' },
+  procurement: { icon: <Package className="w-3.5 h-3.5" />,  labelKey: 'aiResults.section.other',       color: '#6366f1' },
+  fleet:       { icon: <Ship className="w-3.5 h-3.5" />,      labelKey: 'aiResults.section.other',       color: '#3b82f6' },
+  crew:        { icon: <Users className="w-3.5 h-3.5" />,     labelKey: 'aiResults.section.other',       color: '#ec4899' },
+  inventory:   { icon: <Database className="w-3.5 h-3.5" />,  labelKey: 'aiResults.section.inventory_usage', color: '#8b5cf6' },
+  documents:   { icon: <FileCheck className="w-3.5 h-3.5" />, labelKey: 'aiResults.section.documents',    color: '#0ea5e9' },
+  analytics:   { icon: <BarChart2 className="w-3.5 h-3.5" />, labelKey: 'aiResults.section.other',       color: '#f43f5e' },
+  voyage:      { icon: <Anchor className="w-3.5 h-3.5" />,    labelKey: 'aiResults.section.other',       color: '#14b8a6' },
 };
 
 function getToolMeta(name: string) {
   const domain = name.split('.')[0] ?? name;
-  return TOOL_META[domain] ?? { icon: <FileText className="w-3.5 h-3.5" />, label: name, color: '#6b7280' };
+  return TOOL_META[domain] ?? { icon: <FileText className="w-3.5 h-3.5" />, labelKey: name, color: '#6b7280' };
 }
 
 function humanizeToolName(toolName: string): string {
@@ -75,10 +76,11 @@ const STATUS_COLORS: Record<string, string> = {
   critical:   'bg-red-200 text-red-800 border-red-300',
 };
 
-function renderCell(key: string, value: any, row?: any): React.ReactNode {
+function RenderCell({ colKey, value, row }: { colKey: string; value: any; row?: any }) {
+  const { t } = useTranslation();
   if (value === null || value === undefined) return <span className="text-gray-300">—</span>;
 
-  const kLower = key.toLowerCase();
+  const kLower = colKey.toLowerCase();
   const vStr = String(value);
 
   // Badge
@@ -111,8 +113,8 @@ function renderCell(key: string, value: any, row?: any): React.ReactNode {
   // Boolean
   if (typeof value === 'boolean') {
     return value
-      ? <span className="text-green-600 font-medium text-xs">Yes</span>
-      : <span className="text-gray-400 text-xs">No</span>;
+      ? <span className="text-green-600 font-medium text-xs">{t('bool.yes')}</span>
+      : <span className="text-gray-400 text-xs">{t('bool.no')}</span>;
   }
 
   return <span className="text-gray-900">{vStr}</span>;
@@ -121,11 +123,12 @@ function renderCell(key: string, value: any, row?: any): React.ReactNode {
 // ─── Fleet overview specific layout ────────────────────────────────────────────
 
 function FleetOverviewCards({ items }: { items: any[] }) {
+  const { t } = useTranslation();
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-8 text-gray-400">
         <Ship className="w-8 h-8 mb-2 opacity-40" />
-        <p className="text-sm">No fleet data returned.</p>
+        <p className="text-sm">{t('result.no_fleet_data')}</p>
       </div>
     );
   }
@@ -140,7 +143,9 @@ function FleetOverviewCards({ items }: { items: any[] }) {
               <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between bg-transparent">
                 <div className="flex items-center gap-2 min-w-0">
                   <Ship className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                  <span className="text-[13px] font-semibold text-gray-900 truncate">{vessel.vesselName || vessel.VESSEL_NAME || 'Unknown Vessel'}</span>
+                  <span className="text-[13px] font-semibold text-gray-900 truncate">
+                    {vessel.vesselName || vessel.VESSEL_NAME || t('result.unknown_vessel')}
+                  </span>
                 </div>
                 <span className="text-[11px] text-gray-400 font-mono shrink-0 ml-2">{vessel.vesselImoNumber || vessel.VESSEL_IMO_NUMBER || '--'}</span>
               </div>
@@ -181,6 +186,7 @@ function FleetOverviewCards({ items }: { items: any[] }) {
 // ─── Single tool table ─────────────────────────────────────────────────────────
 
 function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any }) {
+  const { t } = useTranslation();
   const items = extractItems(rawPayload);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
 
@@ -188,7 +194,7 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
     return (
       <div className="flex flex-col items-center justify-center py-12 text-gray-400">
         <FileText className="w-8 h-8 mb-2 opacity-40" />
-        <p className="text-sm">No data returned for this tool</p>
+        <p className="text-sm">{t('result.no_tool_data')}</p>
       </div>
     );
   }
@@ -241,7 +247,7 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
                   </td>
                   {columns.map((col, colIdx) => (
                     <td key={colIdx} className="px-4 py-4 whitespace-nowrap align-middle">
-                      {renderCell(col, row[col], row)}
+                      <RenderCell colKey={col} value={row[col]} row={row} />
                     </td>
                   ))}
                 </tr>
@@ -255,7 +261,7 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
                           <div className="border border-gray-100 rounded-lg bg-white p-3 shadow-sm">
                             <h4 className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1">
                               <FileText className="w-3.5 h-3.5 text-blue-500" />
-                              Form Contents
+                              {t('result.form_contents')}
                             </h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2">
                               {row.answers.map((ans: any, idx: number) => {
@@ -268,7 +274,7 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
                                       {ans.sectionTitle ? `[${ans.sectionTitle}] ` : ''}{ans.label}
                                     </span>
                                     <span className="text-sm text-gray-700 font-medium">
-                                      {ans.value !== null && ans.value !== undefined ? String(ans.value) : <span className="text-gray-300 italic">Unfilled</span>}
+                                      {ans.value !== null && ans.value !== undefined ? String(ans.value) : <span className="text-gray-300 italic">{t('result.unfilled')}</span>}
                                     </span>
                                     {hasAttachments && (
                                       <div className="flex items-center gap-1 mt-0.5 text-xs text-blue-600">
@@ -288,7 +294,7 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
                           <div className="border border-gray-100 rounded-lg bg-white p-3 shadow-sm">
                             <h4 className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1">
                               <FileText className="w-3.5 h-3.5 text-emerald-500" />
-                              Template Static Files
+                              {t('result.template_files')}
                             </h4>
                             <div className="flex flex-col gap-1.5">
                               {row.templateAttachments.map((f: any, idx: number) => (
@@ -331,6 +337,7 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
 // ─── Main component ────────────────────────────────────────────────────────────
 
 const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
+  const { t } = useTranslation();
   const rawEntries = Object.entries(results).filter(([, payload]) => extractItems(payload).length > 0);
   
   // Deduplicate entries based on stringified items to prevent overlapping tabs 
@@ -395,7 +402,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
 
         {/* right-side label */}
         <div className="ml-auto flex items-center pr-3 text-xs text-gray-400 gap-1.5 shrink-0">
-          <span className="hidden sm:inline">{toolEntries.length} sources</span>
+          <span className="hidden sm:inline">{t('result.sources_count', { count: toolEntries.length })}</span>
         </div>
       </div>
 

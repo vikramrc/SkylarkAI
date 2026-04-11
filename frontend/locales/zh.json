@@ -73,8 +73,32 @@
       "execute": "执行查询",
       "active": "活动"
     },
+    "thought_process": "思维过程",
+    "thought_completed": "思维过程已完成",
+    "searching_kb": "正在咨询知识库",
+    "analyzing_budget": "正在分析预算约束",
+    "mapping_schedules": "正在映射维护计划",
+    "retrieving_records": "正在检索记录",
+    "querying_db": "正在查询数据库",
+    "orchestrating_tools": "正在编排工具... 🔍",
+    "executing_tools": "正在执行并行工具... 🛠️",
+    "updating_memory": "正在更新观察记忆... 🧠",
+    "finalizing_analysis": "正在完成分析... 📝",
+    "explaining_error": "正在说明错误... 🚨",
     "error_stream": "流式传输错误",
     "error_generic": "处理查询失败",
+    "error_pipeline": "⚠️ 错误执行管道",
+    "stream_failed": "串流连接失败或超时 🛑",
+    "stream_interrupted": "串流已中断 🛑",
+    "processing_response": "正在处理响应...",
+    "show_table": "显示表格",
+    "show_chart": "显示图表",
+    "bar": "柱状图",
+    "pie": "饼图",
+    "copied": "已复制！",
+    "copy": "复制",
+    "export": "导出",
+    "analytical_insight": "分析见解",
     "helper_send": "按 Enter 发送，Shift+Enter 换行"
   },
   "disambiguation": {
@@ -138,7 +162,14 @@
     "none_found": "未找到结果",
     "try_adjusting": "请调整查询或搜索条件",
     "table": "表格",
-    "page_of": "第 {{current}} / {{total}} 页"
+    "page_of": "第 {{current}} / {{total}} 页",
+    "no_fleet_data": "未返回舰队数据",
+    "unknown_vessel": "未知船舶",
+    "no_tool_data": "此工具未返回数据",
+    "form_contents": "表单内容",
+    "unfilled": "未填写",
+    "template_files": "模板静态文件",
+    "sources_count": "{{count}} 个来源"
   },
   "bool": {
     "yes": "是",
@@ -290,6 +321,8 @@
   "sidebar": {
     "new_chat": "\u65b0\u5efa\u804a\u5929",
     "search_placeholder": "\u641c\u7d22\u804a\u5929...",
+    "no_conversations_found": "未找到会话",
+    "try_different_search": "尝试不同的搜索词",
     "delete_conversation_title": "\u5220\u9664\u5bf9\u8bdd",
     "delete_conversation_message": "\u60a8\u786e\u5b9a\u8981\u5220\u9664\u6b64\u5bf9\u8bdd\u5417\uff1f\u6b64\u64cd\u4f5c\u65e0\u6cd5\u64a4\u9500\u3002"
   },

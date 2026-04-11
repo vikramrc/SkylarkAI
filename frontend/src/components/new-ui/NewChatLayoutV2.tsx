@@ -120,24 +120,21 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={onToggleUI}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors text-sm font-medium"
-            >
-              <LayoutGrid className="w-4 h-4" />
-              <span>Classic View</span>
-            </button>
             <div className="relative">
               <button
                 onClick={() => setLangOpen((v) => !v)}
-                className="p-1.5 bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors"
+                className="p-1.5 bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors flex items-center gap-2 px-2.5"
+                title={t('app.language_tooltip')}
               >
                 <TbLanguage className="w-5 h-5" />
+                <span className="text-xs font-semibold uppercase">{i18n.language}</span>
               </button>
               {langOpen && (
-                <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-100 rounded-md shadow-lg z-30">
-                  <button className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm" onClick={() => handleSelectLanguage('en')}>English</button>
-                  <button className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm" onClick={() => handleSelectLanguage('ja')}>日本語</button>
+                <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-100 rounded-xl shadow-xl z-30 py-1 overflow-hidden animate-fade-in-up">
+                  <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('en')}>English</button>
+                  <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('ja')}>日本語</button>
+                  <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('zh')}>中文</button>
+                  <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('ko')}>한국어</button>
                 </div>
               )}
             </div>

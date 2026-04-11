@@ -150,7 +150,8 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
       [tlId]: {
         id: tlId,
         stage: 'ambiguity',
-        message: 'Analyzing request...',
+        message: t('status.analyzing'),
+        messageKey: 'status.analyzing',
         startTime: Date.now(),
       }
     }));
@@ -218,6 +219,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                         ...(prev[tlId] || {}), 
                         stage: data.stage || 'execute', 
                         message: data.message,
+                        messageKey: data.messageKey, // Allow clearing or updating messageKey flawlessly trigger
                         reasoning: data.reasoning // 🟢 Capture CoT reasoning for thought process UI trigger flawless
                      }
                  }));
@@ -299,7 +301,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
          console.error('SSE connection error:', e);
          setTimelineStatuses((prev) => ({
              ...prev,
-             [tlId]: { ...(prev[tlId] || {}), stage: 'error', message: 'Stream connection failed or timed out 🛑' }
+             [tlId]: { ...(prev[tlId] || {}), stage: 'error', message: t('chat.stream_failed') }
          }));
          setIsProcessing(false);
          eventSource.close();
@@ -319,7 +321,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
         {
           id: `ai-err-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           type: 'ai',
-          content: `⚠️ **Error Execution Pipeline**: ${error.message || 'Workflow Request Failed'}`,
+          content: `${t('chat.error_pipeline')}: ${error.message || t('chat.error_generic')}`,
           timestamp: new Date(),
         },
       ]);
@@ -348,7 +350,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
     }
     setTimelineStatuses((prev) => ({
       ...prev,
-      [Object.keys(prev).pop() || ""]: { ...(prev[Object.keys(prev).pop() || ""] || {}), stage: 'error', message: 'Stream interrupted 🛑' }
+      [Object.keys(prev).pop() || ""]: { ...(prev[Object.keys(prev).pop() || ""] || {}), stage: 'error', message: t('chat.stream_interrupted') }
     }));
     setIsProcessing(false);
   };
@@ -471,7 +473,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                   </div>
                 )}
                 {message.type === 'timeline' && timelineStatuses[message.id] && (
-                  <div className="w-full max-w-[65%] flex justify-start">
+                  <div className="w-full max-w-full flex justify-start">
                     <StreamingTimeline status={timelineStatuses[message.id]} />
                   </div>
                 )}
@@ -512,7 +514,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={isProcessing ? "Processing response..." : "Ask me anything about your maintenance operations..."}
+                  placeholder={isProcessing ? t('chat.processing_response') : t('chat.placeholder')}
                   disabled={isProcessing}
                   rows={1}
                   className="w-full px-4 pt-[16px] pb-[12px] pr-14 resize-none outline-none bg-transparent text-gray-900 placeholder-gray-500 text-[15px] rounded-2xl leading-relaxed min-h-[52px]"

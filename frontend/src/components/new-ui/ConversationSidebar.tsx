@@ -200,10 +200,10 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
               <div className="text-center py-12 text-gray-500">
                 <History className="w-12 h-12 mx-auto mb-3 opacity-30" />
                 <p className="text-sm font-medium mb-1">
-                  {searchQuery ? 'No conversations found' : t('app.no_conversations')}
+                  {searchQuery ? t('sidebar.no_conversations_found') : t('app.no_conversations')}
                 </p>
                 {searchQuery && (
-                  <p className="text-xs text-gray-400">Try a different search term</p>
+                  <p className="text-xs text-gray-400">{t('sidebar.try_different_search')}</p>
                 )}
               </div>
             )}

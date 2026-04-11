@@ -253,19 +253,29 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
   const formatClockTs = (ts: number) => new Date(ts).toLocaleTimeString('en-US', { hour12: false });
 
   const MASKED_LOGS: Record<string, string> = {
-    'direct_query_fallback': 'Consulting knowledge base',
-    'budget_query_cost_analysis': 'Analyzing budget constraints',
-    'list_maintenance_activities': 'Mapping maintenance schedules',
-    'fetching_data': 'Retrieving records',
-    'executing_query': 'Querying databases',
-    'analyzing_request': 'Re-evaluating parameters',
-    're_analyzing': 'Recalibrating constraints',
+    'direct_query_fallback': 'chat.searching_kb',
+    'budget_query_cost_analysis': 'chat.analyzing_budget',
+    'list_maintenance_activities': 'chat.mapping_schedules',
+    'fetching_data': 'chat.retrieving_records',
+    'executing_query': 'chat.querying_db',
+    'analyzing_request': 'status.analyzing',
+    'analyzing request': 'status.analyzing',
+    're_analyzing': 'status.re_analyzing',
+    'orchestrating tools': 'chat.orchestrating_tools',
+    'parallel tools': 'chat.executing_tools',
+    'observational memory': 'chat.updating_memory',
+    'finalizing analysis': 'chat.finalizing_analysis',
+    'explaining error': 'chat.explaining_error',
   };
 
   const getFriendlyText = (raw: string) => {
     const norm = raw.trim().toLowerCase();
+    
+    // 🟢 Preserve raw text if it contains numbers and tool/result keywords (dynamic logs)
+    if (/\d+/.test(raw) && (norm.includes('tool') || norm.includes('result'))) return raw;
+
     for (const [k, v] of Object.entries(MASKED_LOGS)) {
-      if (norm.includes(k.toLowerCase())) return v;
+      if (norm.includes(k.replace(/_/g, ' ').toLowerCase())) return t(v);
     }
     return raw;
   };
@@ -275,21 +285,21 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
     : 0;
 
   return (
-    <div className="flex w-full justify-start mt-4">
-      <div className="w-full max-w-2xl bg-white border border-gray-100/80 rounded-2xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] p-5 space-y-5">
+    <div className="flex w-full justify-start mt-3 mb-1">
+      <div className="w-full max-w-4xl bg-white/70 backdrop-blur-sm border border-gray-100/60 rounded-xl shadow-[0_2px_15px_rgb(0,0,0,0.03)] p-4 space-y-4">
         
         {/* Header/Timer */}
-        <div className="flex items-center justify-between gap-1.5 text-gray-800 text-sm font-semibold border-b border-gray-50 pb-3 cursor-pointer select-none" onClick={() => setIsExpanded(!isExpanded)}>
+        <div className="flex items-center justify-between gap-2 text-gray-700 text-sm font-semibold border-b border-gray-50 pb-2.5 cursor-pointer select-none transition-colors hover:bg-gray-50/30 rounded-t-lg px-1 -mx-1" onClick={() => setIsExpanded(!isExpanded)}>
           <div className="flex items-center gap-2">
-            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`} />
-            <span>Thought Process</span>
+            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`} />
+            <span>{t('chat.thought_process')}</span>
           </div>
-          <span className="tabular-nums text-xs text-gray-400">{totalSeconds}s</span>
+          <span className="tabular-nums text-[11px] text-gray-400">{totalSeconds}s</span>
         </div>
 
         {isExpanded && (
 
-        <div className="space-y-2 relative">
+        <div className="space-y-2 relative mt-1 pl-1">
           {items.map((it, idx) => {
             const isLast = idx === items.length - 1;
             const textRaw = it.messageKey ? t(it.messageKey) : (it.message ?? '');
@@ -305,11 +315,12 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
             return (
               <div key={it.id} className="relative">
                 {/* Visual Connector Line between nodes */}
+                {/* Visual Connector Line between nodes */}
                 {!isLast && (
-                  <div className="absolute left-[13px] top-9 h-full w-[2px] bg-gray-100" style={{ zIndex: 1 }}></div>
+                  <div className="absolute left-[13px] top-8 h-full w-[1.5px] bg-gray-50" style={{ zIndex: 1 }}></div>
                 )}
 
-                <div className={`flex items-start gap-3.5 p-3 rounded-xl transition-all ${isActive ? 'bg-gray-50/70 font-medium' : iconIsError ? 'bg-red-50/20 border border-red-100/30' : 'bg-transparent'}`} style={{ zIndex: 10, position: 'relative' }}>
+                <div className={`flex items-start gap-3 p-2 rounded-lg transition-all ${isActive ? 'bg-gray-50/50 font-medium' : iconIsError ? 'bg-red-50/10 border border-red-100/20' : 'bg-transparent'}`} style={{ zIndex: 10, position: 'relative' }}>
                   {isActive ? (
                     <div className="p-1 rounded-full bg-white shadow-sm ring-1 ring-gray-100 flex-shrink-0 mt-0.5">
                       <Loader2 className="w-4 h-4 text-black animate-spin" />
@@ -320,18 +331,18 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
                     </div>
                   ) : (
                     <div className="p-1 rounded-full bg-black flex-shrink-0 mt-0.5">
-                      <Check className="w-4 h-4 text-white" strokeWidth={3} />
+                      <Check className="w-4 h-4 text-white" strokeWidth={2.5} />
                     </div>
                   )}
 
-                  <div className="flex-1 min-w-0">
-                    <span className={`text-sm font-medium ${iconIsError ? 'text-red-800' : isActive ? 'text-gray-900' : 'text-gray-600'}`}>
+                  <div className="flex-1 min-w-0 mt-0.5">
+                    <span className={`text-[13px] font-medium ${iconIsError ? 'text-red-800' : isActive ? 'text-gray-900' : 'text-gray-500'}`}>
                       {text}
                     </span>
                     
                     {/* 🟢 Reasoning / CoT Chain Display flawlessly trigger */}
                     {it.reasoning && !iconIsError && (
-                      <div className="text-[11px] leading-relaxed text-gray-400 mt-1 italic border-l-2 border-gray-100 pl-2 py-0.5">
+                      <div className="text-[12px] leading-relaxed text-gray-500 mt-2 border-l border-gray-100 pl-3 py-1.5 bg-gray-50/30 rounded-r-md">
                         {it.reasoning}
                       </div>
                     )}

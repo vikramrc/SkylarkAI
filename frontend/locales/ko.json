@@ -73,8 +73,27 @@
       "execute": "\ucffc\ub9ac \uc2e4\ud589",
       "active": "\ud65c\uc131"
     },
+    "thought_process": "사고 과정",
+    "thought_completed": "사고 과정 완료",
+    "searching_kb": "지식 베이스 상담 중",
+    "analyzing_budget": "예산 제약 분석 중",
+    "mapping_schedules": "유지 관리 일정 매핑 중",
+    "retrieving_records": "기록 검색 중",
+    "querying_db": "데이터베이스 쿼리 중",
     "error_stream": "\uc2a4\ud2b8\ub9ac\ubc0d \uc624\ub958",
     "error_generic": "\ucffc\ub9ac \ucc98\ub9ac \uc2e4\ud328",
+    "error_pipeline": "⚠️ 오류 실행 파이프라인",
+    "stream_failed": "스트림 연결 실패 또는 시간 초과 🛑",
+    "stream_interrupted": "스트림이 중단되었습니다 🛑",
+    "processing_response": "응답 처리 중...",
+    "show_table": "테이블 보기",
+    "show_chart": "차트 보기",
+    "bar": "바",
+    "pie": "파이",
+    "copied": "복사되었습니다!",
+    "copy": "복사",
+    "export": "내보내기",
+    "analytical_insight": "분석적 인사이트",
     "helper_send": "Enter: \uc804\uc1a1, Shift+Enter: \uc904\ubc14\uae30"
   },
   "disambiguation": {
@@ -138,7 +157,14 @@
     "none_found": "\uacb0\uacfc\uac00 \uc5c6\uc2b5\ub2c8\ub2e4",
     "try_adjusting": "\uc9c8\uc758 \ub610\ub294 \uac80\uc0c9\uc5b4\ub97c \uc870\uc815\ud574 \ubcf4\uc138\uc694",
     "table": "\ud14c\uc774\ube14",
-    "page_of": "{{current}} / {{total}}\ud398\uc774\uc9c0"
+    "page_of": "{{current}} / {{total}}\ud398\uc774\uc9c0",
+    "no_fleet_data": "선단 데이터가 반환되지 않았습니다",
+    "unknown_vessel": "알 수 없는 선박",
+    "no_tool_data": "이 도구에 대해 반환된 데이터가 없습니다",
+    "form_contents": "양식 내용",
+    "unfilled": "미기입",
+    "template_files": "템플릿 정적 파일",
+    "sources_count": "{{count}}개의 소스"
   },
   "bool": {
     "yes": "\uc608",
@@ -290,6 +316,8 @@
   "sidebar": {
     "new_chat": "\uc0c8 \ucc44\ud305",
     "search_placeholder": "\ucc44\ud305 \uac80\uc0c9...",
+    "no_conversations_found": "대화를 찾을 수 없습니다",
+    "try_different_search": "다른 검색어를 입력해 보세요",
     "delete_conversation_title": "\ub300\ud654 \uc0ad\uc81c",
     "delete_conversation_message": "\uc774 \ub300\ud654\ub97c \uc0ad\uc81c\ud558\uc2dc\uaca0\uc2b5\ub2c8\uae4c? \uc774 \uc791\uc5c5\uc740 \ub418\ub3cc\ub9b4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4."
   },

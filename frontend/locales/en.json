@@ -74,8 +74,32 @@
       "execute": "Executing query",
       "active": "Active"
     },
+    "thought_process": "Thought Process",
+    "thought_completed": "Thought process completed",
+    "searching_kb": "Consulting knowledge base",
+    "analyzing_budget": "Analyzing budget constraints",
+    "mapping_schedules": "Mapping maintenance schedules",
+    "retrieving_records": "Retrieving records",
+    "querying_db": "Querying databases",
+    "orchestrating_tools": "Orchestrating tools... 🔍",
+    "executing_tools": "Executing Parallel Tools... 🛠️",
+    "updating_memory": "Updating Observational Memory... 🧠",
+    "finalizing_analysis": "Finalizing Analysis... 📝",
+    "explaining_error": "Explaining Error... 🚨",
     "error_stream": "Streaming error",
     "error_generic": "Failed to process query",
+    "error_pipeline": "⚠️ Error Execution Pipeline",
+    "stream_failed": "Stream connection failed or timed out 🛑",
+    "stream_interrupted": "Stream interrupted 🛑",
+    "processing_response": "Processing response...",
+    "show_table": "Show Table",
+    "show_chart": "Show Chart",
+    "bar": "Bar",
+    "pie": "Pie",
+    "copied": "Copied!",
+    "copy": "Copy",
+    "export": "Export",
+    "analytical_insight": "Analytical Insight",
     "helper_send": "Press Enter to send, Shift+Enter for new line"
   },
   "disambiguation": {
@@ -139,7 +163,14 @@
     "none_found": "No results found",
     "try_adjusting": "Try adjusting your query or search terms",
     "table": "Table",
-    "page_of": "Page {{current}} of {{total}}"
+    "page_of": "Page {{current}} of {{total}}",
+    "no_fleet_data": "No fleet data returned",
+    "unknown_vessel": "Unknown Vessel",
+    "no_tool_data": "No data returned for this tool",
+    "form_contents": "Form Contents",
+    "unfilled": "Unfilled",
+    "template_files": "Template Static Files",
+    "sources_count": "{{count}} sources"
   },
   "bool": {
     "yes": "Yes",
@@ -287,6 +318,8 @@
   "sidebar": {
     "new_chat": "New Chat",
     "search_placeholder": "Search chats...",
+    "no_conversations_found": "No conversations found",
+    "try_different_search": "Try a different search term",
     "delete_conversation_title": "Delete Conversation",
     "delete_conversation_message": "Are you sure you want to delete this conversation? This action cannot be undone."
   },
