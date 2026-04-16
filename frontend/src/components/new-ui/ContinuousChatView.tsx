@@ -377,8 +377,8 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto px-4 md:px-8 pt-6 pb-32" ref={scrollContainerRef}>
         {showWelcome ? (
-          <div className="flex-1 h-full flex items-center justify-center p-6 relative overflow-hidden">
-            <div className="max-w-3xl w-full text-center z-10">
+          <div className="flex-1 min-h-full flex items-center justify-center p-4 md:p-6 relative">
+            <div className="max-w-3xl w-full text-center z-10 pb-8">
               <div className="mb-8">
                 <div className="inline-flex items-center justify-center w-20 h-20 bg-primary-100 rounded-full mb-5 mx-auto">
                   <MessageSquare className="w-10 h-10 text-primary-600" />
@@ -460,7 +460,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
               <div key={message.id} className={`flex flex-col w-full ${spacingClass}`}>
                 {message.type === 'user' && (
                   <div className="flex justify-end animate-fade-in-up">
-                    <div className="bg-[#f4f4f4] text-gray-900 rounded-xl px-4 py-3 shadow-none max-w-[65%] text-[15px]">
+                    <div className="bg-[#f4f4f4] text-gray-900 rounded-xl px-4 py-3 shadow-none max-w-[85%] sm:max-w-[65%] text-[15px]">
                       <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                     </div>
                   </div>
@@ -478,7 +478,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                   </div>
                 )}
                 {message.type === 'disambiguation' && (
-                  <div className="max-w-[65%] w-full">
+                  <div className="max-w-[85%] sm:max-w-[65%] w-full">
                     <InlineDisambiguation conversation={message.content} onComplete={() => {}} phoenixUseStream={false} />
                   </div>
                 )}
@@ -492,7 +492,7 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
             })}
             {/* 🟢 Glowing Orb Loader for Pending Summaries stream layouts */}
             {isProcessing && messages.length > 0 && messages[messages.length - 1].type !== 'ai' && (
-              <div className="max-w-[65%] mx-auto ml-0 w-full mt-3 flex justify-start animate-fade-in-up">
+              <div className="max-w-[85%] sm:max-w-[65%] mx-auto ml-0 w-full mt-3 flex justify-start animate-fade-in-up">
                 <div className="flex items-center space-x-2 text-gray-500 text-sm font-medium px-2 py-1 bg-transparent animate-pulse">
                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-ping" />
                 </div>

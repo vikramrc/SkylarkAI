@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Search, Pin, Trash2, History, User } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Search, Pin, Trash2, History, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import ConfirmationModal from './ConfirmationModal';
 
@@ -16,6 +16,10 @@ interface ConversationSidebarProps {
   onDelete: (conversationId: string) => void;
   loading: boolean;
   userEmail: string | null;
+  /** Mobile-only: controls whether the drawer is open */
+  isMobileOpen?: boolean;
+  /** Mobile-only: called when user closes the drawer */
+  onMobileClose?: () => void;
 }
 
 const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
@@ -29,11 +33,14 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   onDelete,
   loading,
   userEmail,
+  isMobileOpen,
+  onMobileClose,
 }) => {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
   const [conversationToDelete, setConversationToDelete] = useState<string | null>(null);
   const [matchedRunIds, setMatchedRunIds] = useState<string[] | null>(null);
+  const isMobileMode = isMobileOpen !== undefined;
 
   // 🟢 Debounce backend-driven search flawless flaws trigger flawlessly flawless trigger
   React.useEffect(() => {
@@ -77,7 +84,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   const pinnedConversations = filteredConversations.filter((conv) => conv.isPinned);
   const recentConversations = filteredConversations.filter((conv) => !conv.isPinned);
 
-  if (isCollapsed) {
+  if (isCollapsed && !isMobileMode) {
     return (
       <div className="w-16 bg-gray-50 border-r border-gray-200 flex flex-col items-center py-4 gap-4 flex-shrink-0">
         <button
@@ -98,18 +105,40 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
     );
   }
 
+  // Mobile drawer wrapper class — slides in from the left
+  const drawerClass = isMobileMode
+    ? `fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out ${
+        isMobileOpen ? 'translate-x-0' : '-translate-x-full'
+      } shadow-2xl`
+    : '';
+
   return (
-    <div className="w-80 bg-white/60 backdrop-blur-xl border-r border-gray-200 flex flex-col flex-shrink-0 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10">
+    <div className={`${drawerClass} w-80 bg-white/60 backdrop-blur-xl border-r border-gray-200 flex flex-col flex-shrink-0 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10`}>
       {/* Sidebar Header */}
       <div className="p-4 border-b border-gray-100/50 flex items-center justify-between flex-shrink-0">
         <h2 className="font-medium text-gray-900">{t('app.conversations')}</h2>
-        <button
-          onClick={onToggleCollapse}
-          className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-600 transition-colors"
-          title="Collapse sidebar"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* X close button — mobile drawer mode only */}
+          {isMobileMode && onMobileClose && (
+            <button
+              onClick={onMobileClose}
+              className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors"
+              aria-label="Close menu"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+          {/* Collapse button — desktop only */}
+          {!isMobileMode && (
+            <button
+              onClick={onToggleCollapse}
+              className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-600 transition-colors"
+              title="Collapse sidebar"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* New Chat Button */}

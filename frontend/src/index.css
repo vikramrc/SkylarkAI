@@ -20,7 +20,7 @@
     @reference "tailwindcss";
     @apply text-gray-900;
     color: #1a1a1a;
-    overflow-x: auto;
+    overflow-x: hidden;
     position: relative;
     min-height: 100vh;
     background: #FAFAFC;

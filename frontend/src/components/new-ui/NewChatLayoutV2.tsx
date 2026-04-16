@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, LayoutGrid } from 'lucide-react';
+import { LogOut, Menu } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { TbLanguage } from 'react-icons/tb';
 import { authService } from '@/services/auth.service';
@@ -7,6 +7,7 @@ import { notifyUnauthorized } from '@/services/auth.events';
 import ConversationSidebar from './ConversationSidebar';
 import ContinuousChatView from './ContinuousChatView';
 import apiService from '@/services/api.service';
+import { useIsMobile } from '@/utils/useIsMobile';
 
 interface NewChatLayoutV2Props {
   onToggleUI: () => void;
@@ -20,6 +21,8 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
   const [chatInstanceKey, setChatInstanceKey] = useState<number>(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const isMobile = useIsMobile();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [langOpen, setLangOpen] = useState(false);
   const handleSelectLanguage = (lng: 'en' | 'ja' | 'zh' | 'ko') => {
@@ -108,11 +111,21 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50/40">
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 shadow-sm px-6 py-4 flex-shrink-0 z-20 relative">
+      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 shadow-sm px-4 md:px-6 py-4 flex-shrink-0 z-20 relative">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
+            {/* Hamburger — mobile only, left side */}
+            {isMobile && (
+              <button
+                onClick={() => setMobileMenuOpen(true)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-600 transition-colors mr-1"
+                aria-label="Open menu"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+            )}
             <h1
-              className="text-2xl font-bold text-gray-900 tracking-tight"
+              className="text-xl md:text-2xl font-bold text-gray-900 tracking-tight"
               style={{ fontFamily: '"Zen Dots", Roboto, Inter, sans-serif' }}
             >
               {t('app.title')}
@@ -130,12 +143,16 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
                 <span className="text-xs font-semibold uppercase">{i18n.language}</span>
               </button>
               {langOpen && (
-                <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-100 rounded-xl shadow-xl z-30 py-1 overflow-hidden animate-fade-in-up">
-                  <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('en')}>English</button>
-                  <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('ja')}>日本語</button>
-                  <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('zh')}>中文</button>
-                  <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('ko')}>한국어</button>
-                </div>
+                <>
+                  {/* Click-outside dismissal — critical for mobile tap */}
+                  <div className="fixed inset-0 z-20" onClick={() => setLangOpen(false)} aria-hidden />
+                  <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-100 rounded-xl shadow-xl z-30 py-1 overflow-hidden animate-fade-in-up">
+                    <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('en')}>English</button>
+                    <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('ja')}>日本語</button>
+                    <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('zh')}>中文</button>
+                    <button className="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-sm font-medium transition-colors" onClick={() => handleSelectLanguage('ko')}>한국어</button>
+                  </div>
+                </>
               )}
             </div>
             <button
@@ -156,19 +173,51 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
 
       {/* Main Content Area */}
       <div className="flex flex-1 overflow-hidden">
-        <ConversationSidebar
-          conversations={conversations}
-          currentConversation={currentConversation}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          onSelectConversation={handleSelectConversation}
-          onNewChat={handleNewChat}
-          onTogglePin={handleTogglePin}
-          onDelete={handleDeleteConversation}
-          loading={loading}
-          userEmail={userEmail ?? null}
-        />
-        <div className="flex-1">
+        {/* Desktop: sidebar inline in flex row */}
+        {!isMobile && (
+          <ConversationSidebar
+            conversations={conversations}
+            currentConversation={currentConversation}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            onSelectConversation={handleSelectConversation}
+            onNewChat={handleNewChat}
+            onTogglePin={handleTogglePin}
+            onDelete={handleDeleteConversation}
+            loading={loading}
+            userEmail={userEmail ?? null}
+          />
+        )}
+
+        {/* Mobile: sidebar as fixed slide-over drawer */}
+        {isMobile && (
+          <>
+            {/* Backdrop */}
+            {mobileMenuOpen && (
+              <div
+                className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-hidden
+              />
+            )}
+            <ConversationSidebar
+              conversations={conversations}
+              currentConversation={currentConversation}
+              isCollapsed={false}
+              onToggleCollapse={() => {}}
+              onSelectConversation={(conv) => { handleSelectConversation(conv); setMobileMenuOpen(false); }}
+              onNewChat={() => { handleNewChat(); setMobileMenuOpen(false); }}
+              onTogglePin={handleTogglePin}
+              onDelete={handleDeleteConversation}
+              loading={loading}
+              userEmail={userEmail ?? null}
+              isMobileOpen={mobileMenuOpen}
+              onMobileClose={() => setMobileMenuOpen(false)}
+            />
+          </>
+        )}
+
+        <div className="flex-1 min-w-0">
             <ContinuousChatView
               key={chatInstanceKey}
               currentConversation={currentConversation}

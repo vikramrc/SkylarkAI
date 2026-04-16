@@ -129,8 +129,8 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
                 ) : (
                   <div className="overflow-x-auto border-t border-b border-gray-200 pt-1 pb-1 mt-3 mb-4 bg-transparent">
                     <table className="min-w-full divide-y divide-gray-100 text-[13px]">
-                      <thead className="bg-transparent"><tr>{headers.map((h, i) => <th key={i} className="px-3 py-2 text-left font-semibold text-gray-800">{h}</th>)}</tr></thead>
-                      <tbody className="divide-y divide-gray-50 bg-transparent">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-3 py-2 text-gray-700 align-top max-w-[300px] truncate hover:whitespace-normal hover:break-words">{cell}</td>)}</tr>)}</tbody>
+                      <thead className="bg-transparent"><tr>{headers.map((h, i) => <th key={i} className="px-3 py-2 text-left font-semibold text-gray-800 whitespace-nowrap">{h}</th>)}</tr></thead>
+                      <tbody className="divide-y divide-gray-50 bg-transparent">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-3 py-2 text-gray-700 align-top whitespace-nowrap">{cell}</td>)}</tr>)}</tbody>
                     </table>
                   </div>
                 )}
@@ -227,8 +227,8 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
                 ) : (
                   <div className="overflow-x-auto border-t border-b border-gray-200 pt-1 pb-1 mt-3 mb-4 bg-transparent">
                     <table className="min-w-full divide-y divide-gray-100 text-[13px]">
-                      <thead className="bg-transparent"><tr>{headers.map((h, i) => <th key={i} className="px-3 py-2 text-left font-semibold text-gray-800">{h}</th>)}</tr></thead>
-                      <tbody className="divide-y divide-gray-50 bg-transparent">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-3 py-2 text-gray-700 align-top max-w-[300px] truncate hover:whitespace-normal hover:break-words">{cell}</td>)}</tr>)}</tbody>
+                      <thead className="bg-transparent"><tr>{headers.map((h, i) => <th key={i} className="px-3 py-2 text-left font-semibold text-gray-800 whitespace-nowrap">{h}</th>)}</tr></thead>
+                      <tbody className="divide-y divide-gray-50 bg-transparent">{rows.map((row, i) => <tr key={i} className="hover:bg-gray-50/50 transition-colors">{row.map((cell, j) => <td key={j} className="px-3 py-2 text-gray-700 align-top whitespace-nowrap">{cell}</td>)}</tr>)}</tbody>
                     </table>
                   </div>
                 )}
