@@ -138,14 +138,18 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                         workingMemory: state.workingMemory // 🟢 Auto-fill identifier support flawless!
                     };
 
-                    // 🟢 GAP-29 FIX: Implement 25s tool execution timeout.
-                    // This prevents a single hung MCP tool from blocking the entire LangGraph turn.
+                    // 🟢 GAP-29 FIX: Implement per-tool execution timeout.
+                    // direct_query_fallback is a multi-step pipeline (keyword extraction → ambiguity
+                    // → RAG → pipeline generation → execution → enrichment) and regularly takes 30-40s
+                    // for complex analytical/aggregation queries. The global 25s limit would prematurely
+                    // kill valid results. All other tools keep the 25s safety limit.
                     // 🟢 GAP-32 FIX: Store the timer handle and cancel it via .finally() so that when
                     // a tool completes before the deadline, the timer is cleared immediately rather
                     // than running as a dangling handle holding the event loop open.
+                    const TOOL_TIMEOUT_MS = name === 'direct_query_fallback' ? 90000 : 25000;
                     let _timeoutHandle: ReturnType<typeof setTimeout>;
                     const _timeoutPromise = new Promise((_, reject) => {
-                        _timeoutHandle = setTimeout(() => reject(new Error("Tool execution timed out after 25s")), 25000);
+                        _timeoutHandle = setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
                     });
                     const result = await Promise.race([
                         tool.execute(inputArgs, contextMock).finally(() => clearTimeout(_timeoutHandle!)),

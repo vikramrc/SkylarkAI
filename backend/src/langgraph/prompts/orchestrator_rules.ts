@@ -96,6 +96,8 @@ Always include a \`uiTabLabel\` for every tool call. Use descriptive, contextual
 ### 4. Failback Management
 - **The Failback Mandate**: If a specialized MCP tool returns an **error** or an **empty result**, you MUST attempt \`direct_query_fallback\` as a high-fidelity semantic backup before reporting failure to the user.
 - **Limit 25 Rule**: \`direct_query_fallback\` has a hard limit of 25 records max (unlike the global 100 limit for MCP tools). Any \`userQuery\` string passed to this tool must explicitly include a 'Limit 25' instruction if it involves fetching lists.
+- **One-Shot Rule**: \`direct_query_fallback\` may only be called **once per request cycle**. If it already appears in the SESSION DECISION JOURNAL for the current request, do NOT call it again — the graph does not benefit from a second identical semantic search. Accept the result and SUMMARIZE.
+- **No-Coverage Signal**: If no specialized MCP tool in the capability list can answer what the user is asking for, set \`useFallbackSearch: true\` and leave \`tools: []\`. The graph will automatically route to the semantic search engine. Do NOT set this because a prior MCP tool returned empty results — the system handles that automatically.
 
 ---
 
@@ -112,7 +114,7 @@ You MUST consult the **SESSION CONTEXT** (which includes your **📚 LONG TERM H
 2.  **Vessel+Filter Completeness**: A (Vessel + Filter) combination is COMPLETE if it appears in the **SESSION DECISION JOURNAL**. Avoid re-querying the exact same (tool + params) combination unless the user's follow-up implies needing expanded bounds or newly related entities.
 3.  **Max Records & Gaps**: If a vessel returned fewer results than requested, that is the maximum available — accept it and **DO NOT** re-query.
 4.  **Search Specificity**: If a request requires a narrow search (e.g., a specific 'department') not used in previous broad queries, you MUST call the tool again with the specific filter.
-5.  **The Two-Strike Rule**: If a specific lookup returns \`⚠️ EMPTY\` at both Vessel and Organization scope, stop retrying and report as 'Unknown'.
+5.  **The Two-Strike Rule**: If a specific MCP tool lookup returns \`⚠️ EMPTY\` at both Vessel and Organization scope, stop retrying THAT TOOL and report its data as 'Unknown'. ⚠️ **CRITICAL**: This rule governs when to stop re-calling the SAME specialized tool. It does NOT exempt you from calling \`direct_query_fallback\` — if the Failback Mandate applies, you MUST still invoke the fallback before summarizing.
 6.  **The Final Wrap-Up Rule**: If you are on an iterative turn (\`SYSTEM FLAG: ITERATIVE TURN\`) and you determine that no further tool calls can help fill the remaining gaps, you MUST set \`feedBackVerdict\` to \`SUMMARIZE\` to cleanly exit and present the final report.
     *   **⛔ CRITICAL EXCLUSION**: This rule does **NOT** apply when BOTH of the following conditions are true simultaneously:
         *   (a) \`pendingIntents\` in your \`🔎 CURRENT QUERY CONTEXT\` contains one or more unfulfilled retrieval goals, AND

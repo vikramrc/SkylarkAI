@@ -39,6 +39,17 @@ export const orchestratorSchema = z.object({
             "they follow the user's explicit instructions. Keep attribute filters the user didn't mention removing. " +
             "Set to FALSE for any request that narrows or maintains the existing entity scope."
         )
+        .default(false),
+    useFallbackSearch: z.boolean()
+        .describe(
+            "Set to TRUE ONLY when no specialized MCP tool in the capability list matches what the user is asking for, " +
+            "AND your tools[] array is empty as a result. " +
+            "Example: user asks for a report type, regulatory document, or data category that has no dedicated MCP tool. " +
+            "The graph will automatically route to the semantic fallback engine using your reformulatedQuery. " +
+            "Do NOT set this if you have an applicable MCP tool but chose not to call it. " +
+            "Do NOT set this because a prior MCP tool returned empty — the graph handles that case automatically. " +
+            "Default false."
+        )
         .default(false)
 });
 
@@ -725,6 +736,29 @@ Instruction: Proceed with your investigation based on the complete context provi
         finalReasoning = `[ANTI-PLACEHOLDER GUARD] All requested tools were stripped because they contained invalid placeholder parameters. Forcing SUMMARIZE. Original Reasoning: ` + finalReasoning;
     }
 
+    // 🟢 FALLBACK SEARCH INTERCEPT: Deterministic routing to direct_query_fallback.
+    // When the AI signals useFallbackSearch=true (no MCP tool coverage), the graph injects
+    // direct_query_fallback automatically — similar to how isBroadScopeRequest works.
+    // This is ONLY triggered when: (1) AI set the flag, (2) tools[] is still empty after
+    // all guards, (3) a reformulatedQuery exists to forward. No clarifying question active.
+    if (
+        response.useFallbackSearch === true &&
+        finalToolCalls.length === 0 &&
+        response.reformulatedQuery &&
+        !response.clarifyingQuestion
+    ) {
+        const fallbackQuery = `${response.reformulatedQuery} Limit 25`;
+        console.warn(`\x1b[33m[LangGraph Orchestrator] 🔄 FALLBACK SEARCH INTERCEPT: AI flagged no tool coverage. Injecting direct_query_fallback with query: "${fallbackQuery.substring(0, 80)}"\x1b[0m`);
+        finalToolCalls = [{
+            name: 'direct_query_fallback',
+            uiTabLabel: 'Semantic Search',
+            confidence: 0.75,
+            args: [{ key: 'userQuery', value: fallbackQuery }]
+        }];
+        finalVerdict = 'SUMMARIZE'; // Fallback result goes directly to Summarizer — no extra LLM turn
+        finalReasoning = `[FALLBACK SEARCH INTERCEPT] No specialized MCP tool matched this query. Routing to direct_query_fallback. Original: ${finalReasoning}`;
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // FIX — DISCOVERY STALL GUARD
     // ─────────────────────────────────────────────────────────────────
@@ -802,7 +836,72 @@ Instruction: Proceed with your investigation based on the complete context provi
         );
     }
 
-    // 🛡️ STRATEGIC FIX: Deterministic Unclassified Label Intercept (Identity Turn Mandate)
+    // Both guards below share this single computation:
+    const hasFallbackAlreadyRan = requestCycleToolResults.some(turn =>
+        Object.keys(turn || {}).some(k => k.includes('direct_query_fallback'))
+    );
+
+    // 🚫 FALLBACK DEDUP GUARD: direct_query_fallback is a one-shot-per-cycle tool.
+    //
+    // The AI may decide to call direct_query_fallback again in a subsequent iteration after
+    // it already ran and returned empty (e.g., user says "retry", AI calls it at iter=0,
+    // then at iter=1 sees pending intents + empty result and calls it AGAIN).
+    // This guard strips the redundant call before it executes.
+    //
+    // Fires when: hasFallbackAlreadyRan=true AND AI has included direct_query_fallback in this turn.
+    if (hasFallbackAlreadyRan && finalToolCalls.some((t: any) => t.name === 'direct_query_fallback')) {
+        console.warn(`\x1b[33m[LangGraph Orchestrator] \ud83d\udeab FALLBACK DEDUP GUARD: direct_query_fallback already ran this request cycle. Stripping redundant call.\x1b[0m`);
+        finalToolCalls = finalToolCalls.filter((t: any) => t.name !== 'direct_query_fallback');
+        if (finalToolCalls.length === 0) {
+            finalVerdict = 'SUMMARIZE';
+            finalReasoning = `[FALLBACK DEDUP GUARD] direct_query_fallback already completed this cycle. Forcing SUMMARIZE. Original: ${finalReasoning}`;
+        }
+    }
+
+    // 🛡️ EMPTY RESULT FALLBACK GUARD: Deterministic code-level safety net.
+    //
+    // Pattern: The LLM has exhausted specialized MCP tools (all returned 0 items)
+    // and is now proposing to SUMMARIZE an empty result set — without ever calling
+    // direct_query_fallback. This guard detects that pattern and injects the fallback.
+    //
+    // Fires when ALL of these are true:
+    //   1. LLM wants to SUMMARIZE with no tool calls (dead-end decision)
+    //   2. At least one NON-DISCOVERY retrieval tool returned 0 items in this request cycle
+    //   3. direct_query_fallback has NOT already run in this request cycle
+    //   4. Not a clarifying question turn
+    const hasEmptyRetrievalResult = requestCycleToolResults.some(turn =>
+        Object.entries(turn || {}).some(([k, res]) => {
+            if (isDiscoveryKey(k)) return false; // Skip discovery tools
+            if (k.includes('direct_query_fallback')) return false; // Skip fallback results (handled by DEDUP)
+            let data: any = res;
+            // Unwrap MCP content envelope if present
+            if (data?.content?.[0]?.text) {
+                try { data = JSON.parse(data.content[0].text); } catch {}
+            }
+            // 0 items returned = empty, -1 would be an error (skip errors)
+            return Array.isArray(data?.items) ? data.items.length === 0 : false;
+        })
+    );
+
+    if (
+        finalToolCalls.length === 0 &&
+        finalVerdict === 'SUMMARIZE' &&
+        hasEmptyRetrievalResult &&
+        !hasFallbackAlreadyRan &&
+        !response.clarifyingQuestion
+    ) {
+        const fallbackQuery = `${response.reformulatedQuery || anchoredRawQuery} Limit 25`;
+        console.warn(`\x1b[43m\x1b[30m[LangGraph Orchestrator] \ud83d\udee1\ufe0f EMPTY RESULT FALLBACK GUARD: All retrieval tools returned empty. Auto-injecting direct_query_fallback.\x1b[0m`);
+        finalToolCalls = [{
+            name: 'direct_query_fallback',
+            uiTabLabel: 'Semantic Search',
+            confidence: 0.75,
+            args: [{ key: 'userQuery', value: fallbackQuery }]
+        }];
+        finalVerdict = 'SUMMARIZE'; // Route fallback result directly to Summarizer
+        finalReasoning = `[EMPTY RESULT FALLBACK GUARD] Specialized MCP tool(s) returned 0 items in this request cycle and direct_query_fallback has not been attempted. Auto-routing to semantic fallback. Original: ${finalReasoning}`;
+    }
+
     // If the LLM identified unclassified labels, we must OVERRIDE any retrieval tools
     // and force a resolution pass. This prevents "hijacking" retrieval parameters.
     // 🟢 Section II.B Rule 3: Resolution is PREFERRED over asking a clarifying question immediately.
