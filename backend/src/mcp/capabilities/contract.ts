@@ -616,11 +616,12 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/crew/competency-config",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["limit"],
-    purpose: "Returns competency signal configurations and requirement mappings.",
-    whenToUse: "Understanding *what* certificates are actually demanded per rank/vessel.",
-    typicalQuestions: ["What is required for a 3rd Engineer?"],
-    responseShape: ["capability", "organizationID", "signals"]
+    optionalQuery: ["signalLabel", "signalID", "limit"],
+    purpose: "Returns full competency signal detail — label, sections (certificates/trainingRecords/medicalRecords), and which STCW qualification requirements the signal maps to (mapsToRequirementIDs). Supports targeted lookup by signalLabel or signalID.",
+    whenToUse: "Use this when the user asks for MORE DETAILS about a specific competency signal or training recommendation that was already named (e.g. 'tell me more about Tanker Management'). Pass signalLabel=\'Tanker Management\' to get the full record. Also use for general competency config listing.",
+    typicalQuestions: ["What does Tanker Management training cover?", "What qualifications does this competency signal map to?", "What certificates are required for this training?", "What is required for a 3rd Engineer?"],
+    responseShape: ["capability", "organizationID", "signals", "items"],
+    interpretationGuidance: "Each item has: label (human name), signalID (system code), sections (['certificates','trainingRecords','medicalRecords'] — which record types this tracks), and mapsToRequirementIDs (STCW qualifications this counts toward, e.g. 'engineOfficerCoc', 'tankerAdvanced'). Always report sections and mapsToRequirementIDs to the user — these explain what the training covers and what it qualifies for."
   },
   {
     name: "analytics.query_mtbf",
