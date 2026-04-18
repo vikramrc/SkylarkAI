@@ -57,6 +57,61 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
             const sanitizedName = name.replace(/[^a-zA-Z0-9_-]/g, "_");
             const tool = (skylarkTools as any)[sanitizedName];
 
+            // 🟢 Generic Architectural Fix: Resolved at Skylark end flawlessly!
+            // Injected diagnostic tool to allow the AI to report its current memory filters.
+            if (name === 'mcp.query_active_filters') {
+                return {
+                    name,
+                    index,
+                    result: {
+                        capability: 'mcp.query_active_filters',
+                        activeFilters: state.workingMemory?.queryContext?.activeFilters || {}
+                    }
+                };
+            }
+
+            // 🟢 mcp.clear_filters: deterministic filter reset without touching Phoenix.
+            // Accepts optional `filters` arg (comma-separated list of keys to drop).
+            // If omitted, clears ALL attribute filters — keeps only organizationID, organization, vesselID.
+            if (name === 'mcp.clear_filters') {
+                const ENTITY_KEYS = new Set(['organizationID', 'organization', 'vesselID', 'vessel']);
+                const currentFilters: Record<string, string> = { ...(state.workingMemory?.queryContext?.activeFilters || {}) };
+
+                // Parse which keys the Orchestrator wants to clear
+                const rawArg = Array.isArray(args)
+                    ? args.find((a: any) => a.key === 'filters')?.value
+                    : (args as any)?.filters;
+
+                let clearedKeys: string[];
+                if (rawArg && String(rawArg).trim()) {
+                    // Specific list: clear only those keys
+                    clearedKeys = String(rawArg).split(',').map((k: string) => k.trim()).filter(Boolean);
+                } else {
+                    // No list provided: clear all non-entity keys
+                    clearedKeys = Object.keys(currentFilters).filter(k => !ENTITY_KEYS.has(k));
+                }
+
+                clearedKeys.forEach(k => delete currentFilters[k]);
+
+                // Mutate workingMemory so the next Orchestrator turn sees the clean state
+                if (state.workingMemory?.queryContext) {
+                    state.workingMemory.queryContext.activeFilters = currentFilters;
+                }
+
+                console.log(`[LangGraph Execute] 🧹 mcp.clear_filters cleared: [${clearedKeys.join(', ')}] → remaining: ${JSON.stringify(currentFilters)}`);
+
+                return {
+                    name,
+                    index,
+                    result: {
+                        capability: 'mcp.clear_filters',
+                        clearedFilters: clearedKeys,
+                        activeFilters: currentFilters
+                    }
+                };
+            }
+
+
             if (tool) {
                 try {
                     const inputArgs: any = {};

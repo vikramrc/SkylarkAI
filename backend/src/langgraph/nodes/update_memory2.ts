@@ -74,7 +74,12 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // Flatten latest tool results
     const rawResults = state.toolResults || [];
     const history = Array.isArray(rawResults) ? rawResults : [rawResults];
-    const currentTurns = history.slice(state.startTurnIndex || 0);
+    // 🟢 GAP-PRUNE FIX: startTurnIndex is a lifetime absolute offset. If the toolResults array
+    // was pruned (capped at 30) in graph.ts, the absolute index may exceed the array length,
+    // causing an empty slice. Clamp to always include at least the last 1 entry (this request).
+    const historyLen = history.length;
+    const safeStart = Math.min(state.startTurnIndex || 0, Math.max(0, historyLen - 1));
+    const currentTurns = history.slice(safeStart);
 
     const latestTurn = currentTurns[currentTurns.length - 1] || {};
 
@@ -453,7 +458,18 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
             try { data = JSON.parse(data.content[0].text); } catch { /* ignore */ }
         }
         const count = Array.isArray(data?.items) ? data.items.length : (data?.isError ? -1 : 0);
-        const status = data?.isError ? "FAILED" : count > 0 ? `${count} items returned` : "0 items (empty)";
+        // Internal Skylark diagnostic tools (mcp.query_active_filters, mcp.clear_filters) return
+        // {capability, activeFilters} — no `items` array. Without this check Phase 2 treats them as
+        // "0 items (empty)" and keeps pending intents alive, causing an infinite loop.
+        const isInternalDiagnosticTool = count === 0 && !data?.isError && typeof data?.capability === 'string'
+            && (data?.activeFilters != null || data?.clearedFilters != null);
+        const status = data?.isError ? "FAILED"
+            : count > 0 ? `${count} items returned`
+            : isInternalDiagnosticTool
+                ? (data?.clearedFilters
+                    ? `filters cleared [${(data.clearedFilters as string[]).join(', ') || 'none'}]`
+                    : `active filters: ${JSON.stringify(data.activeFilters)}`)
+            : "0 items (empty)";
         const filters = data?.appliedFilters 
             ? Object.entries(data.appliedFilters).filter(([,v]) => v).map(([k,v]) => `${k}=${v}`).join(', ') 
             : "";
@@ -481,6 +497,7 @@ Rules:
    - CRITICAL (ANTI-POISONING): If the "Tools executed this turn" block shows a tool ran with specific parameters (e.g. statusCode="completed"), you MUST update activeFilters to match those parameters, even if the "Previous activeFilters" or the "rawQuery" suggest otherwise. The tool result is the ground truth of the current turn's scope.
    - ENTITY PRESERVATION: If the original 'rawQuery' contains a specific label (e.g. 'XXX1', 'DFGRE') that is NOT yet a canonical 24-char hex ID, you MUST preserve it in 'activeFilters' even if the user provides a different piece of info (like an Organization). Do NOT allow a context refinement to delete an unresolved label.
    - If the user specifies a limit or distribution scope, add them here. Do NOT hallucinate filters that are not clearly requested.
+   - ANTI-HALLUCINATION (CRITICAL): You are STRICTLY FORBIDDEN from inferring or guessing attribute filter values (e.g. blockageReason, failureCode, triggerOrigin, repairType) that do NOT appear verbatim in the tool's [appliedFilters] block in the "Tools executed this turn" section. Only extract a filter if it is present as an explicit parameter in the tool call result. If no such parameter appears, the filter MUST NOT appear in activeFilters.
 3. lastTurnInsight: You MUST summarize in EXACTLY ONE sentence ONLY. Your sentence MUST explicitly state BOTH what the user asked for (based on the rawQuery) AND what data was actually retrieved or resolved altogether this turn. Max 300 chars.`;
 
     const userContent = `rawQuery: "${rawQuery}"

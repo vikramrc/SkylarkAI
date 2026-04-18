@@ -71,6 +71,7 @@ export function createLangGraphWorkflowRouter() {
                 let lastVerdict = "FEED_BACK_TO_ME"; // 🟢 Tracking for final table emission flaws
                 let lastReasoning = ""; // 🟢 Capture for CoT thought process UI
                 let toolResultsEmitted = false; // 🟢 Guard against double-emit: D1 sets this, D2 checks it
+                let executeToolsRan = false;     // 🟢 True only if execute_tools actually ran this request
 
                 for await (const event of eventStream) {
                     // 🟢 A. Status Updates for Nodes
@@ -126,7 +127,12 @@ export function createLangGraphWorkflowRouter() {
 
                             // Always: only emit results from turns generated during THIS HTTP request
                             const mergedResults: Record<string, any> = {};
-                            const currentTurns = allTurns.slice(startTurnIndex);
+                            // 🟢 GAP-PRUNE FIX (route): startTurnIndex is a lifetime absolute offset.
+                            // If the toolResults array was pruned (capped at 30), the index may exceed
+                            // the array length, yielding an empty slice and no UI table.
+                            // Clamp to always include at least the last 1 entry.
+                            const safeEmitStart = Math.min(startTurnIndex, Math.max(0, allTurns.length - 1));
+                            const currentTurns = allTurns.slice(safeEmitStart);
                             currentTurns.forEach(turn => {
                                 Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
                                     if (val && val.__from_feedback_loop === true) return;
@@ -156,6 +162,7 @@ export function createLangGraphWorkflowRouter() {
 
                     // 🟢 D1. Emit from execute_tools — ASAP if this is a final turn (SUMMARIZE verdict or ambiguity)
                     if (event.event === "on_chain_end" && event.metadata?.langgraph_node === "execute_tools") {
+                        executeToolsRan = true; // 🟢 Mark that tools actually ran in this request
                         try {
                             const finalState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
                             const currentState = finalState.values;
@@ -176,12 +183,16 @@ export function createLangGraphWorkflowRouter() {
                     }
 
                     // 🟢 D2. Flush from summarizer — safety-net catch for when Orchestrator goes SUMMARIZE
-                    // with NO further tool calls (skipping execute_tools entirely).
-                    // Only fires if D1 did NOT already emit to prevent redundant double-write to the client.
+                    // with NO further tool calls (skipping execute_tools entirely), but tools DID run
+                    // in an earlier iteration of this same HTTP request.
+                    // ⚠️ STALE DATA GUARD: Only emit if execute_tools actually ran this request.
+                    // If tools=[] (Orchestrator reused memory), do NOT emit stale data from a previous request.
                     if (event.event === "on_chain_end" && event.metadata?.langgraph_node === "summarizer") {
-                        if (!toolResultsEmitted) {
+                        if (!toolResultsEmitted && executeToolsRan) {
                             await emitToolResults("summarizer");
                             toolResultsEmitted = true;
+                        } else if (!toolResultsEmitted && !executeToolsRan) {
+                            console.log(`[Workflow Route] ⏭️ D2 skipped — no new tools ran this request (Orchestrator reused memory), suppressing stale emit.`);
                         } else {
                             console.log(`[Workflow Route] ⏭️ D2 skipped — tool_results already emitted by D1`);
                         }
@@ -227,7 +238,10 @@ export function createLangGraphWorkflowRouter() {
                     const allTurns = Array.isArray(rawResults) ? rawResults : [rawResults];
                     // Always-execute: persist only the current-request turns
                     const mergedResults: Record<string, any> = {};
-                    const currentTurns = allTurns.slice(startTurnIndex);
+                    // 🟢 GAP-PRUNE FIX (persist): same clamp as emitToolResults to prevent
+                    // empty mergedResults when startTurnIndex exceeds the pruned array length.
+                    const safePersistStart = Math.min(startTurnIndex, Math.max(0, allTurns.length - 1));
+                    const currentTurns = allTurns.slice(safePersistStart);
                     currentTurns.forEach(turn => {
                         Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
                             if (val && val.__from_feedback_loop === true) return;

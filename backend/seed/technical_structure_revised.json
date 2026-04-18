@@ -142,6 +142,11 @@
             "type": "object"
           },
           {
+            "name": "needsPortStay",
+            "description": "Indicates if the activity requires a port stay for execution.",
+            "type": "boolean"
+          },
+          {
             "name": "createdAt",
             "description": "Timestamp for createdAt on Activity.",
             "type": "date"
@@ -339,6 +344,53 @@
             "name": "estimatedManHours",
             "description": "Estimated labor hours for this specific work history instance. Used for planning crew workload and comparing against sum of actualManHours from all events to calculate variance.",
             "type": "number"
+          },
+          {
+            "name": "isBlocked",
+            "description": "Boolean flag indicating if the work history is currently blocked by an external dependency.",
+            "type": "boolean"
+          },
+          {
+            "name": "blockageReasons",
+            "description": "Array of reasons for the blockage (waiting_parts, waiting_ptw, etc.).",
+            "type": "array<string>",
+            "examples": [
+              "waiting_parts",
+              "waiting_ptw",
+              "waiting_manpower",
+              "waiting_shore_support",
+              "waiting_class"
+            ]
+          },
+          {
+            "name": "blockageNote",
+            "description": "Optional free-text note providing details about the blockage.",
+            "type": "string"
+          },
+          {
+            "name": "blockedSince",
+            "description": "Timestamp when the blockage was first recorded.",
+            "type": "date"
+          },
+          {
+            "name": "triggerSource",
+            "description": "Object documenting the origin of this work history (planned, form_finding, class_observation, manual, temporary_fix_followup) and optional linkage to the source form/field.",
+            "type": "object"
+          },
+          {
+            "name": "qualityErrors",
+            "description": "Array of structured quality error entries recorded against this work history, including code, category, severity, description, detectedBy and linkedFormID. Used for training gap analysis and quality monitoring.",
+            "type": "array<object>"
+          },
+          {
+            "name": "repairType",
+            "description": "Classification of the repair outcome (permanent, temporary, interim). Tracks the physical state of the asset after work completion.",
+            "type": "string"
+          },
+          {
+            "name": "temporaryFixExpiryDate",
+            "description": "Expiration date for a temporary repair. Used for compliance monitoring and lifecycle alerting.",
+            "type": "date"
           }
         ]
       },
@@ -443,12 +495,6 @@
             "description": "Array of references to CrewMember records assigned to this maintenance event. Used for tracking which crew performed the work and for crew workload analysis.",
             "type": "array<objectId>"
           },
-          {
-            "name": "qualityErrors",
-            "description": "Array of structured quality error entries recorded against this event, including code, category, severity, description, detectedBy and linkedFormID. Used for training gap analysis and quality monitoring.",
-            "type": "array<object>"
-          },
-
           {
             "name": "createdAt",
             "description": "Timestamp for createdAt on ActivityWorkHistoryEvent.",
@@ -2038,6 +2084,16 @@
             "name": "calibrationDueDate",
             "description": "Next calibration due date for instruments, gauges, and test equipment that require periodic calibration. Used for tracking calibration schedules and compliance. Optional field.",
             "type": "date"
+          },
+          {
+            "name": "substitutePartIDs",
+            "description": "Array of InventoryPart ObjectIds that are suitable substitutes for this part. Array of references to InventoryPart (collection: InventoryPart).",
+            "type": "array<objectId>"
+          },
+          {
+            "name": "crossReferencePartNumbers",
+            "description": "Array of manufacturer or vendor cross-reference part numbers for equivalent matching.",
+            "type": "array<string>"
           },
           {
             "name": "createdAt",
@@ -6330,6 +6386,130 @@
           {
             "name": "updatedAt",
             "description": "Timestamp when the audit row was last updated.",
+            "type": "date"
+          }
+        ]
+      },
+      {
+        "collection": "VesselPortSchedule",
+        "synonyms": [
+          "vesselportschedules",
+          "port schedule",
+          "port call",
+          "port stay",
+          "vessel schedule"
+        ],
+        "fields": [
+          {
+            "name": "organizationID",
+            "description": "Reference to the owning organization. Used for multi-tenant data isolation and access control.",
+            "type": "objectId"
+          },
+          {
+            "name": "vesselID",
+            "description": "Reference to the vessel this port schedule belongs to.",
+            "type": "objectId"
+          },
+          {
+            "name": "portName",
+            "description": "Name of the port for the scheduled stay.",
+            "type": "string"
+          },
+          {
+            "name": "arrivalDate",
+            "description": "Scheduled or actual arrival date and time at the port.",
+            "type": "date"
+          },
+          {
+            "name": "departureDate",
+            "description": "Scheduled or actual departure date and time from the port.",
+            "type": "date"
+          },
+          {
+            "name": "status",
+            "description": "Current status of the port stay (planned, arrived, departed, cancelled).",
+            "type": "string",
+            "examples": [
+              "planned",
+              "arrived",
+              "departed",
+              "cancelled"
+            ]
+          },
+          {
+            "name": "availableMaintenanceHours",
+            "description": "Estimated window of hours available for maintenance while the vessel is in port.",
+            "type": "number"
+          },
+          {
+            "name": "description",
+            "description": "Optional notes or details regarding the port visit.",
+            "type": "string"
+          },
+          {
+            "name": "createdAt",
+            "description": "Timestamp when the record was created.",
+            "type": "date"
+          },
+          {
+            "name": "updatedAt",
+            "description": "Timestamp when the record was last updated.",
+            "type": "date"
+          }
+        ]
+      },
+      {
+        "collection": "FailureCodeTrainingMap",
+        "synonyms": [
+          "failurecodetrainingmaps",
+          "training map",
+          "failure map",
+          "competency map"
+        ],
+        "fields": [
+          {
+            "name": "organizationID",
+            "description": "Reference to the owning organization. Used for multi-tenant data isolation and access control.",
+            "type": "objectId"
+          },
+          {
+            "name": "failureCategory",
+            "description": "Broad category of the failure (e.g., Engine, Electrical).",
+            "type": "string"
+          },
+          {
+            "name": "failureCode",
+            "description": "Specific failure code or identifier.",
+            "type": "string"
+          },
+          {
+            "name": "requiredCompetency",
+            "description": "The specific competency or skill level required to address this failure type.",
+            "type": "string"
+          },
+          {
+            "name": "stcwReference",
+            "description": "Reference to the STCW (Standards of Training, Certification and Watchkeeping) regulation mapping.",
+            "type": "string"
+          },
+          {
+            "name": "recommendedTrainingHours",
+            "description": "Recommended hours of training required to achieve the necessary competency.",
+            "type": "number"
+          },
+          {
+            "name": "description",
+            "description": "Additional notes on the training requirement or mapping logic.",
+            "type": "string"
+          },
+          {
+            "name": "createdAt",
+            "description": "Timestamp when the record was created.",
+            "type": "date"
+          },
+          {
+            "name": "updatedAt",
+            "description": "Timestamp when the record was last updated.",
             "type": "date"
           }
         ]

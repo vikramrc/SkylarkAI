@@ -65,7 +65,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "fieldNames":
       return `${requiredLabel} parameter: accepts an array or set (e.g., comma-separated) of field names/labels to scan inside populated form answers. Use this to find forms where specific contents have been filled out and selected.`;
     case "isFailureEvent":
-      return `${requiredLabel} flag. Set to true to filter for maintenance events that were specifically logged as failure-driven outcomes (unplanned/breakdown/CM).`;
+      return `${requiredLabel} flag. Set to true ONLY when you are certain the record is a failure-driven event. Do NOT pre-set this to true just because the user asks about failure codes — first retrieve all history without this filter, then check the isFailureEvent field on the returned records. Setting this to true when records have isFailureEvent=false will always return 0 results.`;
     case "statusCode":
       return `${requiredLabel} status filter. Accepts a SINGLE value OR an ARRAY of values (comma-separated string or JSON array). Valid values: 'overdue', 'upcoming', 'completed', 'open', 'cancelled', 'rescheduled', 'missed'. Pass multiple values (e.g. ["cancelled", "missed", "rescheduled"]) to get combined results in one call. Note: 'cancelled', 'rescheduled', and 'missed' match on latestEventStatus and work in both query_status and query_execution_history.`;
     case "performedBy":
@@ -95,8 +95,28 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "workHistoryID":
     case "crewMemberID":
       return `${requiredLabel} canonical raw MongoDB ObjectId for the ${param.replace("ID", "")}. DO NOT guess this. If you only have a name (e.g., "JPY Budget", "Main Engine"), you MUST first use a broad query/overview tool (like budget.query_overview or fleet.query_machinery_status) to find the correct ID before calling this tool.`;
+    case "activityWorkHistoryID":
+      return `${requiredLabel} canonical ObjectId of the ActivityWorkHistory (AWH) document. This is the 'awhID' field exposed on every item returned by maintenance.query_status — it is DISTINCT from activityID. MANDATORY RULE: when the user asks for failure codes or execution details for a SPECIFIC job that was previously returned by query_status, you MUST pass that job's awhID value here. Using activityID alone will return a DIFFERENT historical AWH document and will NOT surface the specific job's failure data. Example: if query_status returned awhID='69e1b95a...', pass activityWorkHistoryID='69e1b95a...' — do NOT pass the activityID here.`;
     case "fulfillmentFilter":
       return `${requiredLabel} filter for Purchase Order fulfillment status. Options: 'over50' (received > 50%), 'under50' (received < 50%), 'completed' (100% received), 'none' (0% received).`;
+    case "partID":
+      return `${requiredLabel} canonical raw MongoDB ObjectId for the part. Find this via inventory overview tools.`;
+    case "blockageReason":
+      return `${requiredLabel} specific enum reason why a job is blocked. ⚠️ Valid values ONLY: 'waiting_parts', 'waiting_ptw', 'waiting_manpower', 'waiting_shore_support', 'waiting_class', 'tool_unavailable'. Pass multiple values as a comma-separated string to match any. ONLY pass this parameter if the user explicitly names a specific reason — omit it entirely to return ALL blocked jobs regardless of reason.`;
+    case "portName":
+      return `${requiredLabel} partial or exact search for a port name.`;
+    case "expiringBefore":
+      return `${requiredLabel} ISO datetime string to find temporary fixes or items expiring before this date.`;
+    case "failureCategory":
+      return `${requiredLabel} high-level category of failure (e.g., 'mechanical', 'electrical', 'human'). ⚠️ ONLY pass this if the user explicitly names a failure category. Do NOT infer or guess the category. Omit to return all failure events.`;
+    case "failureCode":
+      return `${requiredLabel} explicit failure code (e.g., 'COR', 'VIB'). ⚠️ ONLY pass this if the user explicitly provides a failure code. Do NOT infer or hallucinate a code. Omit to return all failure codes.`;
+    case "repairType":
+      return `${requiredLabel} category of repair outcome. ⚠️ Valid values ONLY: 'permanent', 'temporary', 'interim'. ONLY pass this if the user explicitly asks to filter by repair type (e.g. 'show me temporary repairs'). Do NOT infer it. Omit to return all repair types.`;
+    case "triggerOrigin":
+      return `${requiredLabel} lineage filter. ⚠️ Valid values ONLY: 'planned', 'form_finding', 'class_observation', 'manual', 'temporary_fix_followup'. ONLY pass this if the user explicitly names a trigger source (e.g. 'jobs from form findings'). Do NOT infer it. Omit to return all trigger origins.`;
+    case "statusCode":
+      return `${requiredLabel} state filter. ⚠️ Valid values: 'overdue', 'upcoming', 'completed', 'open', 'cancelled', 'rescheduled', 'missed', 'created'. Pass multiple values as a comma-separated string (e.g. 'overdue,missed') to match any. DO NOT infer or guess the status; omit it to see all items.`;
     default:
       return `${requiredLabel} parameter: ${param}`;
   }
@@ -216,9 +236,9 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/status",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "vesselName", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "hasInstructionsOnly", "isFailureEvent", "activityDescription", "startDate", "endDate", "limit"],
-    purpose: "Returns overdue, upcoming, and recently completed maintenance work.",
-    whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses. This is the primary tool for 'What is due/overdue' or 'Finding an activity ID'.",
+    optionalQuery: ["vesselID", "vesselName", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "criticalOnly", "criticality", "department", "contractorRequired", "ptwRequired", "classCriticalOnly", "statutoryOnly", "statusCode", "triggerOrigin", "hasInstructionsOnly", "isFailureEvent", "failureCategory", "failureCode", "needsPortStay", "activityDescription", "startDate", "endDate", "limit"],
+    purpose: "Returns overdue, upcoming, open, and recently completed maintenance work.",
+    whenToUse: "When asked about overdue jobs, jobs due soon, what is pending, or checking schedule statuses. This is the primary tool for 'What is due/overdue', 'Finding an activity ID', or 'Show me uncommitted/open jobs with a specific trigger origin'.",
     whenNotToUse: "Do NOT use for historical failure analysis (use reliability), deep execution comments, dedicated AWH queries (use execution_history), or technical instructions/manuals (use query_instructions). Do NOT use when the user asks 'who did' a job — performer data (performer name, man-hours, comments) only exists in execution_history.",
     typicalQuestions: [
       "Which activities are overdue?", 
@@ -227,22 +247,23 @@ const baseCapabilitiesContract = [
       "Show me completed maintenance from Jan 2026 to March 2026.",
       "What jobs are overdue from last year?",
       "Show me all cancelled jobs",
-      "Show me rescheduled or missed maintenance"
+      "Show me rescheduled or missed maintenance",
+      "Show me uncommitted manual-origin jobs org-wide."
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
-    interpretationGuidance: "statusCode accepts a SINGLE value OR an ARRAY (e.g. ['overdue','cancelled','missed']). Valid single values: overdue, upcoming, completed, open, cancelled, rescheduled, missed. Omit statusCode entirely to return all statuses. For 'who did it' (performer, man-hours, comments), use maintenance.query_execution_history instead."
+    interpretationGuidance: "PARAM_ENUMS: { statusCode: ['overdue','upcoming','completed','open','cancelled','rescheduled','missed'], triggerOrigin: ['planned','form_finding','class_observation','manual','temporary_fix_followup'] }. Omit statusCode to return all statuses. Omit triggerOrigin to return all origins. For uncommitted/open jobs with a specific origin (e.g. 'manual'), combine statusCode='open' with triggerOrigin='manual'. For performer/man-hours/comments use maintenance.query_execution_history. 📌 items[n].awhID is the AWH document ID needed for maintenance.query_execution_history lookups. 🟢 COMPETENCY GAPS: items[n].impliedCompetencyGaps is an array of resolved competency label strings (e.g. ['Tanker Management', 'STCW-II/1']) — always report these to the user when non-empty, as they represent implied training gaps recorded at the time of job creation. Do NOT make a separate tool call for this data; it is already included in every query_status response."
   },
   {
     name: "maintenance.query_execution_history",
     method: "GET",
     path: "/api/mcp/maintenance/execution-history",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "majorJobsOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "isFailureEvent", "statusCode", "startDate", "endDate", "limit"],
+    optionalQuery: ["vesselID", "scheduleID", "activityID", "activityWorkHistoryID", "tagName", "tagNames", "taggedOnly", "majorJobsOnly", "maintenanceType", "performedBy", "attachmentsOnly", "partsUsedOnly", "riskAssessmentOnly", "isFailureEvent", "failureCategory", "failureCode", "repairType", "triggerOrigin", "statusCode", "hasQualityErrors", "startDate", "endDate", "limit"],
     purpose: "Returns recent maintenance execution events / Activity Work History (AWH), including completion status, costs, and comments.",
     whenToUse: "To see *how* a job was done, who did it, actual man-hours, comments logged, or parts consumed during execution. Use this for all Activity Work History (AWH) queries.",
     typicalQuestions: ["Who completed the lube oil change?", "What were the remarks on last month's overhaul?", "Show me tasks that required more man-hours than estimated.", "Show me the latest committed AWH.", "Show me lube oil levels logged between Jan 1st and Jan 31st.", "List work completed from 2026-01-01 to 2026-02-01.", "Show me the last overhaul date of the Air Compressor."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
-    interpretationGuidance: "statusCode accepts a SINGLE value OR an ARRAY (e.g. ['completed','cancelled','rescheduled','missed']). Valid single values: completed, cancelled, rescheduled, missed, created. Pass multiple values to get combined results in ONE tool call instead of calling the tool separately for each status. Use this tool when the user wants to know WHO performed a job (performer, man-hours, comments, parts used). ⚠️ DO NOT add `maintenanceType` (e.g., 'Corrective', 'Preventative') unless the user explicitly asks for a specific type — omitting it returns all types."
+    interpretationGuidance: "PARAM_ENUMS: { statusCode: ['completed','cancelled','rescheduled','missed','created','overdue','upcoming','open'], triggerOrigin: ['planned','form_finding','class_observation','manual','temporary_fix_followup'], repairType: ['permanent','temporary','interim'], maintenanceType: ['preventive','corrective','routine','breakdown','survey','inspection','overhaul','modification'] }. Values across params are NOT interchangeable: triggerOrigin values ('manual', 'planned', etc.) MUST NOT be passed as statusCode, and repairType values ('temporary', 'permanent') MUST NOT be passed as statusCode. Omit any param unless the user explicitly names that dimension. ⚠️ FILTER RESET: When switching from query_status to this tool, omit statusCode unless the user explicitly names a status — do not carry over 'open' from a prior query_status call. Use hasQualityErrors=true for compliance/quality filtering. 🔑 AWH DRILL-DOWN RULE: When the user asks for execution details for a SPECIFIC job that was returned by query_status, you MUST pass activityWorkHistoryID = the awhID value from that job's query_status result. Do NOT use activityID alone — it returns ALL historical AWH documents for that activity. The awhID from query_status IS the correct activityWorkHistoryID for this tool."
   },
   {
     name: "maintenance.query_compliance_overview",
@@ -261,7 +282,7 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/maintenance/reliability",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "severity", "startDate", "endDate", "limit"],
+    optionalQuery: ["vesselID", "severity", "failureCategory", "failureCode", "startDate", "endDate", "limit"],
     purpose: "Returns failure counts, severity, repeat failures, and trend data.",
     whenToUse: "Use to investigate breakdowns, analyzing failures, reviewing failure causes, and tracking unplanned maintenance.",
     whenNotToUse: "Do NOT use for predicting future MTBF mathematically (use analytics.query_mtbf instead).",
@@ -836,6 +857,85 @@ const baseCapabilitiesContract = [
     ],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"],
     interpretationGuidance: "riskScore is a weighted composite: overdueJobs × 2 + failureEvents × 3 + expiringCerts × 1. summary.highRiskVessels shows count above score threshold 20. Sort by riskScore desc for highest-risk first."
+  },
+  {
+    name: "maintenance.query_blocked_jobs",
+    method: "GET",
+    path: "/api/mcp/maintenance/blocked-jobs",
+    requiredQuery: ["organizationID"],
+    optionalQuery: ["vesselID", "blockageReason", "limit"],
+    purpose: "Returns activities or work histories that are explicitly flagged as blocked (e.g., waiting for parts, crew, weather).",
+    whenToUse: "When asked about overdue jobs that are stuck, waiting for spares, shore support, or approvals.",
+    typicalQuestions: ["Which jobs are blocked waiting for spare parts?", "Are there any activities stuck due to weather?"],
+    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
+  },
+  {
+    name: "fleet.query_port_schedules",
+    method: "GET",
+    path: "/api/mcp/fleet/port-schedules",
+    requiredQuery: ["organizationID"],
+    optionalQuery: ["vesselID", "portName", "startDate", "endDate", "limit"],
+    purpose: "Returns vessel port call schedules, voyages, and itineraries.",
+    whenToUse: "When checking an upcoming port stay, voyage planning, or finding jobs to bundle for the next port call.",
+    typicalQuestions: ["What jobs should be brought forward for the next port stay?", "When is the next port schedule for vessel X?"],
+    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
+  },
+  {
+    name: "inventory.query_part_alternatives",
+    method: "GET",
+    path: "/api/mcp/inventory/part-alternatives",
+    requiredQuery: ["organizationID", "partID"],
+    optionalQuery: ["vesselID"],
+    purpose: "Returns substitute parts, duplicate part numbers, and cross-reference OEM parts for a given item.",
+    whenToUse: "When asked to find substitutes, alternatives, or verified duplicate parts for inventory.",
+    typicalQuestions: ["Show me all verified substitutes for this part.", "What are the cross-reference numbers for this item?"],
+    responseShape: ["capability", "organizationID", "part", "substitutes", "crossReferences"]
+  },
+  {
+    name: "crew.query_training_maps",
+    method: "GET",
+    path: "/api/mcp/crew/training-maps",
+    requiredQuery: ["organizationID"],
+    optionalQuery: ["failureCode", "limit"],
+    purpose: "Returns two complementary sources of training/competency gap data for a failure code: (1) org-defined policy mappings from the FailureCodeTrainingMap registry, and (2) crew-observed gaps extracted from actual AWH records where crew members logged implied competency signals during job execution.",
+    whenToUse: "When identifying training gaps based on a failure code, or when asked what training or competency was flagged during maintenance jobs. For a single specific job, prefer reading impliedCompetencyGaps from query_status directly.",
+    typicalQuestions: ["What training gaps correspond to this repetitive failure?", "Which training is recommended for failure X?", "Are there competency gaps observed across jobs with this failure code?"],
+    responseShape: ["capability", "organizationID", "appliedFilters", "policyMappings", "awhObservedGaps", "items"],
+    interpretationGuidance: "The response has TWO data sources. (1) policyMappings: org-configured training rules keyed to the failure code — may be empty if no policy is defined. (2) awhObservedGaps: competency gap labels that crew members actually logged on AWH records matching this failure code, ranked by occurrence frequency. Always report awhObservedGaps if non-empty — these are real-world observations from job execution, not just policy. If both are empty, report that no training data or crew-observed gaps exist for this failure code in the current scope."
+  },
+  {
+    name: "maintenance.query_temporary_fixes",
+    method: "GET",
+    path: "/api/mcp/maintenance/temporary-fixes",
+    requiredQuery: ["organizationID"],
+    optionalQuery: ["vesselID", "expiringBefore", "limit"],
+    purpose: "Returns maintenance jobs that were closed using temporary or interim repairs, along with their expiry dates.",
+    whenToUse: "When explicitly looking for jobs closed via temporary fixes, interim solutions, or tracking when a temporary repair will expire.",
+    typicalQuestions: ["Show me jobs closed using temporary repairs.", "Are there any temporary fixes expiring next week?"],
+    responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
+  },
+  {
+    name: "mcp.query_active_filters",
+    method: "GET",
+    path: "/api/mcp/internal/active-filters",
+    requiredQuery: ["organizationID"],
+    optionalQuery: [],
+    purpose: "Returns the current active filters (vesselID, organizationID, blockageReason, etc.) presently held in the session's working memory.",
+    whenToUse: "When asked about the current search context or filters applied.",
+    typicalQuestions: ["What filters are currently active?", "Which vessel are we looking at right now?"],
+    responseShape: ["capability", "activeFilters"]
+  },
+  {
+    name: "mcp.clear_filters",
+    method: "POST",
+    path: "/api/mcp/internal/clear-filters",
+    requiredQuery: [],
+    optionalQuery: ["filters"],
+    purpose: "Clears active query filters from the session's working memory. Accepts an optional comma-separated list of filter keys to remove (e.g. 'blockageReason,limit,statusCode'). If no list is provided, ALL attribute filters are cleared while entity identifiers (organizationID, organization, vesselID) are preserved.",
+    whenToUse: "When the user explicitly asks to clear, reset, or remove active filters. Use this INSTEAD of trying to re-run a query with no filters — this tool directly updates the working memory state. After calling this tool, set feedBackVerdict to FEED_BACK_TO_ME so you can confirm the state and respond to the user.",
+    whenNotToUse: "Do NOT use this to clear organization or vessel scope — those are entity identifiers, not filters. Only use to clear attribute filters like blockageReason, statusCode, repairType, triggerOrigin, limit, startDate, endDate.",
+    typicalQuestions: ["Clear all filters", "Reset my search context", "Remove the filters", "Clear the date range"],
+    responseShape: ["capability", "clearedFilters", "activeFilters"]
   }
 ];
 

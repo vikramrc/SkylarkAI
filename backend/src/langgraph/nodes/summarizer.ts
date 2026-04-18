@@ -42,7 +42,12 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     // 🟢 Request Isolation Fix: Use startTurnIndex to ignore stale results from previous queries flawlessly!
     const rawResults = state.toolResults;
     const history = Array.isArray(rawResults) ? rawResults : (rawResults ? [rawResults] : []);
-    const currentTurns = history.slice(state.startTurnIndex || 0);
+    // 🟢 GAP-PRUNE FIX: startTurnIndex is a lifetime absolute offset. If the toolResults array
+    // was pruned (capped at 30) in graph.ts, the absolute index may exceed the array length,
+    // causing an empty slice. Clamp to always include at least the last 1 entry (this request).
+    const historyLen = history.length;
+    const safeStart = Math.min(state.startTurnIndex || 0, Math.max(0, historyLen - 1));
+    const currentTurns = history.slice(safeStart);
 
     console.log(`\x1b[36m${ts()} [LangGraph Summarizer] Processing ${currentTurns.length} current tool result turns (Isolation Start: ${state.startTurnIndex || 0})\x1b[0m`);
 
@@ -432,7 +437,7 @@ ${jsonlData}`
                 const oldest13 = updatedSummaryBuffer.slice(0, 13);
                 const newest7 = updatedSummaryBuffer.slice(13);
 
-                const compressionPrompt = `You are a memory archivist for an AI Superintendent. Summarize the following archaic user interactions into a dense, conceptual memory block. Focus on enduring facts, entities discovered, and overarching goals. Add this to the existing long-term memory gracefully.\n\n### Existing Long Term Memory\n${updatedLongTerm}\n\n### Conversations to Compress\n${oldest13.map(c => `Q: ${c.q}\nA: ${c.a}`).join('\n---\n')}`;
+                const compressionPrompt = `You are a memory archivist for an AI Superintendent. Summarize the following archaic user interactions into a dense, factual paragraph of plain prose. Focus on enduring facts, entities discovered, and overarching goals. Merge this into the existing long-term memory seamlessly.\n\n⚠️ CRITICAL OUTPUT RULES:\n- Output ONLY plain prose paragraphs. No markdown headers, no bullet points, no XML/HTML tags, no [MEMORY_BLOCK] tags, no special formatting whatsoever.\n- Do NOT wrap your output in any container or tag. The raw text you output is directly stored and injected into future AI context as-is.\n\n### Existing Long Term Memory\n${updatedLongTerm}\n\n### Conversations to Compress\n${oldest13.map(c => `Q: ${c.q}\nA: ${c.a}`).join('\n---\n')}`;
 
                 try {
                     const compressionRes = await model.invoke([{ role: 'system', content: compressionPrompt }]);

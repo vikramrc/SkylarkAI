@@ -211,7 +211,11 @@
           "machine",
           "engine",
           "system",
-          "plant"
+          "plant",
+          "failurecodetrainingmaps",
+          "training map",
+          "failure map",
+          "competency map"
         ],
         "maps_to": [
           {
@@ -231,6 +235,9 @@
           },
           {
             "collection": "Ptw"
+          },
+          {
+            "collection": "FailureCodeTrainingMap"
           }
         ]
       },
@@ -261,7 +268,16 @@
           "Which jobs caused operational downtime?",
           "List all unplanned maintenance activities",
           "Show me non-conformity reports linked to maintenance",
-          "What was the operational impact of the last main engine failure?"
+          "What was the operational impact of the last main engine failure?",
+          "Are there any maintenance events with quality or compliance errors?",
+          "Show me all temporary fixes that are about to expire",
+          "Which jobs had documentation or safety-related quality errors?",
+          "List all repairs marked as 'temporary' or 'interim' for the last month",
+          "Show me mechanical failures logged this quarter",
+          "Which jobs identified a competency gap for the crew?",
+          "List critical failures with the 'VIB' failure code",
+          "Show me electrical failures on the generator",
+          "Which work histories have hasQualityErrors set to true?"
         ],
         "keywords": [
           "activityworkhistories",
@@ -370,7 +386,11 @@
           "ship",
           "boat",
           "craft",
-          "fleet unit"
+          "fleet unit",
+          "vesselportschedules",
+          "port schedule",
+          "port call",
+          "port stay"
         ],
         "maps_to": [
           {
@@ -402,6 +422,9 @@
           },
           {
             "collection": "ActivityReminderTracking"
+          },
+          {
+            "collection": "VesselPortSchedule"
           }
         ]
       },

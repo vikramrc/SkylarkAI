@@ -35,16 +35,22 @@ Use this map to reconcile unclassified labels against required tool parameters a
     { "from": "CrewAssignment", "to": "Activity", "key": "activityID", "relation": "Personnel task allocation" },
     { "from": "CrewMember", "to": "DocumentMetadata", "key": "certificateDocumentIDs", "relation": "Seafarer certification and compliance (STCW)" },
     { "from": "DocumentMetadata", "to": "Machinery", "key": "customMetadata.relatedMachinery", "relation": "Technical manual and drawing linkage" },
-    { "from": "Vessel", "to": "Budget", "key": "vesselID", "relation": "Financial allocation for specific assets" }
+    { "from": "Vessel", "to": "Budget", "key": "vesselID", "relation": "Financial allocation for specific assets" },
+    { "from": "Vessel", "to": "VesselPortSchedule", "key": "vesselID", "relation": "Port stay and maintenance windows" },
+    { "from": "Activity", "to": "VesselPortSchedule", "key": "needsPortStay", "relation": "Maintenance constraint based on port availability" },
+    { "from": "ActivityWorkHistory", "to": "FailureCodeTrainingMap", "key": "failureCode", "relation": "Root cause mapping to training interventions" },
+    { "from": "ActivityWorkHistory", "to": "CrewCompetencySignal", "key": "impliedCompetencySignalIDs", "relation": "Competency gap evidence from historical failures" },
+    { "from": "CrewMember", "to": "FailureCodeTrainingMap", "key": "requiredCompetency", "relation": "STCW compliance tied to failure mitigation" },
+    { "from": "InventoryPart", "to": "InventoryPart", "key": "substitutePartIDs", "relation": "Interchangeable spare parts" }
   ],
 
   "REASONING_INFERENCE_MAP": {
-    "Vessel": ["schedules", "machinery", "status", "fleet", "certificates", "imo", "noon", "vsl", "vessel", "ship"],
+    "Vessel": ["schedules", "machinery", "status", "fleet", "certificates", "imo", "noon", "vsl", "vessel", "ship", "port call", "port stay"],
     "Machinery": ["running hours", "instructions", "components", "criticality", "engine", "pump", "boiler", "SFI", "equipment"],
-    "Part": ["stock", "receipt", "issue", "inventory", "part number", "spares", "consumables", "lead time"],
+    "Part": ["stock", "receipt", "issue", "inventory", "part number", "spares", "consumables", "lead time", "substitute", "interchangeable", "cross reference"],
     "Financial": ["spending", "transactions", "actuals", "variance", "budget", "accounting", "cost center", "invoice", "accrual"],
-    "Crew": ["rank", "assignment", "work/rest", "seafarer", "stcw", "nationality", "MLC", "fatigue"],
-    "Compliance": ["checklist", "inspection", "survey", "permit", "ptw", "compliance", "RMA", "non-conformity", "quality"],
+    "Crew": ["rank", "assignment", "work/rest", "seafarer", "stcw", "nationality", "MLC", "fatigue", "training", "competency"],
+    "Compliance": ["checklist", "inspection", "survey", "permit", "ptw", "compliance", "RMA", "non-conformity", "quality", "failure", "RCA", "root cause", "repair type", "temporary fix", "quality error", "iso 14224", "breakdown"],
     "Procurement": ["ordering", "delivery", "receipt", "po", "rfq", "vendor", "replenish", "pipeline"]
   }
 };
