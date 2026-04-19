@@ -14,6 +14,31 @@ export const directQueryFallback = createTool({
   }),
   execute: async (input, context) => {
     const userQuery = input?.userQuery || '';
+
+    // 🟢 CONTEXT BRIDGE: Extract Orchestrator's workingMemory and build a clean,
+    // normalized sessionData payload for the Phoenix Engine. This eliminates
+    // redundant name-based $lookups for entities the Orchestrator has already resolved.
+    const workingMemory = (context as any)?.workingMemory;
+    const rawSecondaryScope: any[] = workingMemory?.sessionContext?.secondaryScope || [];
+    // Group secondaryScope by modelType into arrays to safely handle multiple entities
+    // of the same type (e.g., two machineries) without silent key overwriting.
+    const groupedSecondaryScope = rawSecondaryScope.reduce((acc: Record<string, string[]>, item: any) => {
+        if (!item?.modelType || !item?.id) return acc;
+        const key = `${String(item.modelType).toLowerCase()}IDs`;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(String(item.id));
+        return acc;
+    }, {});
+    const sessionData = {
+        organizationID: workingMemory?.sessionContext?.scope?.organizationID ?? null,
+        vesselID: workingMemory?.sessionContext?.scope?.vesselID ?? null,
+        secondaryScope: groupedSecondaryScope,
+        activeFilters: workingMemory?.queryContext?.activeFilters ?? {},
+        isBroadScope: workingMemory?.queryContext?.isBroadScope ?? false,
+    };
+    const hasResolvedContext = sessionData.organizationID || sessionData.vesselID || Object.keys(groupedSecondaryScope).length > 0;
+    console.log(`[DirectQuery Tool] Session context bridge: hasResolvedContext=${hasResolvedContext}, orgID=${sessionData.organizationID ?? 'none'}, vesselID=${sessionData.vesselID ?? 'none'}, isBroadScope=${sessionData.isBroadScope}`);
+
     console.log(`[Mastra Fallback] Calling Direct Query Engine (Streaming)...`);
     const getRunId = (ctx: any) => {
         if (!ctx) return null;
@@ -42,6 +67,7 @@ export const directQueryFallback = createTool({
 
         const resultPromise = serviceBackedPhoenixRuntimeEngine.processUserQueryStream({
             userQuery: userQuery,
+            sessionData: hasResolvedContext ? sessionData : undefined,
             onEvent: async (event: any) => {
                 const { event: eventName, data } = event;
                 const d = data as any;
@@ -159,8 +185,9 @@ const mcpTools = capabilitiesContract.reduce((acc, cap) => {
         const description = getParameterDescription(field, cap.requiredQuery || []);
         let fieldSchema = z.string().describe(description);
         
-        // Strictly enforce ObjectId format for ID fields (except organizationID/vesselID which have friendly fallbacks)
-        if (field.endsWith('ID') && field !== 'organizationID' && field !== 'vesselID') {
+        // Strictly enforce ObjectId format for ID fields (except organizationID/vesselID which have friendly fallbacks,
+        // and signalID which is a plain string tag identifier on CrewCompetencySignal, not a Mongo ObjectId)
+        if (field.endsWith('ID') && field !== 'organizationID' && field !== 'vesselID' && field !== 'signalID') {
             fieldSchema = fieldSchema.regex(/^[0-9a-fA-F]{24}$/, {
                 message: `${field} must be a valid 24-character hex Mongo ObjectId. Use a lookup tool to find the ID if you only have a name.`
             });

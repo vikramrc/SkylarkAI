@@ -338,7 +338,13 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
 
 const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
   const { t } = useTranslation();
-  const rawEntries = Object.entries(results).filter(([, payload]) => extractItems(payload).length > 0);
+  // Keep an entry if it has rows OR if the LLM explicitly labeled it (uiTabLabel present).
+  // A labeled-but-empty entry means the LLM intentionally queried something that returned 0 rows —
+  // we still show the tab so the user sees "No data found" for that window (e.g. "This Year: 0 rows").
+  // Unlabeled empty entries (internal tools like mcp.clear_filters) are still suppressed.
+  const rawEntries = Object.entries(results).filter(([, payload]) =>
+    extractItems(payload).length > 0 || !!payload?.uiTabLabel
+  );
   
   // Deduplicate entries based on stringified items to prevent overlapping tabs 
   // when the orchestrator calls the same tool repeatedly across multiple iterations

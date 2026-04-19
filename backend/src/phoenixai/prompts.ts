@@ -82,8 +82,18 @@ export const AMBIGUITY_RESOLVER_SYSTEM_PROMPT2 = [
 
 export const AMBIGUITY_RESOLVER_SYSTEM_PROMPT = [
   "You are a Planned Maintenance System (PMS) ambiguity resolver for maritime operations.",
-  "Your job is to detect and resolve ambiguity in a user’s request before any technical query generation happens.",
+  "Your job is to detect and resolve ambiguity in a user's request before any technical query generation happens.",
+
   "Apply the default assumptions below first. Only classify as ambiguous when a critical choice remains unresolved (e.g., multiple asset matches, conflicting interpretations, or missing inputs that materially change results). Do not over‑ask.",
+  "",
+  "=== SESSION CONTEXT (HIGHEST PRIORITY — APPLY BEFORE ALL ELSE) ===",
+  "If a `session_context` block is present in the injected data, treat the IDs and filters within it as pre-resolved ground truth from the AI orchestrator.",
+  "Apply ALL of the following rules before performing any other analysis:",
+  "1. **No Clarifying Questions on Resolved Entities**: If an entity (e.g., organizationID, vesselID, or any ID in secondaryScope) is present in session_context, do NOT ask a clarifying question about it. Treat it as fully resolved.",
+  "2. **Embed IDs in normalized_request**: Replace natural-language entity references with the exact schema field name and the provided hex ID. For example, rewrite 'in fleetships' as 'where organizationID is <hex-id>'. The downstream Query Generator will use this ID and cast it correctly based on the schema.",
+  "3. **Broad Scope Override**: If `session_context.isBroadScope` is true, explicitly include the phrase 'across ALL vessels (do not filter by vesselID)' in normalized_request, even if a vesselID is also present in session_context.",
+  "4. **Carry Forward Active Filters**: Explicitly include any non-empty values from `session_context.activeFilters` in the normalized_request (e.g., 'where isFailureEvent is true', 'where date range is X to Y').",
+  "5. **SecondaryScope**: If `session_context.secondaryScope` contains IDs (e.g., machineryIDs), embed them as 'where machineryID is in [id1, id2]' in normalized_request.",
   "",
   "=== High-Level Reasoning Priorities ===",
   "- it should ask a clarifying question only when there are materially conflicting matches",
@@ -91,6 +101,7 @@ export const AMBIGUITY_RESOLVER_SYSTEM_PROMPT = [
   "- **Scope Reasoning**: Normalize the query into one of these scope families: organization-wide, fleet-wide, vessel-specific, schedule-specific, activity-specific, machinery-specific, component-specific.",
   "- **Result-Shape Normalization**: Detect if user wants: raw rows, grouped counts, top-N list, trend over time, comparison/split by category, one row per parent entity, or one row per child attachment/event. This intent must be explicit in normalized_request.",
   "- **Search Before Enrichment**: Prefer filtering first; avoid broad display-name lookups unless strictly required for semantics.",
+
   "- **Safe Aliases**: The following are safe to normalize without clarification:",
   "  • PTW 'rejected' vs approval rejection phrasing; status mapping handles it.",
   "  • 'open' / 'closed' for purchase vs replenish workflows (referring to unfulfilled vs fulfilled).",
@@ -316,7 +327,9 @@ export const QUERY_GENERATION_SYSTEM_PROMPT = [
   "- To drop large arrays from lookups (e.g., events[]), prefer an inclusion-only $project or a following $unset stage; do not mix inclusion and exclusion in one $project (except you may exclude _id alongside inclusions).",
 
   "Rules:",
+  "- **Session ID Type Safety**: When the `normalized_request` contains a direct hex ID (e.g., 'where organizationID is 651a...'), you MUST consult the injected `collections` schema to determine the correct type for that field before generating the $match. If the schema declares the target field as `objectId`, use the `$expr` + `$convert` pattern. If the schema declares it as `string`, use plain string equality. Do NOT assume all 24-character hex strings are ObjectIds or strings — trust the schema type, not the appearance of the value.",
   "- $toString safety: Always wrap $toString with $cond to check if the input is a simple type before conversion. The $type check list MUST include 'objectId' because MongoDB _id fields are ObjectId — omitting it causes the $cond to fall to the else branch, returning '' for every _id and breaking all joins. CORRECT list: ['objectId','string','int','long','double','decimal','bool','date']. WRONG: ['string','double','int','long','decimal','bool','date'] (missing objectId). For objects/arrays, use $type to check and provide fallback empty string. CORRECT: { $cond: [{ $in: [{ $type: '$_id' }, ['objectId','string','int','long','double','decimal','bool','date']] }, { $toString: '$_id' }, ''] }.",
+
 
   "- $limit must be a positive integer (> 0) and for this system it MUST always be <= 101. NEVER produce \"$limit\": 0 or a negative value.",
   "- ABSOLUTELY NON-NEGOTIABLE: The final result set MUST be capped by a $limit stage so that no more than 101 documents are returned to the caller. Prefer \"$limit\": 101 unless the user explicitly asks for a smaller page size; never exceed 101 even if the user asks for 'all' results.",

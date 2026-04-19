@@ -2170,6 +2170,16 @@ async function runPhoenixQuery(
     const enrichResults = dependencies.enrichResults ?? enrichHumanReadableResults;
     const { userQuery, startedConversation } = input;
 
+    // 🟢 CONTEXT BRIDGE: Extract session context forwarded from the Orchestrator's workingMemory.
+    // This is set by the directQueryFallback tool when resolved IDs are available in memory.
+    // We inject it into the Ambiguity Resolver context so it can embed IDs directly into
+    // normalized_request, eliminating downstream name-based $lookup stages.
+    const sessionData = (input as any).sessionData ?? null;
+    const hasSessionContext = !!sessionData && !!(sessionData.organizationID || sessionData.vesselID || Object.keys(sessionData.secondaryScope || {}).length > 0);
+    if (hasSessionContext) {
+        console.log('[DirectQuery Executor] 🟢 Session context injected:', JSON.stringify({ organizationID: sessionData.organizationID, vesselID: sessionData.vesselID, isBroadScope: sessionData.isBroadScope }));
+    }
+
     await emitStatus(onEvent, 'keywords', 'Extracting Phoenix keywords');
     let extractedKeywords: string[] = [];
     try {
@@ -2213,11 +2223,16 @@ async function runPhoenixQuery(
     await emitStatus(onEvent, 'ambiguity', 'Resolving ambiguity against narrowed schema');
     const ambiguityModel = selectOpenAiResponseModel('ambiguity');
     const ambiguityStaticPrompt = AMBIGUITY_RESOLVER_SYSTEM_PROMPT;
-    const ambiguityDynamicContext = `Injected schema:\n${JSON.stringify(narrowedSchema)}`;
+    const ambiguityDynamicContext = hasSessionContext
+        ? `Injected schema:\n${JSON.stringify(narrowedSchema)}\n\nsession_context (PRE-RESOLVED — use these IDs and filters directly, see system prompt rules):\n${JSON.stringify(sessionData)}`
+        : `Injected schema:\n${JSON.stringify(narrowedSchema)}`;
     
-    // Use a static global key for provider prefix caching
+    // Use a static global key for provider prefix caching.
+    // Include a stable hash of session context so stale context-free cache hits are avoided.
     const ambiguityCacheKey = 'skylark:ambiguity:v1';
-    const ambiguityPromptHash = calculatePromptHash(`${ambiguityStaticPrompt}\n${userQuery}`);
+    const ambiguityPromptHash = calculatePromptHash(
+        `${ambiguityStaticPrompt}\n${userQuery}\n${hasSessionContext ? JSON.stringify(sessionData) : ''}`
+    );
     const previousAmbiguityId = await getCachedResponseId(ambiguityCacheKey, ambiguityPromptHash, 'ambiguity', '[DirectQuery-phx-cache]');
     
     const ambiguityStreamEmitter = createRuntimeLlmEmitter(onEvent, { stage: 'ambiguity' });

@@ -50,7 +50,17 @@ export const orchestratorSchema = z.object({
             "Do NOT set this because a prior MCP tool returned empty — the graph handles that case automatically. " +
             "Default false."
         )
-        .default(false)
+        .default(false),
+    parallelizeTools: z.boolean()
+        .describe(
+            "Execution mode declaration. Set to FALSE when your tools[] list contains mcp.clear_filters or any " +
+            "other state-mutating tool, OR when tools have a strict natural-language ordering dependency " +
+            "(e.g., 'first do X, then reset, then do Y'). When false, the execution engine runs your tools " +
+            "sequentially in the EXACT ORDER they appear in tools[]. The order therefore matters: put the " +
+            "pre-clear data query first, mcp.clear_filters in the middle, and the post-clear data query last. " +
+            "Set to TRUE (default) when all tools are independent read operations with no shared state dependency."
+        )
+        .default(true)
 });
 
 // 🟢 Global Module-Level Cache for startup-once speedups
@@ -726,6 +736,10 @@ Instruction: Proceed with your investigation based on the complete context provi
     let finalToolCalls = filteredTools;
     let finalVerdict = response.feedBackVerdict;
     let finalReasoning = response.reasoning;
+    // 🟢 Default: respect the LLM's declared execution mode.
+    // The Strategic Intercept below may override this to true if it replaces the tool plan
+    // with pure-parallel mcp.resolve_entities calls (which have no state-mutation ordering needs).
+    let finalParallelizeTools = response.parallelizeTools !== false;
 
     // 🟢 LOOP BREAKER: If the Anti-Placeholder Guard stripped ALL requested tools,
     // we MUST override FEED_BACK_TO_ME to SUMMARIZE. Otherwise, the graph executes 0 tools,
@@ -956,7 +970,40 @@ Instruction: Proceed with your investigation based on the complete context provi
         return true;
     });
 
-    if (actualUnclassified.length > 0) {
+    // 🛡️ STRATEGIC INTERCEPT GATE
+    // The intercept's sole purpose is to resolve an entity label into a canonical DB ID when
+    // the LLM does not yet have it. It must NOT fire in two cases:
+    //
+    // Case A — Atomic/meta-tools (clear_filters, query_active_filters):
+    //   These operate on session state, not on entities. They never need entity resolution.
+    //   Intercepting them replaces a correct, atomic action with a pointless resolution pass.
+    //
+    // Case B — LLM already routed the label to a tool as a direct string parameter:
+    //   If the unclassified label appears as a value in ANY of the planned tool args,
+    //   the LLM has already made its routing decision (e.g. signalLabel="Tanker Management",
+    //   searchTerm="Main Engine", templateName="Hot Work"). The label does not need a DB ID
+    //   lookup — it IS the parameter. This is fully generic: it works for any tool that
+    //   accepts strings directly, without hardcoding tool names.
+    const ATOMIC_DIAGNOSTIC_TOOLS = new Set([
+        'mcp.clear_filters',
+        'mcp.query_active_filters',
+    ]);
+    const isAtomicDiagnosticPlanned = finalToolCalls.some((t: any) => ATOMIC_DIAGNOSTIC_TOOLS.has(t.name));
+
+    // Generic check: every actualUnclassified label is already present as an arg value in
+    // at least one planned tool — meaning the LLM chose to pass it directly, not resolve it.
+    const allUnclassifiedHandledAsArgs = actualUnclassified.length > 0 && actualUnclassified.every((item: any) => {
+        const lbl = (item.label || '').trim().toLowerCase();
+        return finalToolCalls.some((t: any) =>
+            (t.args || []).some((a: any) =>
+                typeof a.value === 'string' && a.value.trim().toLowerCase() === lbl
+            )
+        );
+    });
+
+    const isInterceptBypassed = isAtomicDiagnosticPlanned || allUnclassifiedHandledAsArgs;
+
+    if (actualUnclassified.length > 0 && !isInterceptBypassed) {
         const resolutionTools: any[] = [];
         const scope = (state.workingMemory as any)?.sessionContext?.scope;
         
@@ -1019,6 +1066,10 @@ Instruction: Proceed with your investigation based on the complete context provi
             finalToolCalls = resolutionTools; // 🔥 TURN DIVERGENCE: Retrieval plan is PAUSED.
             finalVerdict = 'FEED_BACK_TO_ME';  // 🔥 FORCE the loop to return after resolution.
             finalReasoning = `[DETERMINISTIC VESTIBULE] Intercepted turn to resolve unclassified labels: ${response.unclassifiedLabels.map((l: any) => l.label).join(', ')}. Retrieval plan will be re-evaluated after identity confirmation.`;
+            // 🟢 Reset to parallel: mcp.resolve_entities calls are always independent.
+            // The LLM's original parallelizeTools=false was for the retrieval plan (now paused).
+            // Carrying it into the identity-resolution turn adds sequential overhead for no benefit.
+            finalParallelizeTools = true;
         }
     }
 
@@ -1031,6 +1082,10 @@ Instruction: Proceed with your investigation based on the complete context provi
         // Only update when the LLM provides a non-empty value; otherwise keep prior value.
         ...(response.reformulatedQuery ? { reformulatedQuery: response.reformulatedQuery } : {}),
         iterationCount: nextIterationCount,
+        // 🟢 PARALLEL EXECUTION MODE: Wire the resolved execution mode into state.
+        // finalParallelizeTools defaults to the LLM's declared value but is overridden to true
+        // by the Strategic Intercept when it replaces the plan with pure discovery tools.
+        parallelizeTools: finalParallelizeTools,
         // 🟢 CRITICAL: Must be explicit `false`, NOT `undefined`.
         // The graph reducer is: (x, y) => y !== undefined ? y : x
         // Setting `undefined` is treated as "no write" — the reducer keeps the old `true`
@@ -1134,6 +1189,11 @@ Instruction: Proceed with your investigation based on the complete context provi
         updates.isBroadScopeRequest = true;
     } else {
         updates.isBroadScopeRequest = false; // Explicit reset so reducer doesn't inherit stale true
+    }
+
+    // 🔗 LOG EXECUTION MODE
+    if (updates.parallelizeTools === false) {
+        console.log(`\x1b[33m[Orchestrator] 🔗 Sequential execution mode declared by LLM — tools will run in order: [${finalToolCalls.map((t: any) => t.name).join(' → ')}]\x1b[0m`);
     }
 
     // 🟢 HITL Guard: If there is a clarifying question, append it to messages so the Summarizer can look at it.

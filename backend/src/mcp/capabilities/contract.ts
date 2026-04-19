@@ -617,11 +617,29 @@ const baseCapabilitiesContract = [
     path: "/api/mcp/crew/competency-config",
     requiredQuery: ["organizationID"],
     optionalQuery: ["signalLabel", "signalID", "limit"],
-    purpose: "Returns full competency signal detail — label, sections (certificates/trainingRecords/medicalRecords), and which STCW qualification requirements the signal maps to (mapsToRequirementIDs). Supports targeted lookup by signalLabel or signalID.",
-    whenToUse: "Use this when the user asks for MORE DETAILS about a specific competency signal or training recommendation that was already named (e.g. 'tell me more about Tanker Management'). Pass signalLabel=\'Tanker Management\' to get the full record. Also use for general competency config listing.",
+    purpose: "Returns full competency signal definitions — label, sections (which of certificates/trainingRecords/medicalRecords apply), and the STCW requirement IDs the signal counts toward. Supports targeted lookup by signalLabel or signalID.",
+    whenToUse: "Use as the DISCOVERY step when the user names a competency signal (e.g. 'Tanker Management') and you need to confirm it exists, get its signalID, understand which sections it covers, and which STCW qualifications it maps to. After resolving, use crew.query_competency_diagnostics for per-crew completions and gaps. Also use for general competency config listing.",
     typicalQuestions: ["What does Tanker Management training cover?", "What qualifications does this competency signal map to?", "What certificates are required for this training?", "What is required for a 3rd Engineer?"],
     responseShape: ["capability", "organizationID", "signals", "items"],
-    interpretationGuidance: "Each item has: label (human name), signalID (system code), sections (['certificates','trainingRecords','medicalRecords'] — which record types this tracks), and mapsToRequirementIDs (STCW qualifications this counts toward, e.g. 'engineOfficerCoc', 'tankerAdvanced'). Always report sections and mapsToRequirementIDs to the user — these explain what the training covers and what it qualifies for."
+    interpretationGuidance: "Each item has: label (human name), signalID (the tag string stored in CrewMember records), sections (['certificates','trainingRecords','medicalRecords'] — which record types this tracks), and mapsToRequirementIDs (STCW qualifications, e.g. 'tankerAdvanced'). After resolving the signalID here, pass it to crew.query_competency_diagnostics to get per-crew data."
+  },
+  {
+    name: "crew.query_competency_diagnostics",
+    method: "GET",
+    path: "/api/mcp/crew/competency-diagnostics",
+    requiredQuery: ["organizationID"],
+    optionalQuery: ["vesselID", "crewMemberID", "signalLabel", "signalID", "mode", "limit"],
+    purpose: "Returns per-crew-member completion records and gap analysis for a specific named competency signal. Shows who has completed the training/certificate/medical evidence for that signal, and who is missing required evidence sections.",
+    whenToUse: "Use when the user asks for training completions or competency gaps for a NAMED signal (e.g. 'Tanker Management') across a vessel or for a specific crew member. ⚠️ You MUST pass the string name directly into the signalLabel parameter. Do NOT treat the signal name as an unclassified entity, and do NOT attempt to resolve it to an ID first. This is the primary tool for: 'Show me all completions for X signal', 'Who is missing X competency?', 'Match crew skills to X and show gaps'.",
+    whenNotToUse: "Do NOT use for general readiness/expiry checks (use crew.query_readiness). Do NOT use without knowing which signal to look at — either the user named a signal or crew.query_competency_config was called first.",
+    typicalQuestions: [
+      "Show me all crew who completed Tanker Management training on XXX1",
+      "Who is missing the Tanker Management competency on this vessel?",
+      "What training gaps does this crew member have for the Tanker Management signal?",
+      "Match crew skills to the Tanker Management competency and identify gaps"
+    ],
+    responseShape: ["capability", "organizationID", "appliedFilters", "signal", "summary", "items"],
+    interpretationGuidance: "Each item represents one crew member. 'completions' shows matching records per section (certificates/trainingRecords/medicalRecords). 'gaps.missingSections' lists section types with no matching evidence. 'gaps.isFullyCompliant' is true only when ALL sections defined on the signal have at least one matching record. summary shows fullyCompliantCount, partiallyCompliantCount, nonCompliantCount across all crew evaluated. PARAM mode: 'completions' returns only those with any evidence, 'gaps' returns only those missing at least one section, 'both' (default) returns all evaluated crew — most useful for a complete picture. Pass crewMemberID for a single-member deep dive."
   },
   {
     name: "analytics.query_mtbf",

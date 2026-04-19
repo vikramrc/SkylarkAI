@@ -74,4 +74,12 @@ export interface SkylarkState {
   // Emitted by Orchestrator when user explicitly requests org/fleet-wide scope.
   // Consumed by UpdateMemory2 to clear entity-scope filters and persist isBroadScope.
   isBroadScopeRequest?: boolean;
+
+  // 9. Parallel Execution Mode Flag
+  // Emitted by Orchestrator each turn. When false, execute_tools runs tools sequentially
+  // in the exact order they appear in toolCalls[] instead of via Promise.all().
+  // The LLM must set this to false whenever mcp.clear_filters or any other state-mutating
+  // tool is in the list — the tool ordering in toolCalls[] then defines the execution sequence.
+  // Defaults to true (parallel) when not set, preserving existing behavior.
+  parallelizeTools?: boolean;
 }

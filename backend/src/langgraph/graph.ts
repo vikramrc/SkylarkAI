@@ -95,6 +95,13 @@ const workflow = new StateGraph<SkylarkState>({
         reducer: (x: boolean | undefined, y: boolean | undefined) => y !== undefined ? y : x,
         default: () => undefined as any,
     },
+    // 🟢 SEQUENTIAL EXECUTION FLAG: Must be declared as a channel or orchestrator writes are silently dropped.
+    // Reducer: most recent explicit value wins (true/false). Default true (parallel).
+    // execute_tools branches on this: false → sequential for...of; true → Promise.all().
+    parallelizeTools: {
+        reducer: (x: boolean | undefined, y: boolean | undefined) => y !== undefined ? y : x,
+        default: () => true,
+    },
   } as any 
 });
 

@@ -9,6 +9,7 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
     const calls = state.toolCalls || [];
 
     console.log(`[LangGraph] 🛠 Executing Tools: ${JSON.stringify(calls.map((c: any) => c.name || c))}`);
+    console.log(`[LangGraph Execute] ⚙️ Execution mode: ${state.parallelizeTools === false ? '🔗 SEQUENTIAL' : '⚡ PARALLEL'}`);
 
     let nodeError: string | undefined = undefined;
 
@@ -47,146 +48,168 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
         : calls;
     // ─────────────────────────────────────────────────────────────────────────
 
-    // 🟢 Parallel Tool Execution
-    const executedResults = await Promise.all(
-        activeCalls.map(async (toolCall: any, index: number) => {
+    // ─── Single-Tool Execution Helper ────────────────────────────────────────
+    // Extracted so the same logic can be used in both parallel and sequential paths.
+    async function executeSingleTool(toolCall: any, index: number): Promise<any> {
+        const name = typeof toolCall === "string" ? toolCall : toolCall.name;
+        const args = toolCall.args || {};
 
-            const name = typeof toolCall === "string" ? toolCall : toolCall.name;
-            const args = toolCall.args || {};
+        const sanitizedName = name.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const tool = (skylarkTools as any)[sanitizedName];
 
-            const sanitizedName = name.replace(/[^a-zA-Z0-9_-]/g, "_");
-            const tool = (skylarkTools as any)[sanitizedName];
-
-            // 🟢 Generic Architectural Fix: Resolved at Skylark end flawlessly!
-            // Injected diagnostic tool to allow the AI to report its current memory filters.
-            if (name === 'mcp.query_active_filters') {
-                return {
-                    name,
-                    index,
-                    result: {
-                        capability: 'mcp.query_active_filters',
-                        activeFilters: state.workingMemory?.queryContext?.activeFilters || {}
-                    }
-                };
-            }
-
-            // 🟢 mcp.clear_filters: deterministic filter reset without touching Phoenix.
-            // Accepts optional `filters` arg (comma-separated list of keys to drop).
-            // If omitted, clears ALL attribute filters — keeps only organizationID, organization, vesselID.
-            if (name === 'mcp.clear_filters') {
-                const ENTITY_KEYS = new Set(['organizationID', 'organization', 'vesselID', 'vessel']);
-                const currentFilters: Record<string, string> = { ...(state.workingMemory?.queryContext?.activeFilters || {}) };
-
-                // Parse which keys the Orchestrator wants to clear
-                const rawArg = Array.isArray(args)
-                    ? args.find((a: any) => a.key === 'filters')?.value
-                    : (args as any)?.filters;
-
-                let clearedKeys: string[];
-                if (rawArg && String(rawArg).trim()) {
-                    // Specific list: clear only those keys
-                    clearedKeys = String(rawArg).split(',').map((k: string) => k.trim()).filter(Boolean);
-                } else {
-                    // No list provided: clear all non-entity keys
-                    clearedKeys = Object.keys(currentFilters).filter(k => !ENTITY_KEYS.has(k));
+        // 🟢 Generic Architectural Fix: Resolved at Skylark end flawlessly!
+        // Injected diagnostic tool to allow the AI to report its current memory filters.
+        if (name === 'mcp.query_active_filters') {
+            return {
+                name,
+                index,
+                result: {
+                    capability: 'mcp.query_active_filters',
+                    activeFilters: state.workingMemory?.queryContext?.activeFilters || {}
                 }
+            };
+        }
 
-                clearedKeys.forEach(k => delete currentFilters[k]);
+        // 🟢 mcp.clear_filters: deterministic filter reset without touching Phoenix.
+        // Accepts optional `filters` arg (comma-separated list of keys to drop).
+        // If omitted, clears ALL attribute filters — keeps only organizationID, organization, vesselID.
+        if (name === 'mcp.clear_filters') {
+            const ENTITY_KEYS = new Set(['organizationID', 'organization', 'vesselID', 'vessel']);
+            const currentFilters: Record<string, string> = { ...(state.workingMemory?.queryContext?.activeFilters || {}) };
 
-                // Mutate workingMemory so the next Orchestrator turn sees the clean state
-                if (state.workingMemory?.queryContext) {
-                    state.workingMemory.queryContext.activeFilters = currentFilters;
-                }
+            // Parse which keys the Orchestrator wants to clear
+            const rawArg = Array.isArray(args)
+                ? args.find((a: any) => a.key === 'filters')?.value
+                : (args as any)?.filters;
 
-                console.log(`[LangGraph Execute] 🧹 mcp.clear_filters cleared: [${clearedKeys.join(', ')}] → remaining: ${JSON.stringify(currentFilters)}`);
-
-                return {
-                    name,
-                    index,
-                    result: {
-                        capability: 'mcp.clear_filters',
-                        clearedFilters: clearedKeys,
-                        activeFilters: currentFilters
-                    }
-                };
-            }
-
-
-            if (tool) {
-                try {
-                    const inputArgs: any = {};
-                    if (Array.isArray(toolCall.args)) {
-                        toolCall.args.forEach((arg: any) => {
-                            inputArgs[arg.key] = arg.value !== null && arg.value !== undefined ? String(arg.value) : undefined;
-                        });
-                    } else if (typeof toolCall.args === "object" && toolCall.args !== null) {
-                        Object.entries(toolCall.args as Record<string, any>).forEach(([key, value]) => {
-                            inputArgs[key] = value !== null && value !== undefined ? String(value) : undefined;
-                        });
-                    }
-
-                    console.log(`[LangGraph Execute] Running ${sanitizedName} with args:`, JSON.stringify(inputArgs));
-
-                    const contextMock = {
-                        requestContext: {
-                            get: (key: string) => {
-                                if (key === 'runId') return `langgraph-${Date.now()}`;
-                                if (key === 'token') return ''; 
-                                return null;
-                            }
-                        },
-                        workingMemory: state.workingMemory // 🟢 Auto-fill identifier support flawless!
-                    };
-
-                    // 🟢 GAP-29 FIX: Implement per-tool execution timeout.
-                    // direct_query_fallback is a multi-step pipeline (keyword extraction → ambiguity
-                    // → RAG → pipeline generation → execution → enrichment) and regularly takes 30-40s
-                    // for complex analytical/aggregation queries. The global 25s limit would prematurely
-                    // kill valid results. All other tools keep the 25s safety limit.
-                    // 🟢 GAP-32 FIX: Store the timer handle and cancel it via .finally() so that when
-                    // a tool completes before the deadline, the timer is cleared immediately rather
-                    // than running as a dangling handle holding the event loop open.
-                    const TOOL_TIMEOUT_MS = name === 'direct_query_fallback' ? 90000 : 25000;
-                    let _timeoutHandle: ReturnType<typeof setTimeout>;
-                    const _timeoutPromise = new Promise((_, reject) => {
-                        _timeoutHandle = setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
-                    });
-                    const result = await Promise.race([
-                        tool.execute(inputArgs, contextMock).finally(() => clearTimeout(_timeoutHandle!)),
-                        _timeoutPromise,
-                    ]);
-                    console.log(`[LangGraph Execute] ${sanitizedName} Result Preview: ${JSON.stringify(result).slice(0, 251)}...`);
-                    
-                    if (result && typeof result === 'object' && toolCall.uiTabLabel) {
-                        result.uiTabLabel = toolCall.uiTabLabel;
-                    }
-                    
-                    // 🟢 Only hide pure identity/discovery tools from the UI tabs!
-                    // Previously we hid EVERYTHING executed during a FEED_BACK_TO_ME turn, 
-                    // which caused multi-step data retrievals (like schedules -> machineries)
-                    // to drop the intermediate tables before reaching the UI.
-                    if (result && typeof result === 'object' && name === 'mcp.resolve_entities') {
-                        result.__from_feedback_loop = true;
-                    }
-
-                    // 🟢 Capture tool failures as "data" so the Orchestrator can react to them flawlessly!
-                    if (result && result.__ambiguity_stop === true) {
-                        return { name, result, index, ambiguity: true };
-                    } else if (result && (result.error === true || result.status === 'error' || result.success === false)) {
-                        console.warn(`[LangGraph Execute] ⚠️ Tool ${sanitizedName} reported failure: ${result.message || JSON.stringify(result)}`);
-                        return { name, index, result: { isError: true, message: result.message || JSON.stringify(result) } };
-                    } else {
-                        return { name, index, result };
-                    }
-                } catch (e: any) {
-                    console.error(`[LangGraph Execute] 🚨 Tool ${sanitizedName} threw exception:`, e);
-                    return { name, index, result: { isError: true, message: e.message || String(e) } };
-                }
+            let clearedKeys: string[];
+            if (rawArg && String(rawArg).trim()) {
+                // Specific list: clear only those keys
+                clearedKeys = String(rawArg).split(',').map((k: string) => k.trim()).filter(Boolean);
             } else {
-                return { name, index, result: { isError: true, message: `Tool ${name} not found in registry.` } };
+                // No list provided: clear all non-entity keys
+                clearedKeys = Object.keys(currentFilters).filter(k => !ENTITY_KEYS.has(k));
             }
-        })
-    );
+
+            clearedKeys.forEach(k => delete currentFilters[k]);
+
+            // Mutate workingMemory so the next tool (in sequential mode) or the next Orchestrator turn
+            // (in parallel mode) sees the clean state.
+            if (state.workingMemory?.queryContext) {
+                state.workingMemory.queryContext.activeFilters = currentFilters;
+            }
+
+            console.log(`[LangGraph Execute] 🧹 mcp.clear_filters cleared: [${clearedKeys.join(', ')}] → remaining: ${JSON.stringify(currentFilters)}`);
+
+            return {
+                name,
+                index,
+                result: {
+                    capability: 'mcp.clear_filters',
+                    clearedFilters: clearedKeys,
+                    activeFilters: currentFilters
+                }
+            };
+        }
+
+        if (tool) {
+            try {
+                const inputArgs: any = {};
+                if (Array.isArray(toolCall.args)) {
+                    toolCall.args.forEach((arg: any) => {
+                        inputArgs[arg.key] = arg.value !== null && arg.value !== undefined ? String(arg.value) : undefined;
+                    });
+                } else if (typeof toolCall.args === "object" && toolCall.args !== null) {
+                    Object.entries(toolCall.args as Record<string, any>).forEach(([key, value]) => {
+                        inputArgs[key] = value !== null && value !== undefined ? String(value) : undefined;
+                    });
+                }
+
+                console.log(`[LangGraph Execute] Running ${sanitizedName} with args:`, JSON.stringify(inputArgs));
+
+                const contextMock = {
+                    requestContext: {
+                        get: (key: string) => {
+                            if (key === 'runId') return `langgraph-${Date.now()}`;
+                            if (key === 'token') return ''; 
+                            return null;
+                        }
+                    },
+                    workingMemory: state.workingMemory // 🟢 Auto-fill identifier support flawless!
+                };
+
+                // 🟢 GAP-29 FIX: Implement per-tool execution timeout.
+                // direct_query_fallback is a multi-step pipeline (keyword extraction → ambiguity
+                // → RAG → pipeline generation → execution → enrichment) and regularly takes 30-40s
+                // for complex analytical/aggregation queries. The global 25s limit would prematurely
+                // kill valid results. All other tools keep the 25s safety limit.
+                // 🟢 GAP-32 FIX: Store the timer handle and cancel it via .finally() so that when
+                // a tool completes before the deadline, the timer is cleared immediately rather
+                // than running as a dangling handle holding the event loop open.
+                const TOOL_TIMEOUT_MS = name === 'direct_query_fallback' ? 90000 : 25000;
+                let _timeoutHandle: ReturnType<typeof setTimeout>;
+                const _timeoutPromise = new Promise((_, reject) => {
+                    _timeoutHandle = setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
+                });
+                const result = await Promise.race([
+                    tool.execute(inputArgs, contextMock).finally(() => clearTimeout(_timeoutHandle!)),
+                    _timeoutPromise,
+                ]);
+                console.log(`[LangGraph Execute] ${sanitizedName} Result Preview: ${JSON.stringify(result).slice(0, 251)}...`);
+                
+                if (result && typeof result === 'object' && toolCall.uiTabLabel) {
+                    result.uiTabLabel = toolCall.uiTabLabel;
+                }
+                
+                // 🟢 Only hide pure identity/discovery tools from the UI tabs!
+                // Previously we hid EVERYTHING executed during a FEED_BACK_TO_ME turn, 
+                // which caused multi-step data retrievals (like schedules -> machineries)
+                // to drop the intermediate tables before reaching the UI.
+                if (result && typeof result === 'object' && name === 'mcp.resolve_entities') {
+                    result.__from_feedback_loop = true;
+                }
+
+                // 🟢 Capture tool failures as "data" so the Orchestrator can react to them flawlessly!
+                if (result && result.__ambiguity_stop === true) {
+                    return { name, result, index, ambiguity: true };
+                } else if (result && (result.error === true || result.status === 'error' || result.success === false)) {
+                    console.warn(`[LangGraph Execute] ⚠️ Tool ${sanitizedName} reported failure: ${result.message || JSON.stringify(result)}`);
+                    return { name, index, result: { isError: true, message: result.message || JSON.stringify(result) } };
+                } else {
+                    return { name, index, result };
+                }
+            } catch (e: any) {
+                console.error(`[LangGraph Execute] 🚨 Tool ${sanitizedName} threw exception:`, e);
+                return { name, index, result: { isError: true, message: e.message || String(e) } };
+            }
+        } else {
+            return { name, index, result: { isError: true, message: `Tool ${name} not found in registry.` } };
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // 🟢 Branching execution strategy:
+    //   parallelizeTools === false → sequential (tools run in declared order; state mutations
+    //     like mcp.clear_filters complete before the next tool reads activeFilters)
+    //   parallelizeTools === true (default) → parallel via Promise.all() (existing behavior)
+    const executedResults: any[] = [];
+
+    if (state.parallelizeTools === false) {
+        // Sequential execution — each tool awaits completion before the next one starts.
+        // This guarantees that mcp.clear_filters (or any state-mutating tool) fully commits
+        // its in-place mutation to state.workingMemory.queryContext.activeFilters before
+        // subsequent tools in the same turn read from it.
+        for (let i = 0; i < activeCalls.length; i++) {
+            const result = await executeSingleTool(activeCalls[i], i);
+            executedResults.push(result);
+        }
+    } else {
+        // Parallel execution — existing Promise.all() behavior, unchanged.
+        const results = await Promise.all(
+            activeCalls.map((toolCall: any, index: number) => executeSingleTool(toolCall, index))
+        );
+        executedResults.push(...results);
+    }
 
     // Filter ambiguity breakouts
     const standsAmbiguous = executedResults.some((item: any) => item && item.ambiguity === true);
