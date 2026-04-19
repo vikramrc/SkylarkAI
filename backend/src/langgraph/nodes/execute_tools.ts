@@ -271,7 +271,12 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
         }
         return { 
             toolResults: outputs,
-            messages: [...state.messages, new AIMessage({ content: finalMessageContent })]
+            messages: [...state.messages, new AIMessage({ content: finalMessageContent })],
+            // 🟢 AMBIGUITY HITL BRIDGE: Tell the next HTTP request that the user is answering
+            // a clarifying question, not starting a fresh query. Without this flag,
+            // update_memory2 resets Tier 2 (isNewQuery=true) and loses pendingIntents,
+            // causing the Orchestrator to misinterpret the clarification answer as a new topic.
+            isHITLContinuation: true,
         } as any;
     }
 

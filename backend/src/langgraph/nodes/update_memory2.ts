@@ -86,6 +86,18 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     console.log(`\x1b[36m[UpdateMemory2] 📊 State snapshot: startTurnIndex=${state.startTurnIndex ?? 0} | iter=${iter} | isHITL=${state.isHITLContinuation} | existingRawQuery="${(existingMemory.queryContext?.rawQuery || '').substring(0, 60)}"\x1b[0m`);
     console.log(`\x1b[36m[UpdateMemory2] 📦 Tool turns in this request: total=${history.length} | current slice: ${currentTurns.length} turn(s) | latestTurn keys: [${Object.keys(latestTurn).join(', ') || 'none'}]\x1b[0m`);
 
+    // ─────────────────────────────────────────────────────────────────
+    // SCOPE_NAVIGABLE_KEYS: Entity types whose ObjectIds belong in currentScope
+    // (the fleet-iteration array used by the Orchestrator to loop over vessels).
+    //
+    // Non-navigable IDs (crewcompetencysignalID, activityID, scheduleID, etc.) are
+    // stored in sessionStateCommit.scope under their typed key — available to the
+    // Orchestrator as query parameters — but NEVER promoted into currentScope.
+    // This prevents cross-domain ID contamination (e.g., a signal ObjectId being
+    // passed as vesselID to maintenance.query_status).
+    // ─────────────────────────────────────────────────────────────────
+    const SCOPE_NAVIGABLE_KEYS = new Set(['vesselID', 'machineryID']);
+
     // Extract scope + resolved entities from ALL current turns
     const labelToMatches: Record<string, any[]> = {};
     const organicallyDiscoveredIds = new Set<string>();
@@ -140,7 +152,21 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                 data.items.forEach((item: any) => {
                     const id = item._id || item.id;
                     if (typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id)) {
-                        organicallyDiscoveredIds.add(id);
+                        // 🟢 SCOPE_NAVIGABLE_KEYS FILTER: For resolve_entities results, only harvest
+                        // IDs of scope-navigable entity types (Vessel, Machinery) into currentScope.
+                        // Non-navigable types (CrewCompetencySignal, MaintenanceActivity, etc.) are
+                        // stored in sessionStateCommit.scope[typeKey] by the label resolution block
+                        // below — they stay as typed query params, not scope navigators.
+                        // For other discovery tools (fleet.query_overview) — harvest all (they return vessels).
+                        if (turnKey.includes('resolve_entities')) {
+                            const typeKey = `${(item.type || '').toLowerCase()}ID`;
+                            if (SCOPE_NAVIGABLE_KEYS.has(typeKey)) {
+                                organicallyDiscoveredIds.add(id);
+                            }
+                            // else: ID is already captured in sessionStateCommit.scope[typeKey] — skip currentScope
+                        } else {
+                            organicallyDiscoveredIds.add(id);
+                        }
                     }
                 });
             }
@@ -333,7 +359,23 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
     // By passing existingMemory.queryContext?.activeFilters, we allow the Phase 2 LLM prompt rule "FILTER INHERITANCE" 
     // to determine whether the filters still apply to the new rawQuery.
     let previousQueryContext = isNewQuery
-        ? { ...existingMemory.queryContext, rawQuery, pendingIntents: [], lastTurnInsight: "", currentScope: [], activeFilters: existingMemory.queryContext?.activeFilters || {} }
+        ? {
+            ...existingMemory.queryContext,
+            rawQuery,
+            pendingIntents: [],
+            lastTurnInsight: "",
+            currentScope: [],
+            // 🟢 DOMAIN PIVOT: If the Orchestrator detected a domain switch (maintenance→competency etc.),
+            // clear domain-specific attribute filters — they are meaningless in the new domain.
+            // On entity pivot within the same domain (XXX1→YYY1), isDomainPivot=false, so filters
+            // are inherited as normal per the FILTER INHERITANCE rule in Phase 2.
+            activeFilters: state.isDomainPivot
+                ? ((): Record<string, string> => {
+                    console.log(`\x1b[35m[UpdateMemory2] 🔀 DOMAIN PIVOT ACTIVE — clearing domain-specific activeFilters (${JSON.stringify(existingMemory.queryContext?.activeFilters || {})}).\x1b[0m`);
+                    return {};
+                })()
+                : (existingMemory.queryContext?.activeFilters || {})
+          }
         : { ...existingMemory.queryContext, rawQuery }; // rawQuery always comes from our resolved value above
 
     // ─────────────────────────────────────────────────────────────────
@@ -416,6 +458,14 @@ CONTEXT REFINEMENT (user answered a clarifying question in this session):
     const deterministicScope = new Set<string>(organicallyDiscoveredIds);
     Object.entries(sessionStateCommit.scope).forEach(([k, v]) => {
         if (typeof v === 'string' && /^[0-9a-fA-F]{24}$/.test(v) && k !== 'organizationID') {
+            // 🟢 SCOPE_NAVIGABLE_KEYS FILTER: Only promote IDs of fleet-navigable entity types
+            // (vesselID, machineryID) into deterministicScope → currentScope.
+            // crewcompetencysignalID, activityID, scheduleID, costCenterID etc. remain
+            // in sessionStateCommit.scope as typed query params for the Orchestrator to read,
+            // but MUST NOT enter currentScope where they could be misused as vesselIDs.
+            if (!SCOPE_NAVIGABLE_KEYS.has(k)) {
+                return; // Not a navigable type — skip, but preserve in scope for Orchestrator reads
+            }
             const inheritedValue = inheritedEntityScopeSnapshot.get(k);
             const isStaleInherited = inheritedValue !== undefined && v === inheritedValue;
             if (isGenuineTopicPivot && !isBroadScopeTriggered && isStaleInherited) {
@@ -493,12 +543,39 @@ Rules:
    - IMPORTANT: If a discovery tool ran (e.g. fleet overview returning vessel IDs), the discovery intent is NOW COMPLETE. Do NOT keep "discover vessels" as a pending intent.
    - IMPORTANT: If entity IDs are now known (from discovery), the retrieval step is the ONLY remaining intent.
 2. activeFilters: Extract all filters that are scoping the current query (e.g. statusCode, startDate, limit, distributionScope like "per vessel"). 
+   - PROTECTED DOMAIN CONTEXT (HIGHEST PRIORITY): If the user input contains a "PROTECTED DOMAIN CONTEXT" block, ALL filters listed in it are MANDATORY. You MUST include every key-value pair from that block in your output activeFilters, without exception. These represent the established investigative subject of the conversation (e.g., a specific competency signal or training mode) that the user is continuing — NOT abandoning. You may add new filters to cover the new scope, but you are STRICTLY FORBIDDEN from dropping any protected filter.
    - FILTER INHERITANCE: If the user's latest message is a continuation or an entity pivot (e.g., 'and for MV Phoenix', 'now show me XXX2'), you SHOULD preserve relevant filters from the 'Previous activeFilters' list (like statusCode: committed, limit, dates).
    - CRITICAL (ANTI-POISONING): If the "Tools executed this turn" block shows a tool ran with specific parameters (e.g. statusCode="completed"), you MUST update activeFilters to match those parameters, even if the "Previous activeFilters" or the "rawQuery" suggest otherwise. The tool result is the ground truth of the current turn's scope.
    - ENTITY PRESERVATION: If the original 'rawQuery' contains a specific label (e.g. 'XXX1', 'DFGRE') that is NOT yet a canonical 24-char hex ID, you MUST preserve it in 'activeFilters' even if the user provides a different piece of info (like an Organization). Do NOT allow a context refinement to delete an unresolved label.
    - If the user specifies a limit or distribution scope, add them here. Do NOT hallucinate filters that are not clearly requested.
    - ANTI-HALLUCINATION (CRITICAL): You are STRICTLY FORBIDDEN from inferring or guessing attribute filter values (e.g. blockageReason, failureCode, triggerOrigin, repairType) that do NOT appear verbatim in the tool's [appliedFilters] block in the "Tools executed this turn" section. Only extract a filter if it is present as an explicit parameter in the tool call result. If no such parameter appears, the filter MUST NOT appear in activeFilters.
 3. lastTurnInsight: You MUST summarize in EXACTLY ONE sentence ONLY. Your sentence MUST explicitly state BOTH what the user asked for (based on the rawQuery) AND what data was actually retrieved or resolved altogether this turn. Max 300 chars.`;
+
+    // 🟢 GAP-18 FIX: PROTECTED DOMAIN CONTEXT injection
+    // When isNewQuery=true (fresh HTTP request) AND the Orchestrator did NOT detect a domain pivot,
+    // the user is continuing in the SAME investigative subject (e.g., expanding "XXX1 competency"
+    // to "org-wide competency"). In that case, the previous activeFilters represent the established
+    // domain context — they must survive the new rawQuery's scope expansion.
+    //
+    // Without this, Phase 2 sees rawQuery="Organization-wide investigation..." (no mention of Tanker
+    // Management) + tools that show only fleet.query_overview, and legally strips signalName/mode.
+    // The PROTECTED block makes those filters mandatory, not just advisory.
+    const prevFilters = previousQueryContext.activeFilters || {};
+    const hasPrevFilters = Object.keys(prevFilters).length > 0;
+    const isTopicContinuation = isNewQuery && !state.isDomainPivot && hasPrevFilters;
+    let protectedDomainBlock = "";
+    if (isTopicContinuation) {
+        // Strip entity-scope keys (vesselID, machineryID) — those are legitimately changing with the new scope.
+        // Preserve domain/attribute filters (signalName, signalID, mode, statusCode, etc.).
+        const entityScopeKeySet = new Set(['vesselID', 'machineryID', 'scheduleID', 'activityID', 'costCenterID', 'searchTerm', 'entityLabel', 'resolvedEntityType', 'vesselLabel']);
+        const domainFilters = Object.fromEntries(
+            Object.entries(prevFilters).filter(([k]) => !entityScopeKeySet.has(k))
+        );
+        if (Object.keys(domainFilters).length > 0) {
+            protectedDomainBlock = `\n\nPROTECTED DOMAIN CONTEXT (MANDATORY — do NOT drop any of these):\n${JSON.stringify(domainFilters, null, 2)}\nRationale: The Orchestrator determined this question is a continuation of the same investigative topic (not a domain pivot). These filters represent what the user is still asking about — only the scope has widened.`;
+            console.log(`\x1b[32m[UpdateMemory2] 🛡️ GAP-18: Injecting PROTECTED DOMAIN CONTEXT (${Object.keys(domainFilters).length} filters): ${JSON.stringify(domainFilters)}\x1b[0m`);
+        }
+    }
 
     const userContent = `rawQuery: "${rawQuery}"
 
@@ -509,7 +586,7 @@ Previous activeFilters (Inherit these if applicable):
 ${JSON.stringify(previousQueryContext.activeFilters || {}, null, 2)}
 
 Previous pending intents:
-${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.pendingIntents.map((i: string) => `- ${i}`).join('\n') : "None (first turn)"}${hitlContextBlock}`;
+${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.pendingIntents.map((i: string) => `- ${i}`).join('\n') : "None (first turn)"}${hitlContextBlock}${protectedDomainBlock}`;
 
     try {
         // includeRaw: true → response is { parsed: ZodOutput, raw: AIMessage }

@@ -128,6 +128,14 @@ const RESOLVABLE_ENTITIES: Record<string, {
     idField: "_id", 
     displayField: "firstName" 
   },
+  // 🟢 Competency Signal resolution — enables mcp.resolve_entities to return _id ObjectId
+  // for signal names like "Tanker Management". The downstream tool (crew.query_competency_diagnostics)
+  // accepts this ObjectId as competencySignalID and resolves the internal signalID string itself.
+  CrewCompetencySignal: {
+    searchFields: ["label", "signalID"],
+    idField: "_id",
+    displayField: "label"
+  },
 };
 
 /**
@@ -218,9 +226,15 @@ export async function resolveEntities(args: {
     // collection uses active as a non-boolean (e.g. a string or number), documents would be wrongly excluded.
     const COLLECTIONS_WITH_ACTIVE_FLAG = new Set([
         'Vessel', 'Machinery', 'Component', 'InventoryPart', 'InventoryLocation',
-        'Vendor', 'CrewMember', 'FormTemplate', 'User', 'MaintenanceSchedule'
+        'Vendor', 'CrewMember', 'FormTemplate', 'User', 'MaintenanceSchedule',
+        'CrewCompetencySignal'  // uses isActive boolean field
     ]);
-    const activeFilter = COLLECTIONS_WITH_ACTIVE_FLAG.has(entityType) ? { active: { $ne: false } } : {};
+    // 🟢 CrewCompetencySignal uses `isActive` (not `active`) per its Mongoose schema
+    const activeFilter = COLLECTIONS_WITH_ACTIVE_FLAG.has(entityType)
+        ? entityType === 'CrewCompetencySignal'
+            ? { isActive: { $ne: false } }
+            : { active: { $ne: false } }
+        : {};
 
     const docs = await db.collection(entityType).find({
       ...orgFilter,

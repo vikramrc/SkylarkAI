@@ -102,6 +102,14 @@ const workflow = new StateGraph<SkylarkState>({
         reducer: (x: boolean | undefined, y: boolean | undefined) => y !== undefined ? y : x,
         default: () => true,
     },
+    // 🟢 DOMAIN PIVOT FLAG: Emitted by Orchestrator when the new query switches operational domain
+    // (e.g., maintenance → competency). Consumed by UpdateMemory2 to clear stale domain-specific
+    // activeFilters. Uses LastValue reducer — most recent Orchestrator decision always wins.
+    isDomainPivot: {
+        reducer: (x: boolean | undefined, y: boolean | undefined) => y !== undefined ? y : x,
+        default: () => false,
+    },
+
   } as any 
 });
 

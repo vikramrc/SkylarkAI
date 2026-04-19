@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, AlertTriangle, Calendar, CheckCircle2, Lightbulb, TrendingUp, UserX, XCircle, Info, FileText, Shield, Search, Ship, Paperclip, ClipboardCheck, ShieldAlert, Settings, type LucideIcon, Wrench, Clock, BarChart2, BarChart, Navigation, CheckCircle, Repeat, Target, Activity, Filter, ArrowRight, InfoIcon } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Calendar, CheckCircle2, Lightbulb, TrendingUp, UserX, XCircle, Info, FileText, Shield, Search, Ship, Paperclip, ClipboardCheck, ShieldAlert, Settings, type LucideIcon, Wrench, Clock, BarChart2, BarChart, Navigation, CheckCircle, Repeat, Target, Activity, Filter, ArrowRight, InfoIcon, History, TriangleAlert, ChartColumn, CalendarCheck, TrendingUpIcon, RefreshCw, User, Book } from 'lucide-react';
 
 interface AnalyticalSummaryProps {
   title: string;
@@ -39,6 +39,14 @@ const ICON_MAP: Record<string, LucideIcon> = {
   filter: Filter,
   'arrow-right': ArrowRight,
   'information': Info,
+  history:History,
+  'triangle-exclamation':TriangleAlert,
+  'chart-column': ChartColumn,
+  'calendar-check':CalendarCheck,
+  'trend-up':TrendingUpIcon,
+'refresh-cw':RefreshCw,
+'users':User,
+training:Book
 };
 
 const COLOR_MAP: Record<string, { bg: string; border: string; text: string; icon: string; accent: string }> = {

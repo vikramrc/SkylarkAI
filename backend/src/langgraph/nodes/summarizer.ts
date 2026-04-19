@@ -138,7 +138,16 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
             toolCountMap.push(`- **${key}** (${capability}${filterInfo}): ${items.length} rows`);
 
             if (Array.isArray(result?.items) && result.items.length === 0) {
-                emptyTools.push(`- **${key}** (${capability}): Returned 0 matching items.`);
+                // 🟢 Generic enrichment: serialize the FULL appliedFilters object so the Summarizer
+                // knows WHICH query was empty, regardless of tool type (maintenance, crew, fleet, etc.).
+                // Do NOT cherry-pick specific fields — keep this generic for all current and future tools.
+                const af = result?.appliedFilters;
+                const filterContext = af && Object.keys(af).length > 0
+                    ? ` Applied filters: ${JSON.stringify(af)}.`
+                    : '';
+                const tabLabel = (result as any)?.uiTabLabel;
+                const labelContext = tabLabel ? ` ("${tabLabel}")` : '';
+                emptyTools.push(`- **${key}** (${capability})${labelContext}: Returned 0 matching items.${filterContext} This is a CONFIRMED EMPTY result — the query ran successfully with these exact filters and found no matching records. State this explicitly in your summary.`);
             }
             // Tag each row with its source tool KEY so the LLM can distinguish multi-tool responses
             for (const item of items) {
@@ -349,8 +358,22 @@ ${jsonlData}`
         //
         // 🟢 GAP-4 FIX: Skip convIndex increment and summaryBuffer write when all tools returned errors.
         // An error-only turn should not advance the conversation counter or pollute the Q&A buffer.
-        const hasRealData = allItems.length > 0 || (noToolsCalled && !emptyDataset);
+        //
+        // 🟢 GAP-4b FIX: A confirmed-empty-result turn (tools ran, returned 0 items) IS a real
+        // conversation turn and MUST be written to summaryBuffer. The original check (allItems.length > 0)
+        // incorrectly skipped empty-result turns, making subsequent queries blind to the prior exchange.
+        // Example: user asks about crew competency (0 results) → next query says "show me org wide" →
+        // without the competency entry in summaryBuffer, the LLM's RECENT OBSERVATIONAL MEMORY only shows
+        // maintenance history, causing it to reformulate "org wide" as a maintenance request.
+        // Fix: emptyDataset (tools ran + 0 items) is now treated as hasRealData=true.
+        const allToolsHardErrored = emptyDataset && toolEntries.length > 0 &&
+            toolEntries.every(([, res]: [string, any]) => {
+                const text = res?.content?.[0]?.text || '';
+                return typeof text === 'string' && text.includes('Error:') && !text.trim().startsWith('{');
+            });
+        const hasRealData = allItems.length > 0 || (emptyDataset && !allToolsHardErrored) || noToolsCalled;
         const convIndex = hasRealData ? (session.humanConversationCount ?? 0) + 1 : (session.humanConversationCount ?? 0);
+
 
         
         // Update secondaryScope (Last 7 Conversations) — only when we have real data

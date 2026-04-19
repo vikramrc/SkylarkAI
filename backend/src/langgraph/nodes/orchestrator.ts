@@ -60,8 +60,32 @@ export const orchestratorSchema = z.object({
             "pre-clear data query first, mcp.clear_filters in the middle, and the post-clear data query last. " +
             "Set to TRUE (default) when all tools are independent read operations with no shared state dependency."
         )
-        .default(true)
+        .default(true),
+    isDomainPivot: z.boolean()
+        .describe(
+            "⚠️ TOPIC CHANGE DETECTOR. Look at the RECENT OBSERVATIONAL MEMORY (QnA history) and compare the previous Q&A pair " +
+            "to the current user question. Ask yourself: 'Is the new question a natural continuation or follow-up of what we were just discussing? " +
+            "Or is the user now asking about something completely unrelated to the previous exchange?' " +
+            "SET TRUE if the new question is NOT a continuation of the previous topic — i.e., the user has moved on to a different subject entirely. " +
+            "SET FALSE if the new question is a continuation, follow-up, or scope change within the same subject (e.g., same topic but different vessel, date range, or wider scope). " +
+            "HUMAN ANALOGY: Imagine reading a chat transcript. If a friend asks about restaurant recommendations and then suddenly asks 'by the way, how do I fix my bike?', " +
+            "that is a topic change (TRUE). If they follow up with 'what about Italian restaurants?' that is not a topic change (FALSE). " +
+            "CONCRETE TRUE EXAMPLE (the most common case): " +
+            "Previous Q: 'show me completed maintenance activities for XXX1 and MV Phoenix Demo' / Previous A: showed maintenance records. " +
+            "New Q: 'show me competency training completions for Tanker Management on XXX1'. " +
+            "→ isDomainPivot = TRUE. These are unrelated topics (maintenance history vs crew competency training). " +
+            "CONCRETE FALSE EXAMPLE: " +
+            "Previous Q/A: competency training completions for Tanker Management on XXX1 (0 results). " +
+            "New Q: 'okay show me org wide' or 'show me for all vessels'. " +
+            "→ isDomainPivot = FALSE. Same topic, just wider scope. " +
+            "EFFECT: When TRUE, stale attribute filters (statusCode, startDate, endDate etc.) from the previous topic are cleared " +
+            "so they do not contaminate the new topic's investigation."
+        )
+        .default(false)
 });
+
+
+
 
 // 🟢 Global Module-Level Cache for startup-once speedups
 // ⚠️ GAP-17 NOTE: This cache is loaded once per process lifetime using the default organization ID from .env.
@@ -474,8 +498,13 @@ You MUST check the user's current query:
         console.log(`\x1b[35m[Orchestrator] 🧹 TOPIC PIVOT SCOPE GUARD: Suppressed stale currentScope [${(query?.currentScope || []).join(', ')}] from prompt. Starting fresh for new query.\x1b[0m`);
     }
 
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0]; // e.g. "2026-04-19"
+    const currentYear = today.getFullYear();           // e.g. 2026
+    const priorYear = currentYear - 1;                 // e.g. 2025
+
     const memoryContext = [
-        `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)`,
+        `\n### 🗂️ SESSION CONTEXT (Persists This Conversation)\n📅 TODAY: ${todayStr} | Current Year: ${currentYear} | Prior Year: ${priorYear}\nWhen the user says "this year" use ${currentYear}. When they say "past year" or "prior year" use ${priorYear}.`,
         fatalErrorInstruction,
         systemInterceptStr,
         broadScopeStr,
@@ -779,12 +808,16 @@ Instruction: Proceed with your investigation based on the complete context provi
     // A "discovery turn" runs fleet.query_overview or mcp.resolve_entities to get entity IDs.
     // Its ONLY purpose is to feed those IDs into the NEXT retrieval tool call.
     // If the LLM decides to SUMMARIZE after a discovery turn without calling any retrieval tool,
-    // the discovery was completely pointless — the user gets a fleet overview instead of the
+    // the discovery was completely pointless — the user gets entity IDs instead of the
     // actual data they asked for.
     //
-    // Guard fires EXACTLY ONCE (iter === 1 only) to force the LLM back into the loop.
-    // If LLM still returns no tools on the re-attempt (iter=2+), allow graceful degradation
-    // to prevent infinite loops.
+    // Guard fires whenever UpdateMemory2 still reports unfulfilled pendingIntents AND no
+    // retrieval tool has run yet in this request cycle. It stands down naturally when:
+    //   - pendingIntents is emptied (UpdateMemory2 confirms work is done)
+    //   - hasRetrievalInCurrentRequest becomes true (retrieval actually ran)
+    //   - The graph's hard maxIter ceiling is hit (catastrophic failure path)
+    // The iter number is NOT a termination condition — that was an over-conservative safety
+    // net that broke under stale observational memory from prior sessions.
     // ─────────────────────────────────────────────────────────────────
     const currentIter = state.iterationCount || 0;
     const rawToolResults = Array.isArray(state.toolResults) ? state.toolResults : [];
@@ -822,31 +855,37 @@ Instruction: Proceed with your investigation based on the complete context provi
         Object.keys(turn || {}).some(k => !isDiscoveryKey(k))
     );
 
+    const pendingIntentsAtThisTurn = (state.workingMemory as any)?.queryContext?.pendingIntents || [];
+
     if (
-        currentIter === 1 &&              // Only fire on the first post-discovery turn
         prevTurnWasDiscovery &&           // Previous turn was a discovery tool
-        !hasRetrievalInCurrentRequest &&  // No retrieval tool has run yet this request cycle (pure code check)
+        !hasRetrievalInCurrentRequest &&  // No retrieval tool has run yet this request cycle
         finalToolCalls.length === 0 &&    // LLM wants to stop with no retrieval tool
-        finalVerdict === 'SUMMARIZE'      // LLM wants to summarize discovery output directly
+        finalVerdict === 'SUMMARIZE' &&   // LLM wants to summarize discovery output directly
+        pendingIntentsAtThisTurn.length > 0  // UpdateMemory2 confirms work is genuinely unfinished
+        // ↑ Sole termination condition. No iter cap — maxIter=8 is the graph's hard ceiling.
     ) {
         console.warn(
             `\x1b[41m\x1b[97m[Orchestrator] \ud83d\uded1 DISCOVERY STALL GUARD FIRED\x1b[0m\x1b[31m` +
             ` — Previous turn was discovery (${prevTurnKeys.join(', ')}) but current turn proposes` +
             ` no retrieval tools.` +
             ` hasRetrievalInCurrentRequest=${hasRetrievalInCurrentRequest} | iter=${currentIter}` +
+            ` | pendingIntents=${pendingIntentsAtThisTurn.length}` +
             ` — Overriding verdict to FEED_BACK_TO_ME.\x1b[0m`
         );
         finalVerdict = 'FEED_BACK_TO_ME';
         finalReasoning = `[DISCOVERY STALL GUARD] Prior discovery turn (${prevTurnKeys.join(', ')}) completed ` +
             `successfully but was immediately followed by a SUMMARIZE with no retrieval tools. ` +
             `The vessel/entity IDs discovered MUST be used to call a specific retrieval tool ` +
-            `(e.g., maintenance.query_execution_history). Looping back to execute the retrieval step.`;
+            `(e.g., maintenance.query_status or maintenance.query_execution_history). ` +
+            `${pendingIntentsAtThisTurn.length} pending intent(s) still unresolved. Looping back to execute the retrieval step.`;
     } else if (prevTurnWasDiscovery) {
         console.log(
             `\x1b[32m[Orchestrator] \u2705 DISCOVERY STALL CHECK: Guard not triggered.\x1b[0m` +
             ` iter=${currentIter} | prevWasDiscovery=${prevTurnWasDiscovery}` +
             ` | hasRetrieval=${hasRetrievalInCurrentRequest}` +
-            ` | toolCalls=${finalToolCalls.length} | verdict=${finalVerdict}`
+            ` | toolCalls=${finalToolCalls.length} | verdict=${finalVerdict}` +
+            ` | pendingIntents=${pendingIntentsAtThisTurn.length}`
         );
     }
 
@@ -883,19 +922,28 @@ Instruction: Proceed with your investigation based on the complete context provi
     //   2. At least one NON-DISCOVERY retrieval tool returned 0 items in this request cycle
     //   3. direct_query_fallback has NOT already run in this request cycle
     //   4. Not a clarifying question turn
-    const hasEmptyRetrievalResult = requestCycleToolResults.some(turn =>
-        Object.entries(turn || {}).some(([k, res]) => {
-            if (isDiscoveryKey(k)) return false; // Skip discovery tools
-            if (k.includes('direct_query_fallback')) return false; // Skip fallback results (handled by DEDUP)
+    // 🛡️ GUARD REFINEMENT: Only check the LAST retrieval turn, not ANY turn in the cycle.
+    // A multi-step query (e.g. clear_filters → query_A → query_B) may have early turns that
+    // return 0 items while a LATER turn returns real data. If the LLM then correctly chooses
+    // SUMMARIZE, we must NOT inject direct_query_fallback — the LLM is summarizing real results.
+    // Only fire the guard when the most recent actual-retrieval turn is also empty.
+    const isNonDiscoveryRetrievalKey = (k: string) =>
+        !isDiscoveryKey(k) && !k.includes('direct_query_fallback') && !k.startsWith('mcp.');
+
+    const lastRetrievalTurn = [...requestCycleToolResults].reverse().find(turn =>
+        Object.keys(turn || {}).some(k => isNonDiscoveryRetrievalKey(k))
+    );
+
+    const hasEmptyRetrievalResult = lastRetrievalTurn
+        ? Object.entries(lastRetrievalTurn).some(([k, res]) => {
+            if (!isNonDiscoveryRetrievalKey(k)) return false;
             let data: any = res;
-            // Unwrap MCP content envelope if present
             if (data?.content?.[0]?.text) {
                 try { data = JSON.parse(data.content[0].text); } catch {}
             }
-            // 0 items returned = empty, -1 would be an error (skip errors)
             return Array.isArray(data?.items) ? data.items.length === 0 : false;
         })
-    );
+        : false;
 
     if (
         finalToolCalls.length === 0 &&
@@ -974,34 +1022,25 @@ Instruction: Proceed with your investigation based on the complete context provi
     // The intercept's sole purpose is to resolve an entity label into a canonical DB ID when
     // the LLM does not yet have it. It must NOT fire in two cases:
     //
-    // Case A — Atomic/meta-tools (clear_filters, query_active_filters):
-    //   These operate on session state, not on entities. They never need entity resolution.
-    //   Intercepting them replaces a correct, atomic action with a pointless resolution pass.
-    //
-    // Case B — LLM already routed the label to a tool as a direct string parameter:
-    //   If the unclassified label appears as a value in ANY of the planned tool args,
-    //   the LLM has already made its routing decision (e.g. signalLabel="Tanker Management",
-    //   searchTerm="Main Engine", templateName="Hot Work"). The label does not need a DB ID
-    //   lookup — it IS the parameter. This is fully generic: it works for any tool that
-    //   accepts strings directly, without hardcoding tool names.
+    // Case A — Atomic/meta-tools (mcp.clear_filters, mcp.query_active_filters):
+    //   These operate on session state, not on entity data. They never need entity resolution.
+    //   Intercepting them would replace a correct atomic state action with a pointless DB lookup.
+    //   This is the ONLY permitted bypass — all other unclassified labels must go through resolution.
     const ATOMIC_DIAGNOSTIC_TOOLS = new Set([
         'mcp.clear_filters',
         'mcp.query_active_filters',
     ]);
-    const isAtomicDiagnosticPlanned = finalToolCalls.some((t: any) => ATOMIC_DIAGNOSTIC_TOOLS.has(t.name));
+    const isAtomicDiagnosticPlanned = finalToolCalls.length > 0 && finalToolCalls.every((t: any) => ATOMIC_DIAGNOSTIC_TOOLS.has(t.name));
 
-    // Generic check: every actualUnclassified label is already present as an arg value in
-    // at least one planned tool — meaning the LLM chose to pass it directly, not resolve it.
-    const allUnclassifiedHandledAsArgs = actualUnclassified.length > 0 && actualUnclassified.every((item: any) => {
-        const lbl = (item.label || '').trim().toLowerCase();
-        return finalToolCalls.some((t: any) =>
-            (t.args || []).some((a: any) =>
-                typeof a.value === 'string' && a.value.trim().toLowerCase() === lbl
-            )
-        );
-    });
-
-    const isInterceptBypassed = isAtomicDiagnosticPlanned || allUnclassifiedHandledAsArgs;
+    // 🟢 BYPASS HARDENING: Only atomic meta-tools (mcp.clear_filters, mcp.query_active_filters)
+    // are permitted to bypass the Strategic Intercept. The previous generic bypass that checked
+    // if unclassified labels appeared as ANY arg value was removed because it allowed misrouted
+    // entity names (e.g. a vessel name placed in activityDescription) to silently skip resolution,
+    // causing all downstream queries to return 0 results.
+    // 🟢 GAP-17 FIX: isAtomicDiagnosticPlanned now uses .every() instead of .some() to ensure
+    // that if a turn mixes meta-tools with retrieval tools, the intercept STILL fires to resolve
+    // the labels needed for the retrieval tools.
+    const isInterceptBypassed = isAtomicDiagnosticPlanned;
 
     if (actualUnclassified.length > 0 && !isInterceptBypassed) {
         const resolutionTools: any[] = [];
@@ -1190,6 +1229,15 @@ Instruction: Proceed with your investigation based on the complete context provi
     } else {
         updates.isBroadScopeRequest = false; // Explicit reset so reducer doesn't inherit stale true
     }
+
+    // 🟢 DOMAIN PIVOT: Commit LLM's semantic domain-change judgment to state.
+    // UpdateMemory2 reads this to decide whether to clear domain-specific activeFilters.
+    // Explicit false reset ensures the LastValue reducer doesn't carry a stale true forward.
+    updates.isDomainPivot = response.isDomainPivot === true;
+    if (updates.isDomainPivot) {
+        console.warn(`\x1b[35m[Orchestrator] 🔀 DOMAIN PIVOT DETECTED — UpdateMemory2 will clear domain-specific activeFilters.\x1b[0m`);
+    }
+
 
     // 🔗 LOG EXECUTION MODE
     if (updates.parallelizeTools === false) {

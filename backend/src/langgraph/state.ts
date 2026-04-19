@@ -82,4 +82,13 @@ export interface SkylarkState {
   // tool is in the list — the tool ordering in toolCalls[] then defines the execution sequence.
   // Defaults to true (parallel) when not set, preserving existing behavior.
   parallelizeTools?: boolean;
+
+  // 10. Domain Pivot Signal
+  // Emitted by Orchestrator when the new user query switches operational domain
+  // (e.g., maintenance → competency/crew, crew → inventory).
+  // Consumed by UpdateMemory2 to clear domain-specific activeFilters that no longer
+  // apply to the new domain. Differs from isBroadScopeRequest: that flag controls
+  // entity-scope expansion; this flag controls attribute-filter clearing.
+  // Defaults to false (same domain, filters inherited).
+  isDomainPivot?: boolean;
 }

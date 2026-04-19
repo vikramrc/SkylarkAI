@@ -73,7 +73,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "majorJobsOnly":
       return `${requiredLabel} flag. Set to true to filter for high-impact maintenance events like Overhauls, Replacements, or Renewals.`;
     case "activityDescription":
-      return `${requiredLabel} partial text match filter for the activity's name or description. Use this to find jobs related to specific equipment or actions if you don't have an ID.`;
+      return `${requiredLabel} partial text match filter on the Activity record's description field (e.g. 'Lube Oil Change', 'Air Compressor Overhaul'). ⚠️ NEVER pass a vessel name, vessel code (e.g. 'XXX1'), or machinery name here — those must be resolved to ObjectIds via mcp.resolve_entities and passed as vesselID or machineryID. This parameter searches job/task names only, not entity identifiers.`;
     case "attachmentsOnly":
       return `${requiredLabel} evidence flag. Set to true to return only work history records that have uploaded files or manual attachments.`;
     case "partsUsedOnly":
@@ -97,6 +97,8 @@ export function getParameterDescription(param: string, requiredFields: string[])
       return `${requiredLabel} canonical raw MongoDB ObjectId for the ${param.replace("ID", "")}. DO NOT guess this. If you only have a name (e.g., "JPY Budget", "Main Engine"), you MUST first use a broad query/overview tool (like budget.query_overview or fleet.query_machinery_status) to find the correct ID before calling this tool.`;
     case "activityWorkHistoryID":
       return `${requiredLabel} canonical ObjectId of the ActivityWorkHistory (AWH) document. This is the 'awhID' field exposed on every item returned by maintenance.query_status — it is DISTINCT from activityID. MANDATORY RULE: when the user asks for failure codes or execution details for a SPECIFIC job that was previously returned by query_status, you MUST pass that job's awhID value here. Using activityID alone will return a DIFFERENT historical AWH document and will NOT surface the specific job's failure data. Example: if query_status returned awhID='69e1b95a...', pass activityWorkHistoryID='69e1b95a...' — do NOT pass the activityID here.`;
+    case "competencySignalID":
+      return `${requiredLabel} canonical 24-character MongoDB ObjectId for a CrewCompetencySignal document. Obtain this by calling mcp.resolve_entities with entityType='CrewCompetencySignal' and searchTerm=<signal name>. Do NOT pass a signal label string directly here. This follows the same resolution pattern as vesselID: resolve name → pass ObjectId.`;
     case "fulfillmentFilter":
       return `${requiredLabel} filter for Purchase Order fulfillment status. Options: 'over50' (received > 50%), 'under50' (received < 50%), 'completed' (100% received), 'none' (0% received).`;
     case "partID":
@@ -209,7 +211,7 @@ const baseCapabilitiesContract = [
     requiredQuery: ["organizationID", "entityType", "searchTerm"],
     optionalQuery: ["vesselID", "organizationShortName", "organizationName", "vesselName"],
     purpose: "Resolves human-readable names or codes (e.g., 'Main Engine', 'CC-01', 'John Doe') into 24-character hexadecimal Mongo ObjectIds. This is the mandatory 'Discovery' tool to use whenever the user provides a label instead of an ID.",
-    whenToUse: "Use this BEFORE calling any analytical or historical tool if you only have a name/code. Supported types: 'Vessel', 'Organization', 'Activity', 'ActivityWorkHistory', 'Machinery', 'Component', 'InventoryPart', 'InventoryLocation', 'MaintenanceSchedule', 'Vendor', 'CrewMember', 'FormTemplate', 'CostCenter', 'BudgetCode', 'Budget', 'PurchaseOrder', 'Invoice', 'PTW', 'DocumentMetadata', 'User'.",
+    whenToUse: "Use this BEFORE calling any analytical or historical tool if you only have a name/code. Supported types: 'Vessel', 'Organization', 'Activity', 'ActivityWorkHistory', 'Machinery', 'Component', 'InventoryPart', 'InventoryLocation', 'MaintenanceSchedule', 'Vendor', 'CrewMember', 'FormTemplate', 'CostCenter', 'BudgetCode', 'Budget', 'PurchaseOrder', 'Invoice', 'PTW', 'DocumentMetadata', 'User', 'CrewCompetencySignal'. For CrewCompetencySignal: resolve the signal name (e.g. 'Tanker Management') to its _id ObjectId, then pass that as competencySignalID to crew.query_competency_diagnostics.",
     typicalQuestions: [
         "Find the ID for cost center CC-01", 
         "Who is designated as Chief Engineer?", 
@@ -618,7 +620,7 @@ const baseCapabilitiesContract = [
     requiredQuery: ["organizationID"],
     optionalQuery: ["signalLabel", "signalID", "limit"],
     purpose: "Returns full competency signal definitions — label, sections (which of certificates/trainingRecords/medicalRecords apply), and the STCW requirement IDs the signal counts toward. Supports targeted lookup by signalLabel or signalID.",
-    whenToUse: "Use as the DISCOVERY step when the user names a competency signal (e.g. 'Tanker Management') and you need to confirm it exists, get its signalID, understand which sections it covers, and which STCW qualifications it maps to. After resolving, use crew.query_competency_diagnostics for per-crew completions and gaps. Also use for general competency config listing.",
+    whenToUse: "Use when the user wants to browse all competency signals in the org, understand signal definitions, see which record sections a signal covers, or check STCW qualification mappings. This is a general-purpose config/discovery tool for competency metadata — NOT a prerequisite before crew.query_competency_diagnostics. To resolve a named signal for diagnostics, use mcp.resolve_entities (entityType='CrewCompetencySignal') instead, which returns the _id ObjectId needed by competencySignalID.",
     typicalQuestions: ["What does Tanker Management training cover?", "What qualifications does this competency signal map to?", "What certificates are required for this training?", "What is required for a 3rd Engineer?"],
     responseShape: ["capability", "organizationID", "signals", "items"],
     interpretationGuidance: "Each item has: label (human name), signalID (the tag string stored in CrewMember records), sections (['certificates','trainingRecords','medicalRecords'] — which record types this tracks), and mapsToRequirementIDs (STCW qualifications, e.g. 'tankerAdvanced'). After resolving the signalID here, pass it to crew.query_competency_diagnostics to get per-crew data."
@@ -628,10 +630,10 @@ const baseCapabilitiesContract = [
     method: "GET",
     path: "/api/mcp/crew/competency-diagnostics",
     requiredQuery: ["organizationID"],
-    optionalQuery: ["vesselID", "crewMemberID", "signalLabel", "signalID", "mode", "limit"],
-    purpose: "Returns per-crew-member completion records and gap analysis for a specific named competency signal. Shows who has completed the training/certificate/medical evidence for that signal, and who is missing required evidence sections.",
-    whenToUse: "Use when the user asks for training completions or competency gaps for a NAMED signal (e.g. 'Tanker Management') across a vessel or for a specific crew member. ⚠️ You MUST pass the string name directly into the signalLabel parameter. Do NOT treat the signal name as an unclassified entity, and do NOT attempt to resolve it to an ID first. This is the primary tool for: 'Show me all completions for X signal', 'Who is missing X competency?', 'Match crew skills to X and show gaps'.",
-    whenNotToUse: "Do NOT use for general readiness/expiry checks (use crew.query_readiness). Do NOT use without knowing which signal to look at — either the user named a signal or crew.query_competency_config was called first.",
+    optionalQuery: ["vesselID", "crewMemberID", "competencySignalID", "mode", "limit"],
+    purpose: "Returns per-crew-member completion records and gap analysis for a specific competency signal. Shows who has completed the training/certificate/medical evidence for that signal, and who is missing required evidence sections.",
+    whenToUse: "Use when the user asks for training completions or competency gaps for a NAMED signal (e.g. 'Tanker Management') across a vessel or for a specific crew member. You MUST first resolve the signal name via mcp.resolve_entities (entityType='CrewCompetencySignal') to get its _id ObjectId, then pass that as competencySignalID. This follows the same resolution pattern as vessel names → vesselID. This is the primary tool for: 'Show me all completions for X signal', 'Who is missing X competency?', 'Match crew skills to X and show gaps'.",
+    whenNotToUse: "Do NOT use for general readiness/expiry checks (use crew.query_readiness). Do NOT use without first resolving the signal to a competencySignalID via mcp.resolve_entities.",
     typicalQuestions: [
       "Show me all crew who completed Tanker Management training on XXX1",
       "Who is missing the Tanker Management competency on this vessel?",
