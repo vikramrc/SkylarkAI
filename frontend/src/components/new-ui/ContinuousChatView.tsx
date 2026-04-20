@@ -490,11 +490,11 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
               </div>
               );
             })}
-            {/* 🟢 Glowing Orb Loader for Pending Summaries stream layouts */}
+            {/* 🟢 Premium Siri-inspired AI Spinner for Pending Responses */}
             {isProcessing && messages.length > 0 && messages[messages.length - 1].type !== 'ai' && (
-              <div className="max-w-[85%] sm:max-w-[65%] mx-auto ml-0 w-full mt-3 flex justify-start animate-fade-in-up">
-                <div className="flex items-center space-x-2 text-gray-500 text-sm font-medium px-2 py-1 bg-transparent animate-pulse">
-                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-ping" />
+              <div className="max-w-[85%] sm:max-w-[65%] mx-auto ml-0 w-full mt-4 flex justify-start animate-fade-in-up">
+                <div className="flex items-center px-1">
+                   <div className="ai-spinner active" />
                 </div>
               </div>
             )}

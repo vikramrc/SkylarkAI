@@ -296,6 +296,17 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
             .map(([lbl]) => lbl)
     );
 
+    // 🟢 AMBIGUOUS SESSION LABELS: Labels that returned MULTIPLE matches across entity types.
+    // These are genuinely ambiguous — re-running resolution won't produce a single canonical ID.
+    // The AMBIGUITY DETECTED prompt block handles the user-facing clarification request.
+    // This set provides the code-level guardrail to prevent the Strategic Intercept from
+    // re-firing on a label that already proved ambiguous this request cycle.
+    const ambiguousSessionLabels = new Set<string>(
+        Array.from(resolveHits.entries())
+            .filter(([, total]) => total > 1)
+            .map(([lbl]) => lbl)
+    );
+
 
     // 🟢 GAP-8 FIX: Explicitly mandate a clarifying question when all resolution guesses fail
     const deadEndStr = failedSessionLabels.size > 0 
@@ -322,11 +333,25 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         : "";
 
     // 🟢 Ambiguity Context (Collisions)
-    const ambiguityStr = session?.scope?.ambiguousMatches?.length 
-        ? `\n⚠️ AMBIGUITY DETECTED ⚠️
-The following labels matched MULTIPLE distinct entities. You MUST ask the user for type clarification (e.g., "Is 'XXX1' a Vessel or Machinery?") before proceeding.
-${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matches: ${m.candidates.map((c: any) => `${c.label} (${c.type})`).join(', ')}`).join('\n')}`
-        : "";
+    // Lists every label that matched more than one distinct entity, along with all candidate
+    // matches across all entity types. The LLM already knows from the user's query what entity
+    // type was intended — this block gives it the full picture so it can formulate a specific
+    // clarifying question instead of looping indefinitely.
+    //
+    // 🛡️ HITL CONTINUATION GUARD: If the user is currently replying to a previous clarifying
+    // question (isHITLContinuation=true), `ambiguousMatches` is stale session state from the
+    // turn where the question was asked. The orchestrator runs BEFORE update_memory2, so it
+    // hasn't been cleared yet. Suppress it here so the MANDATORY ACTION doesn't fire again
+    // on the user's answer turn. The LLM reads the reply naturally and asks again only if
+    // it genuinely still can't determine the intent.
+    const ambiguityStr = (!!(state as any).isHITLContinuation)
+        ? ""
+        : session?.scope?.ambiguousMatches?.length 
+            ? `\n⚠️ AMBIGUITY DETECTED ⚠️
+The following labels matched MULTIPLE distinct entity types. You MUST ask the user for clarification before attempting any retrieval.
+${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matched: ${m.candidates.map((c: any) => `${c.label} (${c.type})`).join(', ')}`).join('\n')}
+⚠️ MANDATORY ACTION: Set \`clarifyingQuestion\` telling the user exactly which entity types were found and ask which one they meant. Set \`tools\` to [] and \`feedBackVerdict\` to SUMMARIZE.`
+            : "";
 
     // ─── SECONDARY SCOPE ACCUMULATION: Reliably store any 'currentScope' ID output by the LLM
     const secondaryLines: string[] = (session?.secondaryScope || []).map(entry => 
@@ -513,6 +538,7 @@ You MUST check the user's current query:
         summaryStr,
         secondaryStr,
         labelStr,
+        ambiguityStr,   // 🟢 AMBIGUITY DETECTED block — must follow labelStr so LLM sees resolved vs ambiguous in sequence
         query?.rawQuery || anchoredRawQuery
             ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${displayCurrentScope.join(', ')}]` 
             : "",
@@ -827,6 +853,12 @@ Instruction: Proceed with your investigation based on the complete context provi
         k.includes('resolve_entities')
     );
 
+    // 🟢 AMBIGUITY BAIL-OUT: If the latest resolve_entities turn produced ambiguous matches
+    // (multiple entity types matched the same label), there is no single canonical ID to
+    // run retrieval with. Forcing the stall guard in this state creates an infinite loop.
+    // Let the AMBIGUITY DETECTED block in the prompt + the HITL path handle it instead.
+    const hasUnresolvedAmbiguity = (session?.scope?.ambiguousMatches?.length ?? 0) > 0;
+
     // ─────────────────────────────────────────────────────────────────
     // FIX: Replace hasPendingIntents with hasRetrievalInCurrentRequest.
     //
@@ -862,8 +894,9 @@ Instruction: Proceed with your investigation based on the complete context provi
         !hasRetrievalInCurrentRequest &&  // No retrieval tool has run yet this request cycle
         finalToolCalls.length === 0 &&    // LLM wants to stop with no retrieval tool
         finalVerdict === 'SUMMARIZE' &&   // LLM wants to summarize discovery output directly
-        pendingIntentsAtThisTurn.length > 0  // UpdateMemory2 confirms work is genuinely unfinished
-        // ↑ Sole termination condition. No iter cap — maxIter=8 is the graph's hard ceiling.
+        pendingIntentsAtThisTurn.length > 0 && // UpdateMemory2 confirms work is genuinely unfinished
+        !hasUnresolvedAmbiguity           // 🟢 Bail-out: ambiguous labels → no ID to retrieve with → yield to HITL
+        // ↑ All conditions must be true. maxIter=8 is the graph's hard ceiling.
     ) {
         console.warn(
             `\x1b[41m\x1b[97m[Orchestrator] \ud83d\uded1 DISCOVERY STALL GUARD FIRED\x1b[0m\x1b[31m` +
@@ -968,7 +1001,13 @@ Instruction: Proceed with your investigation based on the complete context provi
     // and force a resolution pass. This prevents "hijacking" retrieval parameters.
     // 🟢 Section II.B Rule 3: Resolution is PREFERRED over asking a clarifying question immediately.
     // We now allow this even if response.clarifyingQuestion exists, prioritizing the resolution turn.
-    const resolvedLabelSet = new Set(Object.keys((state.workingMemory?.sessionContext?.scope as any).resolvedLabels || {}));
+    // 🟢 Build with lowercased keys so the check on line 1010 (using lblLower) is case-insensitive.
+    // The LLM can capitalize entity names differently across turns (e.g. "John" vs "john");
+    // a case-sensitive Set would miss the match and fire a redundant resolution turn.
+    const resolvedLabelSet = new Set(
+        Object.keys((state.workingMemory?.sessionContext?.scope as any).resolvedLabels || {})
+              .map(k => k.toLowerCase())
+    );
     
     // 🟢 Loop Breaker Logic (Filtering AI and Interceptor)
     // failedSessionLabels is now pre-calculated at the start of the node.
@@ -992,18 +1031,19 @@ Instruction: Proceed with your investigation based on the complete context provi
     const actualUnclassified = (response.unclassifiedLabels || []).filter((l: any) => {
         const lbl = (l.label || '').trim();
         const lblLower = lbl.toLowerCase();
-        if (!lbl) return false;                           // (e) empty
-        if (lbl.length > 40) return false;                // (f) sentence-length → not an entity name
-        if (QUANTIFIER_PREFIXES.test(lbl)) return false;  // (c) starts with scope word
-        if (STATUS_WORDS.test(lbl)) return false;          // (d) contains status word
-        if (resolvedLabelSet.has(l.label)) return false;  // (a) already resolved
-        if (failedSessionLabels.has(lblLower)) return false; // (b) already failed
+        if (!lbl) return false;                                  // (e) empty
+        if (lbl.length > 40) return false;                       // (f) sentence-length → not an entity name
+        if (QUANTIFIER_PREFIXES.test(lbl)) return false;         // (c) starts with scope word
+        if (STATUS_WORDS.test(lbl)) return false;                // (d) contains status word
+        if (resolvedLabelSet.has(lblLower)) return false;         // (a) already resolved to single canonical ID
+        if (failedSessionLabels.has(lblLower)) return false;     // (b) already failed (0 hits) this cycle
+        if (ambiguousSessionLabels.has(lblLower)) return false;  // (g) already ambiguous (>1 hits) this cycle — let AMBIGUITY DETECTED block handle it
         return true;
     });
 
 
     // 🟢 Filter AI-suggested Tool Calls (Prevent redundant resolution loops)
-    // If the tool is mcp.resolve_entities and the searchTerm is in failedSessionLabels, skip it!
+    // Block if: (1) already failed (0 hits) or (2) already ambiguous (>1 hits) this cycle.
     finalToolCalls = finalToolCalls.filter((t: any) => {
         if (t.name === 'mcp.resolve_entities') {
             const searchTerm = (t.args || []).find((a: any) => a.key === 'searchTerm')?.value;
@@ -1011,6 +1051,10 @@ Instruction: Proceed with your investigation based on the complete context provi
                 const lbl = searchTerm.trim().toLowerCase();
                 if (failedSessionLabels.has(lbl)) {
                     console.log(`\x1b[33m[LangGraph Orchestrator] 🛡️ Loop Breaker: Blocking redundant resolution call for "${searchTerm}" (already failed this turn)\x1b[0m`);
+                    return false;
+                }
+                if (ambiguousSessionLabels.has(lbl)) {
+                    console.log(`\x1b[33m[LangGraph Orchestrator] 🛡️ Ambiguity Guard: Blocking re-resolution of "${searchTerm}" (already ambiguous this cycle — ${resolveHits.get(lbl)} hits across entity types)\x1b[0m`);
                     return false;
                 }
             }
@@ -1245,9 +1289,15 @@ Instruction: Proceed with your investigation based on the complete context provi
     }
 
     // 🟢 HITL Guard: If there is a clarifying question, append it to messages so the Summarizer can look at it.
-    // 🛡️ PRECEDENCE GUARD: If we already intercepted this turn for Resolution (finalReasoning contains DIVERGENCE),
-    // we SUPPRESS the clarifying question until the resolution pass completes.
-    if (response.clarifyingQuestion && !finalReasoning?.includes('DETERMINISTIC VESTIBULE')) {
+    // 🛡️ PRECEDENCE GUARD: Suppress the clarifying question if any code-level guard has already
+    // overridden the verdict for this turn. Both guards stamp finalReasoning with a marker string:
+    //   - DETERMINISTIC VESTIBULE → Strategic Intercept fired (unclassified labels need resolution first)
+    //   - DISCOVERY STALL GUARD  → Discovery ran but no retrieval followed — loop must continue
+    // Without both checks a LLM-emitted clarifyingQuestion silently stomps either guard by
+    // setting feedBackVerdict=SUMMARIZE + hitl_required=true, creating an irrecoverable dead-end.
+    if (response.clarifyingQuestion &&
+        !finalReasoning?.includes('DETERMINISTIC VESTIBULE') &&
+        !finalReasoning?.includes('DISCOVERY STALL GUARD')) {
         updates.messages = [new AIMessage(response.clarifyingQuestion)];
         updates.feedBackVerdict = 'SUMMARIZE';
         updates.hitl_required = true;

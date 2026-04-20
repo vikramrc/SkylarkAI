@@ -84,6 +84,8 @@ export function getParameterDescription(param: string, requiredFields: string[])
       return `${requiredLabel} category filter for the type of maintenance work (e.g., 'Preventative', 'Corrective'). ⚠️ ONLY provide this if the user explicitly named a maintenance type. DO NOT infer or default to 'Corrective' — omitting this parameter returns all types.`;
     case "searchTerm":
       return `${requiredLabel} CRITICAL parameter. The human-readable label or code to resolve (e.g., 'TESTCOSTCENTER1', 'Main Engine', 'John Doe'). YOU MUST ALWAYS PROVIDE THIS field, even if you are also providing organizationShortName or vesselName. The value you are searching for MUST go in this field.`;
+    case "contentTerm":
+      return `${requiredLabel} keyword or phrase to search for within filled form data, submitted answers, and form field values. This searches inside the content of submitted forms — NOT the form template name. Example: 'fuel leak', 'vibration', 'serial number 1234'. The search is case-insensitive. Keep terms specific to avoid excessive matches.`;
     case "costCenterID":
     case "machineryID":
     case "scheduleID":
@@ -417,6 +419,24 @@ const baseCapabilitiesContract = [
     whenNotToUse: "Do NOT use for high-level listing or counting form submissions (use forms.query_status instead). **Do NOT use when the user primarily wants to inspect full Activity Work History execution events, man-hours, or maintenance comments alone (use `maintenance.query_execution_history` instead)**.",
     typicalQuestions: ["What did they say in the Risk Form?", "Show me attached files for form 123", "What answers were logged for task 456?", "What did the crew fill out in forms submitted last week?", "Show me safety checklist answers from Jan 2026."],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "items"]
+  },
+  {
+    name: "forms.search_content",
+    method: "GET",
+    path: "/api/mcp/forms/search-content",
+    requiredQuery: ["organizationID", "contentTerm"],
+    optionalQuery: ["vesselID", "status", "startDate", "endDate", "limit"],
+    purpose: "Searches within filled form data (submitted answers, field values, and comments) using a text term. Returns matching form submissions with their template name, vessel, status, and submission date. Scoped strictly to a single organization. Defaults to the latest 100 forms from the past 3 months unless an explicit date range is provided.",
+    whenToUse: "Use when the user remembers a keyword, value, or phrase they typed inside a form but does not remember the form name or type. Examples: finding a form where a crew member mentioned 'fuel leak', locating a checklist where a specific serial number was logged, or retrieving a report where an observation was noted. IMPORTANT: this tool searches the CONTENT (filled answers) of forms — not the form template names. For forms by name/type, use forms.query_status or forms.query_contents instead.",
+    whenNotToUse: "Do NOT use for listing or counting forms by type/status (use forms.query_status). Do NOT use to retrieve the full question-answer details of a specific form (use forms.query_contents with formId). Do NOT use without an organizationID — this is the primary safety constraint that makes the search performant.",
+    typicalQuestions: [
+      "Find the form where I mentioned 'fuel leak'",
+      "Find a report where we logged a vibration reading above threshold",
+      "Which forms mentioned the word 'gasket' last month?",
+      "Find any checklist from last week where crew noted 'pump failure'"
+    ],
+    responseShape: ["capability", "organizationID", "appliedFilters", "searchWindow", "summary", "items"],
+    interpretationGuidance: "Items include formId, templateName, vesselID, status, submittedAt/createdAt, and a matchedIn field indicating which form data field contained the match. searchWindow in the response confirms the actual date range searched. If items is empty, the implicit 3-month window may have excluded older records — report the window to the user and offer to expand the date range via startDate/endDate. ⚠️ PARAM_ENUMS: { status: ['submitted', 'committed'] } — these are the ONLY valid values. DO NOT pass 'draft', 'open', 'rejected', or any other value. If the user does not specify a status, omit the parameter entirely and the tool will automatically scope to both submitted and committed forms."
   },
   {
     name: "ptw.query_pipeline",

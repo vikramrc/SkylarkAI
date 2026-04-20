@@ -197,11 +197,30 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
         }
     }
 
-    // Store ambiguities in scope for Orchestrator to see
-    if (ambiguousMatches.length > 0) {
-        sessionStateCommit.scope.ambiguousMatches = ambiguousMatches;
+    // Store ambiguities in scope for Orchestrator to see.
+    // 🛡️ HITL RESOLUTION CROSS-CHECK: If any candidate ID from an ambiguous label is already
+    // present in resolvedLabels (i.e., the user picked one of the candidates in a prior HITL turn),
+    // that ambiguity is considered answered — do NOT re-surface it as a new clarifying question.
+    // This prevents "CCCCCCC → Machinery/Component" from re-appearing after the user said
+    // "lets go with ccccccccccccc" and the system resolved it to a specific Machinery ID.
+    const resolvedIdsSet = new Set(
+        Object.values(sessionStateCommit.scope.resolvedLabels || {}).map((v: any) => v?.id).filter(Boolean)
+    );
+    const unresolvedAmbiguousMatches = ambiguousMatches.filter(entry =>
+        // Keep only if NONE of the candidates have been chosen (resolved) yet
+        !entry.candidates.some((c: any) => resolvedIdsSet.has(c.id))
+    );
+
+    if (unresolvedAmbiguousMatches.length > 0) {
+        sessionStateCommit.scope.ambiguousMatches = unresolvedAmbiguousMatches;
+        if (unresolvedAmbiguousMatches.length < ambiguousMatches.length) {
+            console.log(`\x1b[32m[UpdateMemory2] ✅ Cleared ${ambiguousMatches.length - unresolvedAmbiguousMatches.length} ambiguity entry(s) — candidate ID(s) already chosen by user.\x1b[0m`);
+        }
     } else {
-        delete sessionStateCommit.scope.ambiguousMatches; // Clear if resolved
+        delete sessionStateCommit.scope.ambiguousMatches; // Clear if all resolved or no new ones
+        if (ambiguousMatches.length > 0) {
+            console.log(`\x1b[32m[UpdateMemory2] ✅ All ambiguities resolved — cleared ambiguousMatches from scope.\x1b[0m`);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -230,11 +249,13 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     const existingRawQuery = existingMemory.queryContext?.rawQuery || "";
     const isNewQuery = (iter <= 1) && !state.isHITLContinuation;
 
-    // 🛡️ AMBIGUITY GARBAGE COLLECTION: If this is a brand-new question, wipe any stale collisions 
-    // from previous topics so they don't pollute the new investigation's prompt context.
-    if (isNewQuery) {
-        delete sessionStateCommit.scope.ambiguousMatches;
-    }
+    // 🛡️ NOTE: Ambiguity cleanup is handled deterministically by lines 200-205 above.
+    // If fresh resolve_entities tools ran and found multiple matches → ambiguousMatches is SET (line 202).
+    // If no ambiguities found (0 or 1 match per label) → ambiguousMatches is DELETED (line 204).
+    // A separate GC block here was previously deleting fresh ambiguities at iter=1 (isNewQuery=true),
+    // causing the Orchestrator to never see AMBIGUITY DETECTED and re-intercepting forever.
+    // Line 204 already covers the stale-cleanup case: if no resolve tools ran in this request,
+    // labelToMatches is empty → ambiguousMatches=[] → line 204 deletes any inherited stale ones. ✅
 
     console.log(`\x1b[35m[UpdateMemory2] 🔀 Tier 2 Reset Decision:\x1b[0m`);
     console.log(`\x1b[35m  iter <= 1 = ${iter <= 1}\x1b[0m`);
