@@ -642,6 +642,16 @@ You MUST check the user's current query:
             ? (state.reformulatedQuery || state.workingMemory?.queryContext?.rawQuery || latestHumanContent)
             : latestHumanContent;
 
+        // 🟢 HITL CONTEXT BRIDGE: If this is the start of a HITL continuation turn, the summaryBuffer
+        // does not yet contain the 'reformulatedQuery' of the current session. We inject it here
+        // so the LLM can map the user's terse reply to the correct tools and IDs.
+        // This block is intentionally NOT in summaryBuffer yet — it will be squashed there on SUMMARIZE.
+        const isHITLIter0 = !!(state as any).isHITLContinuation && iterationCount === 0;
+        const priorReformulated = state.reformulatedQuery || state.workingMemory?.queryContext?.rawQuery || "";
+        if (isHITLIter0 && priorReformulated && currentQuery !== priorReformulated) {
+            qnaTranscript += `[ACTIVE INTENT — current conversation, not yet in history above]\n${priorReformulated}\n\n[USER REPLY to the above]\n`;
+        }
+
         if (currentQuery) {
             qnaTranscript += `HUMAN: ${currentQuery}`;
         }

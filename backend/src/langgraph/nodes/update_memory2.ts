@@ -206,16 +206,26 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     const resolvedIdsSet = new Set(
         Object.values(sessionStateCommit.scope.resolvedLabels || {}).map((v: any) => v?.id).filter(Boolean)
     );
-    const unresolvedAmbiguousMatches = ambiguousMatches.filter(entry =>
-        // Keep only if NONE of the candidates have been chosen (resolved) yet
-        !entry.candidates.some((c: any) => resolvedIdsSet.has(c.id))
-    );
+    const unresolvedAmbiguousMatches = ambiguousMatches.filter(entry => {
+        // Find if any candidate has been chosen (resolved) yet
+        const chosenCandidate = entry.candidates.find((c: any) => resolvedIdsSet.has(c.id));
+        if (chosenCandidate) {
+            // 🟢 VESTIBULE PRUNING: Register the ORIGINAL ambiguous label in resolvedLabels pointing
+            // to the chosen candidate. This makes the Vestibule's resolvedLabelSet include the original
+            // label (e.g. "CCCCCCC"), so it won't re-fire resolve_entities for it on future turns.
+            if (!sessionStateCommit.scope.resolvedLabels) sessionStateCommit.scope.resolvedLabels = {};
+            const existingEntry = sessionStateCommit.scope.resolvedLabels[entry.label];
+            if (!existingEntry) {
+                sessionStateCommit.scope.resolvedLabels[entry.label] = { id: chosenCandidate.id, type: chosenCandidate.type };
+                console.log(`\x1b[32m[UpdateMemory2] ✅ Pruned ambiguity "${entry.label}" → registered in resolvedLabels as ${chosenCandidate.type}:${chosenCandidate.id} (Vestibule skip granted)\x1b[0m`);
+            }
+            return false; // Drop from ambiguousMatches
+        }
+        return true; // Keep — still genuinely ambiguous
+    });
 
     if (unresolvedAmbiguousMatches.length > 0) {
         sessionStateCommit.scope.ambiguousMatches = unresolvedAmbiguousMatches;
-        if (unresolvedAmbiguousMatches.length < ambiguousMatches.length) {
-            console.log(`\x1b[32m[UpdateMemory2] ✅ Cleared ${ambiguousMatches.length - unresolvedAmbiguousMatches.length} ambiguity entry(s) — candidate ID(s) already chosen by user.\x1b[0m`);
-        }
     } else {
         delete sessionStateCommit.scope.ambiguousMatches; // Clear if all resolved or no new ones
         if (ambiguousMatches.length > 0) {
