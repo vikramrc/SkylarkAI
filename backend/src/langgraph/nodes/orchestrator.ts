@@ -7,6 +7,7 @@ import https from "https";
 import type { SkylarkState } from "../state.js";
 import { AIMessage } from "@langchain/core/messages";
 import { getParameterDescription } from "../../mcp/capabilities/contract.js";
+import { resolveEntities } from "../../mcp/capabilities/lookup_logic.js";
 
 // 1. Define Structured Output Schema
 export const orchestratorSchema = z.object({
@@ -26,7 +27,12 @@ export const orchestratorSchema = z.object({
     reasoning: z.string().describe("Your internal technical thought process. If you pick FEED_BACK_TO_ME, explain exactly what gap you are trying to fill (e.g., 'Fetched Job IDs, now need to fetch their specific form contents' or 'Direct query failed, trying standard tool fallback')."),
     unclassifiedLabels: z.array(z.object({
         label: z.string().describe("The ambiguous label or code extracted from the query (e.g., 'XXX1', 'Grease up')."),
-        likelyEntityTypes: z.array(z.string()).describe("Top 3 most likely entity types from the supported mcp.resolve_entities list (e.g., 'Vessel', 'Machinery', 'Activity') based on Knowledge Graph and Context.")
+        likelyEntityTypes: z.array(
+            z.object({
+                type: z.string().describe("Entity type to try resolving against (e.g. 'Vessel', 'Activity', 'Machinery')"),
+                confidence: z.number().min(0).max(1).describe("Your confidence this is the right type (0–1). The system resolves ALL types in parallel regardless of confidence, but will tell you which confidence level matched so you can weight the result.")
+            })
+        ).describe("Top entity type guesses (max 3) with confidence scores. e.g. [{type:'Activity', confidence:0.92}, {type:'Vessel', confidence:0.25}]. The system will resolve all types in parallel and report back which found results and which did not, including the original confidence score you assigned.")
     })).describe("Identify any strings in the user query for which you lack a verified 24-char ID or current memory mapping. Provide your best-guess types for them."),
     isBroadScopeRequest: z.boolean()
         .describe(
@@ -81,7 +87,45 @@ export const orchestratorSchema = z.object({
             "EFFECT: When TRUE, stale attribute filters (statusCode, startDate, endDate etc.) from the previous topic are cleared " +
             "so they do not contaminate the new topic's investigation."
         )
-        .default(false)
+        .default(false),
+    ambiguitiesResolved: z.array(z.string())
+        .describe(
+            "🎯 TICKET ACTIVATION SIGNAL — List the labels (exactly as they appear in the OPEN AMBIGUITY TICKETS block) " +
+            "for which you used a specific candidate's ID in a retrieval tool call THIS TURN.\n\n" +
+            "SET a label here ONLY when ALL THREE conditions are true:\n" +
+            "  1. That label appears in the OPEN AMBIGUITY TICKETS block.\n" +
+            "  2. You had enough context to pick ONE specific candidate (ordinal from user, name match, context clue).\n" +
+            "  3. You are calling a retrieval tool THIS TURN using that specific candidate's ID.\n\n" +
+            "IMPORTANT CHANGE: Setting a label here does NOT delete the ticket. " +
+            "The ticket stays as a reusable lookup table. Setting this signal only promotes the chosen " +
+            "candidate's ID to resolvedLabels so the Vestibule can skip re-resolution.\n\n" +
+            "Default: [] (empty — most turns do not activate a ticket)."
+        )
+        .default([]),
+    // 🟢 Ticket activation companion fields — used by Summarizer to render attribution in insights
+    activatedTicketLabel: z.string().nullable()
+        .describe(
+            "The label of the ambiguity ticket activated this turn (e.g. 'CCCCCCC'). " +
+            "Set this whenever you pick a specific candidate from a ticket and call a retrieval tool with that candidate's ID. " +
+            "Set to null if no ticket was activated this turn."
+        )
+        .default(null),
+    activatedTicketConfidence: z.number().min(0).max(1)
+        .describe(
+            "Your confidence (0–1) that the user's current message matches the activated ticket's originQuery. " +
+            "If you considered 2 tickets and their scores are within 0.25 of each other, " +
+            "do NOT activate either — ask a meta-clarification showing both originQueries instead. " +
+            "Set to 0 if no ticket was activated."
+        )
+        .default(0),
+    activatedCandidateIndex: z.number().int().nullable()
+        .describe(
+            "Zero-based index into the activated ticket's candidates[] array for the candidate chosen this turn. " +
+            "E.g. 'the second one' → 1, 'the first' → 0. " +
+            "Used by Summarizer to display ordinal attribution (e.g. 'the 2nd match'). " +
+            "Null if no ticket was activated or if the candidate index cannot be determined."
+        )
+        .default(null)
 });
 
 
@@ -122,8 +166,8 @@ async function getCapabilitiesCached(backendUrl: string, params: any): Promise<a
 
 export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<SkylarkState>> {
     console.log(`[LangGraph] ▶ Orchestrator Node invoked (Iteration: ${state.iterationCount || 0})`);
-    
-    // 🟢 TOPIC ANCHORING: Find the "Mission Starting Question" flawlessly.
+
+    // 🟢 TOPIC ANCHORING: Find the \"Mission Starting Question\" flawlessly.
     // The Mission starts at the first Human message AFTER the last Summary ([INSIGHT]).
     let anchoredRawQuery = state.workingMemory?.queryContext?.rawQuery || "";
     
@@ -188,41 +232,14 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         }
     }
 
-    // 🟢 JOURNAL FIX: Correct the investigative-cycle pairing in the session journal.
-    // CONTEXT: This journal tracks ANALYTICAL CYCLES (user investigation request → AI data result),
-    // NOT HITL clarification cycles (AI asks question → human answers it).
-    // A new HumanMessage that requests new data ("now show 2026 completed") is a NEW investigation
-    // question in the journal, regardless of whether the prior AI message was a HITL clarifier.
-    // 
-    // Prior bug: The loop treated AI messages as journal "questions" and human follow-ups as "answers",
-    // which was rooted in HITL semantics. This caused the latest user analytical-pivot message to be
-    // logged as ✓ A: (a resolved answer) instead of ? Q: (the new active investigation goal).
-    questionTurns.forEach((msg, idx) => {
-        const type = (msg as any)._getType?.() || (msg as any).role || 'human';
-        if (type === 'human') {
-            // Each human message is a new question — flush the prior entry if one exists.
-            if (currentEntry && idx > 0) {
-                journalEntries.push(`? Q: ${currentEntry.question || 'Initial Query'}\n✓ A: ${currentEntry.answer || 'Awaiting Execution'}\n🚀 Actions: ${currentEntry.tools.join(', ') || 'None yet'}`);
-            }
-            if (idx > 0) {
-                currentEntry = { question: (msg as any).content, tools: [] };
-            }
-        } else if (type === 'ai' && (msg as any).content && currentEntry) {
-            // AI response is the answer to the most recent human question.
-            currentEntry.answer = (msg as any).content;
-        }
-    });
-
-    // ─────────────────────────────────────────────────────────────────
-    // DECISION JOURNAL — TOOL MATCHING
-    // ─────────────────────────────────────────────────────────────────
-    // The journal's mandate is: "Do NOT repeat the SAME Tool+Parameter in the CURRENT REQUEST."
-    // This prevents pointless re-fetches within a single agentic loop (e.g., fetching fleet
-    // overview twice in the same chain because the AI forgot it already did it).
+    // 🟢 ISSUE 2 FIX: Journal now shows ONLY tool actions — Q/A display stripped.
+    // Rationale: The Q/A display was misleading. Prior-request questions showed "Awaiting Execution"
+    // because their answers live in summaryBuffer (cross-request), not in the per-request message slice.
+    // The actual conversation history is already in RECENT OBSERVATIONAL MEMORY (summaryBuffer) and
+    // CONVERSATION HISTORY (activeMessages). The journal's sole job is intra-request tool dedup:
+    // "don't call the same tool+params twice within this agentic loop."
     //
-    // The journal uses requestCycleTurns (the history of only THIS specific user query)
-    // to ensure the AI doesn't refuse to run a tool just because it was run in a 
-    // previous conversation.
+    // New format: just list the tools run in this request cycle. No Q/A noise.
     // ─────────────────────────────────────────────────────────────────
     requestCycleTurns.forEach((turn: any) => {
         Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
@@ -235,12 +252,12 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         });
     });
 
-    if (currentEntry) {
-        journalEntries.push(`? Q: ${currentEntry.question || 'Query Content'}\n✓ A: ${currentEntry.answer || 'Awaiting Execution'}\n🚀 Actions: ${currentEntry.tools.length > 0 ? currentEntry.tools.join(', ') : 'None yet'}`);
+    if (currentEntry && currentEntry.tools.length > 0) {
+        journalEntries.push(`🚀 Tools run this request: ${currentEntry.tools.join(' | ')}`);
     }
 
-    const decisionJournal = journalEntries.length > 0 
-        ? `\n\n### 📓 SESSION DECISION JOURNAL (Current Query Only):\n${journalEntries.join('\n---\n')}\n\n**MANDATE**: You MUST consult this Journal to avoid redundant work. Do NOT repeat the exact same Tool+Parameter combination unless requested. HOWEVER, if the user asks a follow-up question requiring new or related data (e.g., asking for Invoices linked to prior POs), you MUST proactively execute the relevant new tool calls to continue the investigation.`
+    const decisionJournal = journalEntries.length > 0
+        ? `\n\n### 📓 SESSION DECISION JOURNAL (Current Request Only):\n${journalEntries.join('\n')}\n\n**MANDATE**: Do NOT repeat the exact same Tool+Parameter combination already listed above in this same request cycle. For new or follow-up data needs, proactively call the relevant tool.`
         : "";
 
     // 🟢 Loop Breaker Logic (Request-Local):
@@ -310,7 +327,7 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
 
     // 🟢 GAP-8 FIX: Explicitly mandate a clarifying question when all resolution guesses fail
     const deadEndStr = failedSessionLabels.size > 0 
-        ? `\n\n🛡️ DEAD-END LABELS (Verified NOT FOUND This Turn):\n${Array.from(failedSessionLabels).map(l => `- "${l}": Checked multiple entity types. No matches found. Do NOT retry resolution for this label.`).join('\n')}\n⚠️ MANDATORY ACTION: Since the entity could not be found, you MUST set \`clarifyingQuestion\` to ask the user in plain language (e.g., "I couldn't find 'XXX1' — could you double-check the name, or tell me what type of record it is?"). Set \`tools\` to []  and \`feedBackVerdict\` to SUMMARIZE.`
+        ? `\n\n🛡️ DEAD-END LABELS (Verified NOT FOUND This Turn):\n${Array.from(failedSessionLabels).map(l => `- "${l}": Checked multiple entity types. No matches found. Do NOT retry resolution for this label.`).join('\n')}\n⚠️ MANDATORY ACTION — SURFACE AND STOP:\n1. Tell the user plainly what you found (if anything) and what could not be found.\n2. Set \`clarifyingQuestion\` to ask the user to clarify the missing item (e.g., "I couldn't find 'XXX1' — could you check the spelling, or tell me what type of record it is?").\n3. Set \`tools\` to [] and \`feedBackVerdict\` to SUMMARIZE.\n⛔ STRICTLY FORBIDDEN: Do NOT call additional tools to try to solve around the missing entity (e.g. enumerating all schedules to guess which one the user meant, calling a broader org-wide query as a substitute). The user must make the next decision — do not make it for them.`
         : "";
 
     // ─── TWO-TIER MEMORY CONTEXT ASSEMBLY (after all components are declared) ─────
@@ -338,20 +355,71 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     // type was intended — this block gives it the full picture so it can formulate a specific
     // clarifying question instead of looping indefinitely.
     //
-    // 🛡️ HITL CONTINUATION GUARD: If the user is currently replying to a previous clarifying
-    // question (isHITLContinuation=true), `ambiguousMatches` is stale session state from the
-    // turn where the question was asked. The orchestrator runs BEFORE update_memory2, so it
-    // hasn't been cleared yet. Suppress it here so the MANDATORY ACTION doesn't fire again
-    // on the user's answer turn. The LLM reads the reply naturally and asks again only if
-    // it genuinely still can't determine the intent.
-    const ambiguityStr = (!!(state as any).isHITLContinuation)
+    // 🛡️ FIX-D (CORRECTED): Suppress the ambiguity block ONLY if:
+    //   (a) isHITLContinuation=true — the user is RIGHT NOW answering our clarifying question.
+    //       The block would be noise here; the LLM must read the user's reply.
+    //
+    // ❌ REMOVED: The old condition that suppressed when a label appeared in ambiguousSessionLabels
+    //   (i.e., after any resolve_entities attempt). That was WRONG — it suppressed on the very
+    //   first loop-back BEFORE the user was ever asked. The Vestibule guard (line ~1110) already
+    //   prevents re-resolution; this block must still fire to tell the LLM to ask the user.
+    // 🟢 NOTE (Gap 4 — by design): ambiguousMatchesData is populated from scope.ambiguousMatches,
+    // which is written by update_memory2 AFTER mcp.resolve_entities runs and returns >1 hits.
+    // On iter=0 (the very turn the Vestibule intercepts), update_memory2 hasn't run yet —
+    // so ambiguousMatches doesn't exist in scope and this array is always [] on that turn.
+    // This is correct: the STALL GUARD ensures the loop-back happens, and the ambiguity
+    // block appears correctly from iter=1 onward once update_memory2 has written the matches.
+    // The [RIGHT NOW] Ambiguity block (line ~758) reads the same source and has the same iter=0
+    // blind spot by design — the LLM is correctly in the dark until after update_memory2 fires.
+    // 🟢 TICKET MODEL: ambiguousMatches is now a persistent lookup table, not a one-shot gate.
+    // Each entry carries originQuery (which question caused this) and conversationIndex (lifecycle).
+    // The LLM matches the user's current message to the nearest ticket semantically and activates
+    // only the relevant one — rather than unconditionally mandating clarification every turn.
+    const ambiguousMatchesData = (session?.scope?.ambiguousMatches || []) as any[];
+    const shouldSuppressAmbiguity = !!(state as any).isHITLContinuation;
+
+    console.log(`\x1b[35m[Orchestrator] 🔬 AMBIGUITY GATE: matches=${ambiguousMatchesData.length} | isHITL=${!!(state as any).isHITLContinuation} | suppress=${shouldSuppressAmbiguity} | deadEnds=${failedSessionLabels.size} | ambiguousLabels=[${ambiguousMatchesData.map((m:any)=>m.label).join(',')}]\x1b[0m`);
+
+    // 🟢 TICKET RENDERER: Build the OPEN AMBIGUITY TICKETS block.
+    // Shows each ticket with originQuery context so the LLM can self-match.
+    // Replaces the old monolithic "INSTANCE SELECTION REQUIRED / AMBIGUITY DETECTED" block
+    // which unconditionally mandated re-asking every turn regardless of the user's topic.
+    // 🟢 TICKET PERSISTENCE: Resolved tickets now stay alive so user can say "the third one".
+    // Each ticket is badged as [✅ RESOLVED] or [⏳ PENDING] to guide LLM response mode.
+    const resolvedLabelsForTickets = (session?.scope as any)?.resolvedLabels || {};
+    // 🟢 HOISTED — used both in prompt building and AMBIGUITY INTERCEPTION GATE (post-LLM)
+    const pendingAmbiguousMatches = ambiguousMatchesData.filter(
+        (m: any) => !resolvedLabelsForTickets[m.label]
+    );
+    const ambiguityStr = shouldSuppressAmbiguity
         ? ""
-        : session?.scope?.ambiguousMatches?.length 
-            ? `\n⚠️ AMBIGUITY DETECTED ⚠️
-The following labels matched MULTIPLE distinct entity types. You MUST ask the user for clarification before attempting any retrieval.
-${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matched: ${m.candidates.map((c: any) => `${c.label} (${c.type})`).join(', ')}`).join('\n')}
-⚠️ MANDATORY ACTION: Set \`clarifyingQuestion\` telling the user exactly which entity types were found and ask which one they meant. Set \`tools\` to [] and \`feedBackVerdict\` to SUMMARIZE.`
+        : ambiguousMatchesData.length > 0
+            ? `\n### 📌 OPEN AMBIGUITY TICKETS (Persistent lookup — tickets survive until long-term compression)\n` +
+              ambiguousMatchesData.map((m: any, ticketIdx: number) => {
+                const distinctTypes = new Set((m.candidates || []).map((c: any) => c.type as string));
+                const isInstanceAmbiguity = distinctTypes.size === 1;
+                const confirmedType = isInstanceAmbiguity ? [...distinctTypes][0] : null;
+                const isResolved = !!resolvedLabelsForTickets[m.label];
+                const resolvedEntry = resolvedLabelsForTickets[m.label];
+                const badge = isResolved
+                    ? `[✅ RESOLVED — currently using ID: ${resolvedEntry?.id?.substring(0,8)}…, pick freely for follow-up ordinals]`
+                    : `[⏳ PENDING — user selection required]`;
+                const candidateList = (m.candidates || []).map((c: any, idx: number) => {
+                    const ordinal = ['1st','2nd','3rd','4th','5th'][idx] || `${idx+1}th`;
+                    const isCurrentlyActive = resolvedEntry?.id === c.id ? ' ← currently active' : '';
+                    return `    ${idx+1}. ${c.label || c.type} — ID: ${c.id} (the ${ordinal} match)${isCurrentlyActive}`;
+                }).join('\n');
+                const originSnippet = (m.originQuery || 'unknown').substring(0, 100);
+                return `TICKET [${ticketIdx+1}] ${badge} — From: "${originSnippet}${m.originQuery?.length > 100 ? '...' : ''}"\n  → Label "${m.label}" matched ${m.candidates.length} ${confirmedType || 'mixed-type'} record(s):\n${candidateList}`;
+              }).join('\n\n') +
+              `\n\n🎯 TICKET ACTIVATION RULES — Read the user's CURRENT message first, then apply:\n` +
+              `  RULE 1 (ACTIVATE — direct pick): Current message contains the label text, a candidate name, or an ordinal ("the second one", "1st") that maps to a specific ticket → Activate that ticket, call the retrieval tool with that candidate's ID. Set ambiguitiesResolved, activatedTicketLabel, activatedTicketConfidence (high, ~0.9), activatedCandidateIndex.\n` +
+              `  RULE 2 (ACTIVATE — topic match): Current message is topically close to a ticket's originating question (same domain — maintenance, crew, schedules, machinery) → Match the nearest ticket. Set activatedTicketConfidence to your confidence (0–1). If two tickets score within 0.25 of each other, do NOT activate either — ask a meta-clarification instead (see RULE 4).\n` +
+              `  RULE 3 (SOFT NOTE — unrelated topic): Current message is about a completely different topic (org context, filters, dates, crew when the ticket is maintenance, etc.) → Answer the user's question. Append a brief soft note: "Note: I still have [N] open selection(s) pending when you're ready." Do NOT set any ticket activation fields.\n` +
+              `  RULE 4 (META-CLARIFICATION — too close to call): You see 2+ PENDING tickets with similar relevance scores (gap < 0.25) → Show both originQueries and ask which one the user meant. E.g.: "Your message could relate to either: 1) [originQuery A] or 2) [originQuery B]. Which one?".\n` +
+              `  RULE 5 (REUSE — ordinal follow-up on RESOLVED ticket): The ticket is [✅ RESOLVED] and the user refers to a different ordinal ("now the third one", "what about the first?") → Pick the new candidate index directly from the ticket's list WITHOUT re-asking. Set activatedCandidateIndex to the new index. Do NOT ask the user to clarify again — the ticket is your lookup table.`
             : "";
+
 
     // ─── SECONDARY SCOPE ACCUMULATION: Reliably store any 'currentScope' ID output by the LLM
     const secondaryLines: string[] = (session?.secondaryScope || []).map(entry => 
@@ -390,6 +458,9 @@ ${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matched: ${m.
     // Insert catastrophic errors directly into the Orchestrator prompt instead of aborting the node,
     // so the LLM itself generates the clarifyingQuestion and sets the SUMMARIZE terminator natively.
     let fatalErrorInstruction = "";
+    // Fix C: Track when a bad org was just wiped so the ORG CONTEXT GATE can enforce a hard
+    // re-ask regardless of what the LLM decides to put in its clarifyingQuestion.
+    let orgJustInvalidated = false;
     if ((state.iterationCount || 0) > 0 && requestCycleTurns.length > 0) {
         const lastTurnResults = requestCycleTurns[requestCycleTurns.length - 1];
         if (lastTurnResults) {
@@ -413,19 +484,40 @@ ${session.scope.ambiguousMatches.map((m: any) => `  - "${m.label}" matched: ${m.
                     if (state.workingMemory?.queryContext?.activeFilters) {
                         delete state.workingMemory.queryContext.activeFilters.organization;
                     }
+                    // Fix C: Signal the gate to enforce re-ask — hasOrgContext was already computed
+                    // from the now-deleted values so shouldShowOrgWarning won't re-fire on its own.
+                    orgJustInvalidated = true;
                     break;
                 }
             }
         }
     }
 
-    // ─── ORG CONTEXT GUARD (replaces passive scopeLine) ──────────────────────
-    // When no org is in memory AND it's not a HITL continuation (user answering
-    // a previous clarifying question), we inject a hard mandatory block so the
-    // LLM cannot "decide" to proceed without org context.
+    // ─── ORG CONTEXT GUARD ────────────────────────────────────────────────────
+    // Checks ALL memory tiers for org context, not just the narrow scope pointer.
+    //
+    // Tier 1: scope.organizationID / organizationShortName
+    //   Set by update_memory2 after the first org-resolution tool run. Always
+    //   checked first — most authoritative for the current query.
+    //
+    // Tier 2: secondaryScope[] entries with modelType === 'Organization'
+    //   Written by the summarizer after each conversation. Survives across queries.
+    //   If the user has EVER chatted with an org confirmed, it lives here.
+    //   The org ID is already rendered in the 🗃️ SECONDARY SCOPE block in the prompt,
+    //   so the LLM can read it — no need to re-ask.
+    //
+    // This two-tier check prevents a false ORG MISSING warning when the org is in
+    // secondaryScope but hasn't yet been re-promoted to scope on the current query.
+    const orgInSecondaryScope = (session?.secondaryScope || []).some(
+        (e: any) => e.modelType === 'Organization' && !!e.id
+    );
+    if (orgInSecondaryScope) {
+        console.log(`\x1b[33m[Orchestrator] 🏢 OrgGuard: Org found in secondaryScope — suppressing ORG MISSING warning.\x1b[0m`);
+    }
     const hasOrgContext = !!(
         session?.scope?.organizationID ||
-        session?.scope?.organizationShortName
+        session?.scope?.organizationShortName ||
+        orgInSecondaryScope
     );
 
     // 🟢 BUG-1 FIX: org-from-messages fallback.
@@ -648,12 +740,52 @@ You MUST check the user's current query:
         // This block is intentionally NOT in summaryBuffer yet — it will be squashed there on SUMMARIZE.
         const isHITLIter0 = !!(state as any).isHITLContinuation && iterationCount === 0;
         const priorReformulated = state.reformulatedQuery || state.workingMemory?.queryContext?.rawQuery || "";
+        // 🛡️ FIX-A: Changed label from [ACTIVE INTENT] to [ACTIVE CLARIFICATION CONTEXT] for HITL turns.
+        // [ACTIVE INTENT] framed the reformulatedQuery as a task goal, making the LLM read the user's
+        // terse reply in the wrong frame. The correct frame is: "I asked a clarifying question;
+        // the reformulatedQuery carries that question's context; the user's answer follows."
         if (isHITLIter0 && priorReformulated && currentQuery !== priorReformulated) {
-            qnaTranscript += `[ACTIVE INTENT — current conversation, not yet in history above]\n${priorReformulated}\n\n[USER REPLY to the above]\n`;
+            qnaTranscript += `[ACTIVE CLARIFICATION CONTEXT — you asked the user a clarifying question; their answer follows]\n${priorReformulated}\n\n[USER'S ANSWER]\n`;
         }
 
+        // 🛡️ FIX-C: Inject a compact [RIGHT NOW] status block immediately before the user's current
+        // message. The user message is the highest-salience position in context (closest to generation).
+        // Moving the active state summary here prevents the system-message MANDATORY ACTION from
+        // being overridden by the conversational flow in the user message.
+        const pendingStr = (query?.pendingIntents || []).join(' | ') || 'none';
+        const filterStr = Object.entries(query?.activeFilters || {})
+            .map(([k, v]) => `${k}=${v}`).join(', ') || 'none';
+        // 🛡️ FIX-C: [RIGHT NOW] Ambiguity MUST read directly from live ambiguousMatchesData,
+        // NOT from shouldSuppressAmbiguity. The suppression gate is for the system-message block.
+        // [RIGHT NOW] is the highest-salience signal in the prompt and must always be ground truth.
+        // Only exception: isHITLContinuation=true (user is answering, showing ambiguity is noise).
+        //
+        // 🟢 TICKET PERSISTENCE FIX: Only show PENDING (unresolved) tickets in [RIGHT NOW].
+        // Resolved tickets still stay in ambiguousMatches (for "the third one" follow-up picks)
+        // but must NOT appear here. Rule 41 Step 1 mandates the LLM stops ALL retrieval and
+        // re-asks a clarifying question whenever Ambiguity is non-None. Showing a resolved
+        // ticket here causes an infinite re-ask loop. Resolved = label exists in resolvedLabels.
+        // pendingAmbiguousMatches is hoisted to function scope — reuse it here.
+        // (resolvedLabelsForTickets === resolvedLabelsForRightNow — same source object)
+        const ambiguityStatusStr = (pendingAmbiguousMatches.length > 0 && !(state as any).isHITLContinuation)
+            ? pendingAmbiguousMatches.map((m: any) => {
+                const distinctTypes = new Set((m.candidates || []).map((c: any) => c.type as string));
+                const isInstance = distinctTypes.size === 1;
+                return isInstance
+                    ? `"${m.label}" — INSTANCE SELECTION REQUIRED: ${m.candidates.length} ${[...distinctTypes][0]} records (${m.candidates.map((c:any)=>c.label).join(', ')})`
+                    : `"${m.label}" — TYPE DISAMBIGUATION REQUIRED: matched ${[...distinctTypes].join(', ')}`;
+              }).join('; ')
+            : 'None';
+        console.log(`\x1b[35m[Orchestrator] 🎯 [RIGHT NOW] Ambiguity=${ambiguityStatusStr} | pendingTickets=${pendingAmbiguousMatches.length} | totalTickets=${ambiguousMatchesData.length} | isHITL=${!!(state as any).isHITLContinuation}\x1b[0m`);
+        const rightNowBlock = `[RIGHT NOW]
+Goal: ${(state.reformulatedQuery || query?.rawQuery || '').substring(0, 150)}
+Pending: ${pendingStr}
+Filters: ${filterStr}
+Ambiguity: ${ambiguityStatusStr}
+`;
+
         if (currentQuery) {
-            qnaTranscript += `HUMAN: ${currentQuery}`;
+            qnaTranscript += `${rightNowBlock}\nHUMAN: ${currentQuery}`;
         }
         
         const syntheticBody = `🎯 CURRENT INVESTIGATION CONTEXT
@@ -869,6 +1001,12 @@ Instruction: Proceed with your investigation based on the complete context provi
     // Let the AMBIGUITY DETECTED block in the prompt + the HITL path handle it instead.
     const hasUnresolvedAmbiguity = (session?.scope?.ambiguousMatches?.length ?? 0) > 0;
 
+    // 🟢 DEAD-END BAIL-OUT: If ANY label came back with 0 hits across all entity types this
+    // request cycle, the LLM has correctly entered the dead-end clarification path. The STALL
+    // GUARD must NOT override this — the LLM's SUMMARIZE+clarifyingQuestion is the right answer.
+    // Without this, the guard fires infinitely (iter=4→8) overriding the correct response each time.
+    const hasDeadEndLabels = failedSessionLabels.size > 0;
+
     // ─────────────────────────────────────────────────────────────────
     // FIX: Replace hasPendingIntents with hasRetrievalInCurrentRequest.
     //
@@ -889,7 +1027,8 @@ Instruction: Proceed with your investigation based on the complete context provi
         'fleet.query_structures', 
         'maintenance.query_schedules',
         'mcp.health', 
-        'mcp.capabilities'
+        'mcp.capabilities',
+        'resolve_labels::',          // Synthetic results injected by the resolve_labels graph node
     ];
     const isDiscoveryKey = (k: string) => DISCOVERY_KEY_PATTERNS.some(p => k.includes(p));
     const requestCycleToolResults = rawToolResults.slice(state.startTurnIndex || 0);
@@ -898,6 +1037,7 @@ Instruction: Proceed with your investigation based on the complete context provi
     );
 
     const pendingIntentsAtThisTurn = (state.workingMemory as any)?.queryContext?.pendingIntents || [];
+    console.log(`\x1b[35m[Orchestrator] \ud83c\udfc1 STALL GUARD pre-check: prevWasDiscovery=${prevTurnWasDiscovery} | hasRetrieval=${hasRetrievalInCurrentRequest} | hasAmbiguity=${hasUnresolvedAmbiguity} | hasDeadEnds=${hasDeadEndLabels} | pending=${pendingIntentsAtThisTurn.length}\x1b[0m`);
 
     if (
         prevTurnWasDiscovery &&           // Previous turn was a discovery tool
@@ -905,7 +1045,8 @@ Instruction: Proceed with your investigation based on the complete context provi
         finalToolCalls.length === 0 &&    // LLM wants to stop with no retrieval tool
         finalVerdict === 'SUMMARIZE' &&   // LLM wants to summarize discovery output directly
         pendingIntentsAtThisTurn.length > 0 && // UpdateMemory2 confirms work is genuinely unfinished
-        !hasUnresolvedAmbiguity           // 🟢 Bail-out: ambiguous labels → no ID to retrieve with → yield to HITL
+        !hasUnresolvedAmbiguity &&         // 🟢 Bail-out: ambiguous labels → no ID to retrieve with → yield to HITL
+        !hasDeadEndLabels                  // 🟢 Bail-out: dead-end labels → clarifying question is correct → do not override
         // ↑ All conditions must be true. maxIter=8 is the graph's hard ceiling.
     ) {
         console.warn(
@@ -1003,112 +1144,88 @@ Instruction: Proceed with your investigation based on the complete context provi
             confidence: 0.75,
             args: [{ key: 'userQuery', value: fallbackQuery }]
         }];
-        finalVerdict = 'SUMMARIZE'; // Route fallback result directly to Summarizer
+        finalVerdict = 'SUMMARIZE';
         finalReasoning = `[EMPTY RESULT FALLBACK GUARD] Specialized MCP tool(s) returned 0 items in this request cycle and direct_query_fallback has not been attempted. Auto-routing to semantic fallback. Original: ${finalReasoning}`;
     }
 
-    // If the LLM identified unclassified labels, we must OVERRIDE any retrieval tools
-    // and force a resolution pass. This prevents "hijacking" retrieval parameters.
-    // 🟢 Section II.B Rule 3: Resolution is PREFERRED over asking a clarifying question immediately.
-    // We now allow this even if response.clarifyingQuestion exists, prioritizing the resolution turn.
-    // 🟢 Build with lowercased keys so the check on line 1010 (using lblLower) is case-insensitive.
-    // The LLM can capitalize entity names differently across turns (e.g. "John" vs "john");
-    // a case-sensitive Set would miss the match and fire a redundant resolution turn.
-    const resolvedLabelSet = new Set(
-        Object.keys((state.workingMemory?.sessionContext?.scope as any).resolvedLabels || {})
-              .map(k => k.toLowerCase())
+    /* DISABLED: actualUnclassified full filter moved to resolve_labels (Option A).
+     * The failedSessionLabels / ambiguousSessionLabels dead-end guard is kept for
+     * the LLM prompt guidance section below but no longer gates resolve_labels.
+    const actualUnclassified = (response.unclassifiedLabels || []).filter((l: any) => {
+        const lbl = (l.label || '').trim();
+        const lblLower = lbl.toLowerCase();
+        if (!lbl) return false;
+        if (lbl.length > 40) return false;
+        if (QUANTIFIER_PREFIXES.test(lbl)) return false;
+        if (STATUS_WORDS.test(lbl)) return false;
+        if (resolvedLabelSet.has(lblLower)) return false;
+        if (failedSessionLabels.has(lblLower)) return false;
+        if (ambiguousSessionLabels.has(lblLower)) return false;
+        return true;
+    });
+    */
+    // Minimal live filter — resolve_labels applies its own deeper filter.
+    // We still compute actualUnclassified so the dead-end prompt section below can reference it.
+    // 🛡️ RESOLVED LABEL GUARD: Build a set of already-resolved labels (from resolvedLabels in scope)
+    // so we don't pass them to resolve_labels and trigger a redundant re-resolution.
+    // resolvedLabels is already computed above at line ~462.
+    const resolvedLabelSet = new Set<string>(
+        Object.keys(resolvedLabels).map((k: string) => k.toLowerCase())
     );
-    
-    // 🟢 Loop Breaker Logic (Filtering AI and Interceptor)
-    // failedSessionLabels is now pre-calculated at the start of the node.
-
-    // 🟢 Filter AI-suggested unclassified labels
-    // Two layers of protection:
-    //   1. Prompt instruction (orchestrator_rules.ts) tells the LLM not to put descriptive phrases here.
-    //   2. This code-level guard is the last line of defence — if the LLM still misfires (e.g. classifies
-    //      "ALL cancelled jobs" as an entity label), we reject it before wasting a resolve turn.
-    //
-    // Rejection rules (any one match = rejected):
-    //   a) Already resolved in this session
-    //   b) Already failed in this session (loop-breaker)
-    //   c) Starts with a scope/quantifier word (ALL, ANY, EVERY, DETAILS, SHOW, GET, FIND)
-    //   d) Contains a maintenance status word (cancelled, completed, overdue, committed, missed, rescheduled)
-    //   e) Empty or whitespace-only label
-    //   f) Label longer than 40 chars (no real named entity is a sentence)
-    const QUANTIFIER_PREFIXES = /^(all|any|every|details|show|get|find|list|retrieve)\b/i;
-    const STATUS_WORDS = /\b(cancelled|completed|overdue|committed|missed|rescheduled|upcoming|pending)\b/i;
 
     const actualUnclassified = (response.unclassifiedLabels || []).filter((l: any) => {
         const lbl = (l.label || '').trim();
         const lblLower = lbl.toLowerCase();
-        if (!lbl) return false;                                  // (e) empty
-        if (lbl.length > 40) return false;                       // (f) sentence-length → not an entity name
-        if (QUANTIFIER_PREFIXES.test(lbl)) return false;         // (c) starts with scope word
-        if (STATUS_WORDS.test(lbl)) return false;                // (d) contains status word
-        if (resolvedLabelSet.has(lblLower)) return false;         // (a) already resolved to single canonical ID
-        if (failedSessionLabels.has(lblLower)) return false;     // (b) already failed (0 hits) this cycle
-        if (ambiguousSessionLabels.has(lblLower)) return false;  // (g) already ambiguous (>1 hits) this cycle — let AMBIGUITY DETECTED block handle it
-        return true;
-    });
-
-
-    // 🟢 Filter AI-suggested Tool Calls (Prevent redundant resolution loops)
-    // Block if: (1) already failed (0 hits) or (2) already ambiguous (>1 hits) this cycle.
-    finalToolCalls = finalToolCalls.filter((t: any) => {
-        if (t.name === 'mcp.resolve_entities') {
-            const searchTerm = (t.args || []).find((a: any) => a.key === 'searchTerm')?.value;
-            if (searchTerm && typeof searchTerm === 'string') {
-                const lbl = searchTerm.trim().toLowerCase();
-                if (failedSessionLabels.has(lbl)) {
-                    console.log(`\x1b[33m[LangGraph Orchestrator] 🛡️ Loop Breaker: Blocking redundant resolution call for "${searchTerm}" (already failed this turn)\x1b[0m`);
-                    return false;
-                }
-                if (ambiguousSessionLabels.has(lbl)) {
-                    console.log(`\x1b[33m[LangGraph Orchestrator] 🛡️ Ambiguity Guard: Blocking re-resolution of "${searchTerm}" (already ambiguous this cycle — ${resolveHits.get(lbl)} hits across entity types)\x1b[0m`);
-                    return false;
-                }
-            }
+        // Skip empty or sentence-length strings
+        if (!lbl || lbl.length > 50) return false;
+        // Skip labels already resolved in this conversation (avoid redundant re-resolution)
+        if (resolvedLabelSet.has(lblLower)) {
+            console.log(`\x1b[35m[Orchestrator] ♻️ Label "${lbl}" already in resolvedLabels — skipping resolve_labels.\x1b[0m`);
+            return false;
         }
         return true;
     });
 
-    // 🛡️ STRATEGIC INTERCEPT GATE
-    // The intercept's sole purpose is to resolve an entity label into a canonical DB ID when
-    // the LLM does not yet have it. It must NOT fire in two cases:
-    //
-    // Case A — Atomic/meta-tools (mcp.clear_filters, mcp.query_active_filters):
-    //   These operate on session state, not on entity data. They never need entity resolution.
-    //   Intercepting them would replace a correct atomic state action with a pointless DB lookup.
-    //   This is the ONLY permitted bypass — all other unclassified labels must go through resolution.
-    const ATOMIC_DIAGNOSTIC_TOOLS = new Set([
-        'mcp.clear_filters',
-        'mcp.query_active_filters',
-    ]);
+    // 🛡️ SAFETY STRIP: Block any hallucinated mcp.resolve_entities calls.
+    // The tool was removed from the LLM's capability list (contract.ts). If the LLM
+    // somehow emits it from training data memory, drop it here before execute_tools runs.
+    finalToolCalls = finalToolCalls.filter((t: any) => {
+        if (t.name === 'mcp.resolve_entities') {
+            console.warn(`\x1b[33m[LangGraph Orchestrator] 🛡️ Safety Strip: LLM hallucinated mcp.resolve_entities — dropped. Resolution is handled by resolve_labels node.\x1b[0m`);
+            return false;
+        }
+        return true;
+    });
+
+    /* DISABLED: Strategic Intercept replaced by resolve_labels LangGraph node.
+     * Previously: this block replaced finalToolCalls with mcp.resolve_entities calls
+     * and forced FEED_BACK_TO_ME to pause the retrieval plan.
+     * Now: the orchestrator writes unclassifiedLabels to state as a proper channel.
+     * The graph's conditional edge routes to resolve_labels when unclassifiedLabels.length > 0.
+     * Resolution is deterministic, parallel, and always clears unclassifiedLabels.
+     * The retrieval plan (finalToolCalls) is NOT paused — execute_tools runs AFTER
+     * resolve_labels completes, with IDs already injected into scope.
+     *
+    let vestibuleNoOrgFired = false;
+    const ATOMIC_DIAGNOSTIC_TOOLS = new Set(['mcp.clear_filters', 'mcp.query_active_filters']);
     const isAtomicDiagnosticPlanned = finalToolCalls.length > 0 && finalToolCalls.every((t: any) => ATOMIC_DIAGNOSTIC_TOOLS.has(t.name));
-
-    // 🟢 BYPASS HARDENING: Only atomic meta-tools (mcp.clear_filters, mcp.query_active_filters)
-    // are permitted to bypass the Strategic Intercept. The previous generic bypass that checked
-    // if unclassified labels appeared as ANY arg value was removed because it allowed misrouted
-    // entity names (e.g. a vessel name placed in activityDescription) to silently skip resolution,
-    // causing all downstream queries to return 0 results.
-    // 🟢 GAP-17 FIX: isAtomicDiagnosticPlanned now uses .every() instead of .some() to ensure
-    // that if a turn mixes meta-tools with retrieval tools, the intercept STILL fires to resolve
-    // the labels needed for the retrieval tools.
     const isInterceptBypassed = isAtomicDiagnosticPlanned;
-
     if (actualUnclassified.length > 0 && !isInterceptBypassed) {
         const resolutionTools: any[] = [];
         const scope = (state.workingMemory as any)?.sessionContext?.scope;
-        
-        // 🔎 DEEP CONTEXT THIEVERY: 
-        // If memory hasn't saved the org yet, we look everywhere for it!
         let orgID = scope?.organizationID;
         let orgShortName = scope?.organizationShortName;
-
         const isValidOrgValue = (val: any): val is string => typeof val === 'string' && val.trim() !== '';
-
         if (!orgID && !orgShortName) {
-            // 1. Scan AI's current (timid) tool args
+            const secondaryScopeOrg = (session?.secondaryScope || []).find(
+                (e: any) => e.modelType === 'Organization' && isValidOrgValue(e.id)
+            );
+            if (secondaryScopeOrg) {
+                orgID = secondaryScopeOrg.id;
+                console.log(`\x1b[33m[Orchestrator] 🏢 Deep Context Thievery: Found org in secondaryScope — ID: ${orgID}\x1b[0m`);
+            }
+        }
+        if (!orgID && !orgShortName) {
             response.tools?.forEach((t: any) => {
                 const args = t.args || [];
                 const idArg = args.find((a: any) => a.key === 'organizationID')?.value;
@@ -1116,27 +1233,11 @@ Instruction: Proceed with your investigation based on the complete context provi
                 if (isValidOrgValue(idArg)) orgID = idArg;
                 if (isValidOrgValue(nameArg)) orgShortName = nameArg;
             });
-
-            // 2. Scan AI's reformulated query for the short name (e.g., "for Fleetships...")
-            if (!orgShortName && response.reformulatedQuery) {
-                // Heuristic: check last human message if reformulated query mentions a known pattern
-                // but for now, we'll look at the messages directly for broader coverage.
-            }
-
-            // 3. Scan the LATEST human message as last resort — trust the AI's reformulated query first
-            // 🟢 GAP-5 FIX: REMOVED hardcoded 'fleetships' test-org heuristic. Production orgs have
-            // arbitrary names, so a hardcoded check would silently fail for all non-test environments.
-            // The AI's own tool args (step 1) are the reliable extraction path. If org is still
-            // missing after all checks, let the ORG CONTEXT MISSING guardrail handle it cleanly.
-            // (No action needed here — the HITL clarifying question path will ask the user.)
         }
-
         const orgKey = orgID ? "organizationID" : (orgShortName ? "organizationShortName" : null);
         const orgValue = orgID || orgShortName;
-
         if (orgKey && orgValue) {
             actualUnclassified.forEach((item: any) => {
-                // Only resolve types explicitly guessed by the grounded AI (Capped at 3)
                 if (Array.isArray(item.likelyEntityTypes) && item.likelyEntityTypes.length > 0) {
                     item.likelyEntityTypes.slice(0, 3).forEach((type: string) => {
                         resolutionTools.push({
@@ -1153,31 +1254,56 @@ Instruction: Proceed with your investigation based on the complete context provi
                 }
             });
         }
-
         if (resolutionTools.length > 0) {
             console.warn(`\x1b[33m[LangGraph Orchestrator] 🛡️ Strategic Intercept: Diverting Turn ${state.iterationCount || 0} to Resolution for ${response.unclassifiedLabels.length} labels.\x1b[0m`);
-            finalToolCalls = resolutionTools; // 🔥 TURN DIVERGENCE: Retrieval plan is PAUSED.
-            finalVerdict = 'FEED_BACK_TO_ME';  // 🔥 FORCE the loop to return after resolution.
-            finalReasoning = `[DETERMINISTIC VESTIBULE] Intercepted turn to resolve unclassified labels: ${response.unclassifiedLabels.map((l: any) => l.label).join(', ')}. Retrieval plan will be re-evaluated after identity confirmation.`;
-            // 🟢 Reset to parallel: mcp.resolve_entities calls are always independent.
-            // The LLM's original parallelizeTools=false was for the retrieval plan (now paused).
-            // Carrying it into the identity-resolution turn adds sequential overhead for no benefit.
+            finalToolCalls = resolutionTools;
+            finalVerdict = 'FEED_BACK_TO_ME';
+            finalReasoning = `[DETERMINISTIC VESTIBULE] Intercepted turn to resolve unclassified labels: ${response.unclassifiedLabels.map((l: any) => l.label).join(', ')}.`;
             finalParallelizeTools = true;
+        } else if (!orgKey && !orgValue) {
+            //   Case A — Cold start, org never provided: shouldShowOrgWarning is already true,
+            //     so the ORG CONTEXT GATE fires naturally on this same turn.
+            //   Case B — HITL continuation with an unresolvable org (e.g. user typed a wrong/fake
+            //     org name like "jjjj"): isHITLContinuation=true normally suppresses the gate,
+            //     but the Vestibule has just confirmed the org is STILL unknown. We must bypass
+            //     the suppression and re-ask. vestibuleNoOrgFired=true carries this signal down.
+            vestibuleNoOrgFired = true;
+            finalToolCalls = [];
+            finalVerdict = 'SUMMARIZE';
+            finalReasoning = `[VESTIBULE NO-ORG] Unclassified labels [${actualUnclassified.map((l: any) => l.label).join(', ')}] found but org unknown across all memory tiers. Forcing SUMMARIZE so ORG CONTEXT GATE asks for org name this turn.`;
+            console.warn(
+                `\x1b[43m\x1b[30m[Orchestrator] 🛑 VESTIBULE NO-ORG\x1b[0m\x1b[33m` +
+                ` — Cannot build resolution tools: org ID unknown. Labels: [${actualUnclassified.map((l: any) => l.label).join(', ')}].` +
+                (state.isHITLContinuation ? ' [HITL-INVALID-ORG: bypassing HITL suppression]' : '') +
+                ` Deferring to ORG CONTEXT GATE.\x1b[0m`
+            );
         }
+    }
+    */
+
+    // 🔎 RESOLVE_LABELS HANDOFF: unclassifiedLabels written to state updates below.
+    // vestibuleNoOrgFired stays false — Strategic Intercept no longer fires.
+    const vestibuleNoOrgFired = false;
+    if (actualUnclassified.length > 0) {
+        console.log(`\x1b[36m[LangGraph Orchestrator] 🔎 ${actualUnclassified.length} unclassified label(s) → resolve_labels node will fire: [${actualUnclassified.map((l: any) => l.label).join(', ')}]\x1b[0m`);
     }
 
     const updates: Partial<SkylarkState> = {
+        workingMemory: state.workingMemory,
         toolCalls: finalToolCalls,
         feedBackVerdict: finalVerdict,
         reasoning: finalReasoning,
+        // 🔎 RESOLVE_LABELS HANDOFF: Write unclassifiedLabels to state as a first-class channel.
+        // The graph conditional edge reads this to route to resolve_labels when labels are present.
+        // resolve_labels always clears this to [] after running, regardless of resolution outcome.
+        unclassifiedLabels: actualUnclassified as any,
         // 🟢 Persist the LLM's reformulated query so the Summarizer can use it
         // as the clean 'q:' field in the summaryBuffer instead of the raw, fragmented rawQuery.
         // Only update when the LLM provides a non-empty value; otherwise keep prior value.
         ...(response.reformulatedQuery ? { reformulatedQuery: response.reformulatedQuery } : {}),
         iterationCount: nextIterationCount,
         // 🟢 PARALLEL EXECUTION MODE: Wire the resolved execution mode into state.
-        // finalParallelizeTools defaults to the LLM's declared value but is overridden to true
-        // by the Strategic Intercept when it replaces the plan with pure discovery tools.
+        // finalParallelizeTools defaults to the LLM's declared value.
         parallelizeTools: finalParallelizeTools,
         // 🟢 CRITICAL: Must be explicit `false`, NOT `undefined`.
         // The graph reducer is: (x, y) => y !== undefined ? y : x
@@ -1292,6 +1418,24 @@ Instruction: Proceed with your investigation based on the complete context provi
         console.warn(`\x1b[35m[Orchestrator] 🔀 DOMAIN PIVOT DETECTED — UpdateMemory2 will clear domain-specific activeFilters.\x1b[0m`);
     }
 
+    // 🎯 TICKET ACTIVATION SIGNAL: Wire LLM's ticket activation to state.
+    // UpdateMemory2 reads ambiguitiesResolved to promote the chosen candidate to resolvedLabels.
+    // The ticket entry is NOT deleted — it stays for reuse (deleted only by 20-to-7 compression).
+    const resolvedSignal: string[] = response.ambiguitiesResolved ?? [];
+    updates.ambiguitiesResolved = resolvedSignal;
+    if (resolvedSignal.length > 0) {
+        console.log(`\x1b[32m[Orchestrator] 🎯 LLM signalled ticket activated this turn: [${resolvedSignal.join(', ')}]\x1b[0m`);
+    }
+
+    // Wire ticket attribution fields for Summarizer
+    // 🟢 Now properly typed — channels are registered in graph.ts section 13
+    updates.activatedTicketLabel = response.activatedTicketLabel ?? null;
+    updates.activatedTicketConfidence = response.activatedTicketConfidence ?? 0;
+    updates.activatedCandidateIndex = response.activatedCandidateIndex ?? null;
+    if (response.activatedTicketLabel) {
+        console.log(`\x1b[32m[Orchestrator] 📌 Ticket activated: "${response.activatedTicketLabel}" (confidence=${response.activatedTicketConfidence?.toFixed(2)}, candidateIdx=${response.activatedCandidateIndex})\x1b[0m`);
+    }
+
 
     // 🔗 LOG EXECUTION MODE
     if (updates.parallelizeTools === false) {
@@ -1305,10 +1449,180 @@ Instruction: Proceed with your investigation based on the complete context provi
     //   - DISCOVERY STALL GUARD  → Discovery ran but no retrieval followed — loop must continue
     // Without both checks a LLM-emitted clarifyingQuestion silently stomps either guard by
     // setting feedBackVerdict=SUMMARIZE + hitl_required=true, creating an irrecoverable dead-end.
-    if (response.clarifyingQuestion &&
-        !finalReasoning?.includes('DETERMINISTIC VESTIBULE') &&
-        !finalReasoning?.includes('DISCOVERY STALL GUARD')) {
-        updates.messages = [new AIMessage(response.clarifyingQuestion)];
+
+    // ─────────────────────────────────────────────────────────────────
+    // ORG CONTEXT GATE
+    // ─────────────────────────────────────────────────────────────────
+    // Fires in three distinct conditions:
+    //
+    // Condition A — shouldShowOrgWarning (org genuinely unknown across all tiers):
+    //   The prompt mandate alone is insufficient. LLM instruction drift causes the
+    //   LLM to sometimes ask about entity types instead of the org (e.g. 'Is XXX1
+    //   a vessel or machinery?'). This code-level gate overrides any such deviation.
+    //   Two sub-cases:
+    //     A1. LLM asked a question that doesn't mention org/fleet/company → override it.
+    //     A2. LLM emitted no clarifying question at all → inject the org question.
+    //
+    // Condition B — orgJustInvalidated (wrong org was just detected and wiped):
+    //   The FATAL DISCOVERY ERROR INTERCEPT clears the bad org from session.scope,
+    //   but hasOrgContext / shouldShowOrgWarning were already computed from the old
+    //   (now-deleted) values, so they won't re-fire on their own. This flag forces
+    //   a deterministic re-ask regardless of what the LLM puts in its response.
+    //
+    // Condition C — vestibuleNoOrgFired (HITL reply with unresolvable org):
+    //   The user just answered our clarifying question (isHITLContinuation=true) but
+    //   typed a wrong/fake org name (e.g. "jjjj"). The Vestibule confirmed the org is
+    //   still unknown. The normal !isHITLContinuation guard would silently suppress the
+    //   gate here, producing a useless "empty dataset" Summarizer response.
+    //   vestibuleNoOrgFired=true bypasses the HITL suppression so we re-ask correctly.
+    // ─────────────────────────────────────────────────────────────────
+    const orgGateShouldFire = (shouldShowOrgWarning || orgJustInvalidated || vestibuleNoOrgFired) &&
+        (!state.isHITLContinuation || orgJustInvalidated || vestibuleNoOrgFired) &&
+        finalToolCalls.length === 0 &&
+        finalVerdict === 'SUMMARIZE';
+
+    let effectiveClarifyingQuestion = response.clarifyingQuestion;
+
+    if (orgGateShouldFire) {
+        const cqLower = (effectiveClarifyingQuestion || '').toLowerCase();
+        const asksAboutOrg =
+            cqLower.includes('organization') ||
+            cqLower.includes('org') ||
+            cqLower.includes('company') ||
+            cqLower.includes('fleet') ||
+            cqLower.includes('account');
+
+        if (!effectiveClarifyingQuestion || !asksAboutOrg) {
+            // A1/A2/B: LLM deviated or emitted nothing — override with the canonical org question.
+            const originalQ = effectiveClarifyingQuestion?.substring(0, 100);
+            effectiveClarifyingQuestion =
+                'Which organization or fleet are you working in? Please share the short name ' +
+                'so I can look up the right records for you.';
+            console.warn(
+                `\x1b[43m\x1b[30m[Orchestrator] 🛑 ORG CONTEXT GATE FIRED\x1b[0m\x1b[33m` +
+                (orgJustInvalidated ? ' [INVALIDATED ORG]' : ' [MISSING ORG]') +
+                (originalQ ? ` — LLM asked: "${originalQ}" — Overriding.` : ' — LLM emitted no question. Injecting.') +
+                `\x1b[0m`
+            );
+            finalReasoning = orgJustInvalidated
+                ? `[ORG CONTEXT GATE] Bad org just invalidated. Forcing re-ask regardless of LLM question.`
+                : `[ORG CONTEXT GATE] Org unknown across all tiers. LLM deviated or emitted no question.`;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 🛡️ AMBIGUITY INTERCEPTION GATE
+    // ─────────────────────────────────────────────────────────────────
+    // Fires when the LLM recognised the current question is related to a PENDING ambiguity
+    // ticket (it set activatedTicketLabel) but tried to proceed with retrieval tools
+    // autonomously — without the user explicitly picking a candidate.
+    //
+    // All five conditions are purely structural (schema field checks, array lengths,
+    // Set membership). No string pattern matching is used.
+    //
+    // Condition 1 — hasPendingTickets:
+    //   At least one ticket in pendingAmbiguousMatches (label NOT yet in resolvedLabels).
+    //   If no pending tickets, there is nothing to block.
+    //
+    // Condition 2 — llmTopicMatchedATicket:
+    //   LLM set activatedTicketLabel to a non-null value. This is the LLM's own structural
+    //   signal that the current question is semantically related to a specific ticket.
+    //   If null, the LLM correctly identified the question as unrelated (Rule 3 — domain
+    //   pivot, general machinery query, etc.) → gate does NOT fire → tools proceed.
+    //
+    // Condition 3 — llmHasNoCandidatePick:
+    //   ambiguitiesResolved array is empty. If the user explicitly said "the second one"
+    //   and the LLM populated ambiguitiesResolved, that is the happy HITL-resolution path —
+    //   gate does NOT fire, the resolved candidate flows through normally.
+    //
+    // Condition 4 — llmAskedNoClarification:
+    //   LLM left clarifyingQuestion null. If the LLM correctly self-generated the question,
+    //   this gate is not needed — just let it through.
+    //
+    // Condition 5 — llmCallingNonMetaTools:
+    //   finalToolCalls contains at least one non-atomic-diagnostic tool. Meta-tools
+    //   (mcp.clear_filters, mcp.query_active_filters) are state management, not retrieval —
+    //   they should never be blocked by ambiguity.
+    //
+    // When all five fire: block all tools, force SUMMARIZE, inject the clarifying question
+    // built from the ticket's structured candidate list (no string heuristics in the question
+    // text itself — it is assembled from the ticket's candidate[].label and candidate[].type).
+    // ─────────────────────────────────────────────────────────────────
+    const AMBIGUITY_META_TOOLS = new Set(['mcp.clear_filters', 'mcp.query_active_filters']);
+
+    const hasPendingTickets        = pendingAmbiguousMatches.length > 0;
+    const llmTopicMatchedATicket   = response.activatedTicketLabel !== null && response.activatedTicketLabel !== undefined;
+    const llmHasNoCandidatePick    = (response.ambiguitiesResolved ?? []).length === 0;
+    const llmAskedNoClarification  = !effectiveClarifyingQuestion;
+    const llmCallingNonMetaTools   = finalToolCalls.length > 0 &&
+                                     !finalToolCalls.every((t: any) => AMBIGUITY_META_TOOLS.has(t.name));
+
+    const ambiguityGateShouldFire =
+        hasPendingTickets &&
+        llmTopicMatchedATicket &&
+        llmHasNoCandidatePick &&
+        llmAskedNoClarification &&
+        llmCallingNonMetaTools;
+
+    if (ambiguityGateShouldFire) {
+        // Find the ticket the LLM matched — structural equality on schema field, no pattern search
+        const interceptedTicket = pendingAmbiguousMatches.find(
+            (m: any) => m.label === response.activatedTicketLabel
+        );
+
+        if (interceptedTicket) {
+            // Build the clarifying question from the ticket's structured candidate array.
+            // No string heuristics — ordinals are index-derived, labels come from DB records.
+            const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th'];
+            const candidateLines = (interceptedTicket.candidates || [])
+                .map((c: any, i: number) => {
+                    const display = c.label || c.type || `Candidate ${i + 1}`;
+                    return `${ORDINALS[i] ?? `${i + 1}th`}: ${display}`;
+                })
+                .join(' | ');
+
+            effectiveClarifyingQuestion =
+                `"${interceptedTicket.label}" matches ${interceptedTicket.candidates?.length ?? 0} records — ` +
+                `${candidateLines}. Which one did you mean?`;
+
+            finalToolCalls = [];
+            finalVerdict = 'SUMMARIZE';
+            finalReasoning =
+                `[AMBIGUITY INTERCEPTION GATE] LLM matched topic to ticket "${interceptedTicket.label}" ` +
+                `(${interceptedTicket.candidates?.length ?? 0} candidates) but set activatedTicketLabel ` +
+                `without a candidate pick (ambiguitiesResolved=[]) and called retrieval tools. ` +
+                `Blocked ${(response.tools || []).length} tool(s). Injecting candidate-list question.`;
+
+            console.warn(
+                `\x1b[41m\x1b[97m[Orchestrator] 🛡️ AMBIGUITY INTERCEPTION GATE FIRED\x1b[0m\x1b[31m` +
+                ` — ticket="${interceptedTicket.label}"` +
+                ` | candidates=${interceptedTicket.candidates?.length ?? 0}` +
+                ` | blocked=${(response.tools || []).length} tool(s)` +
+                ` | activatedTicketLabel="${response.activatedTicketLabel}"` +
+                ` | ambiguitiesResolved=[]` +
+                `\x1b[0m`
+            );
+        }
+    } else {
+        console.log(
+            `\x1b[32m[Orchestrator] ✅ AMBIGUITY GATE: not triggered.\x1b[0m` +
+            ` pendingTickets=${pendingAmbiguousMatches.length}` +
+            ` | activatedTicketLabel=${response.activatedTicketLabel ?? 'null'}` +
+            ` | ambiguitiesResolved=${(response.ambiguitiesResolved ?? []).length}` +
+            ` | clarifyingQ=${!!effectiveClarifyingQuestion}` +
+            ` | nonMetaTools=${llmCallingNonMetaTools}`
+        );
+    }
+
+    // 🛡️ RESOLVE_LABELS GUARD: Deterministic signal — if labels are pending resolution,
+    // suppress any LLM-emitted clarifyingQuestion. The question is premature: resolution
+    // hasn't run yet. resolve_labels fires next, the LLM gets IDs on the following turn.
+    // NOTE: The old 'DETERMINISTIC VESTIBULE' string check has been removed — it relied on
+    // the now-disabled Strategic Intercept block which no longer stamps finalReasoning.
+    if (effectiveClarifyingQuestion &&
+        !finalReasoning?.includes('DISCOVERY STALL GUARD') &&
+        actualUnclassified.length === 0) {
+        updates.messages = [new AIMessage(effectiveClarifyingQuestion)];
         updates.feedBackVerdict = 'SUMMARIZE';
         updates.hitl_required = true;
         updates.isHITLContinuation = true;

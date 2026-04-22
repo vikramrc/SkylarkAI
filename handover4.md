@@ -1,4 +1,8 @@
+
 # Handover 4: Hardening MCP Diagnostic Retrieval
+
+> [!IMPORTANT]
+> **MASTER REFERENCE**: For the definitive source of truth on the current Orchestrator architecture, memory tiers, and HITL invariants, refer to [SkylarkContext.md](file:///home/phantom/testcodes/SkylarkAI/SkylarkContext.md). This handover document tracks session-specific changes; `SkylarkContext.md` maps the resulting architecture.
 
 ## 1. The Core Issue
 Users reported that queries like "show me blocked jobs org wide" returned 0 results even when blocked jobs existed in the database.
@@ -44,6 +48,7 @@ npx tsx scripts/debug_session_history.ts $(npx tsx scripts/find_latest_thread.ts
 - Shadow Check result surfaced in `summary` (string tools) or `summary.diagnosticHint` (object-summary tools)
 
 ---
+
 
 ## 3. What Was Fixed (Phase 2 — Previous Session)
 
@@ -491,7 +496,8 @@ This only covers empty/error. It does NOT cover the case where a tool returns pa
 1.  **Competency Single Source of Truth**: `signalID` is the canonical tag string used to bridge `CrewCompetencySignal` definitions and `CrewMember` records.
 2.  **Vessel Scoping**: All crew-related vessel filters MUST proceed via a join with the `CrewAssignment` collection.
 3.  **Signal Resolution**: Named training/competency requests MUST use `query_competency_config` or `query_competency_diagnostics`, bypassing the generic `mcp.resolve_entities`.
-## 20. Phase 11: Orchestrator Hardening & Sequenced Multi-Part Tasks
+
+## 21. Phase 11: Orchestrator Hardening & Sequenced Multi-Part Tasks
 
 ### 21.1. The "Resolution Hijack" Problem
 **Problem**: In multi-part queries like *"clear the filters and show me Tanker Management completions"*, the Orchestrator's **Strategic Intercept** logic would see "Tanker Management" as an unclassified label and hijack the turn to run `mcp.resolve_entities`. 
@@ -521,7 +527,7 @@ This only covers empty/error. It does NOT cover the case where a tool returns pa
 
 ---
 
-## 21. Phase 12: Sequential Execution Hardening & UI Determinism
+## 22. Phase 12: Sequential Execution Hardening & UI Determinism
 
 ### 23.1. The Problem: Non-Deterministic Tool Execution in Multi-Part Filter Chains
 
@@ -794,10 +800,42 @@ const priorYear = currentYear - 1;                 // e.g. 2025
 
 ---
 
-## 22. Updated Architectural Invariants (Batch 12)
+## 23. Phase 13: Hardening Orchestrator Ambiguity & HITL Context Bridge
 
-1. **Sequential Execution**: Any tool chain containing a state-mutating tool (`mcp.clear_filters`, etc.) MUST set `parallelizeTools: false`. This is enforced by Rule 14 (LLM instruction) + the state channel (code enforcement).
-2. **EMPTY RESULT FALLBACK GUARD**: Only fires when the **last retrieval turn** returns empty. State-management tools (`mcp.*`) are excluded from this check.
+### 23.1. Vestibule Pruning (Memory Hardening)
+
+**Problem**: The "Strategic Intercept" (Vestibule) in `orchestrator.ts` would repeatedly trigger `resolve_entities` for previously ambiguous labels (e.g., "CCCCCCC") even after the user had provided a resolution. This was because the `resolvedLabels` map only contained the resolved IDs/Types, not the original ambiguous label string used by the user.
+
+**Fix** (`update_memory2.ts`):
+- Implemented **Vestibule Pruning** in Phase 2.
+- When any candidate from an `ambiguousMatches` entry is found to have been resolved (ID exists in `resolvedLabels`), the system now explicitly registers the **original label** (e.g., "CCCCCCC") in the `resolvedLabels` state, mapping it to the chosen candidate.
+- **Impact**: This satisfies the Vestibule's `resolvedLabelSet` skip guard, preventing the system from re-triggering resolution passes for already-settled entity names.
+
+### 23.2. HITL Context Bridge (Orchestrator Intent Injection)
+
+**Problem**: During a Human-in-the-Loop (HITL) continuation, the user often provides a terse reply (e.g., "show me all"). The Orchestrator's message-masking logic (which builds the `qnaTranscript` from `summaryBuffer` + latest message) would strip the preceding context of the *current* unsettled conversation. The LLM would lose sight of what "all" referred to, leading to failed tool calls or underspecified summaries.
+
+**Fix** (`orchestrator.ts`):
+- Introduced an **Active Intent Bridge** for HITL turns (`iterationCount === 0` and `isHITLContinuation: true`).
+- The Orchestrator now injects the `reformulatedQuery` (the LLM's already-distilled understanding of the current HITL chain) as an `[ACTIVE INTENT]` block before the user's reply.
+- **Transient Prompt Injection**: This block is only injected into the prompt for the current turn. It is **not** written to the persistent `summaryBuffer`.
+- **Squashing**: Once the HITL cycle finishes and `SUMMARIZE` fires, the entire exchange is squashed into a single clean Q&A pair in `summaryBuffer` as per standard protocol.
+
+### 23.3. Deterministic Identity Source
+
+**Logic**: The bridge uses a tiered priority for the active intent:
+1. `state.reformulatedQuery` — The LLM's most recent clean distillation of the conversation's goals.
+2. `queryContext.rawQuery` — Verbatim fallback if reformulation hasn't occurred yet.
+3. Empty string fallback for safety.
+
+---
+
+## 24. Updated Architectural Invariants (Batch 13)
+
+1. **Vestibule Skip Guard**: A label is only considered "unclassified" if it is not present in `resolvedLabels`. Pruning ensures original ambiguous labels are registered as aliases to their resolved IDs.
+2. **HITL Context Persistence**: The `reformulatedQuery` is the canonical representation of the "current goal" during multi-turn HITL exchanges and must be used to bridge context for terse user replies.
+3. **Transient Prompt Engineering**: Intermediate HITL context bridges must remain in the prompt layer and must not pollute the permanent `summaryBuffer` or `longTermBuffer`.
+
 3. **Ambiguity HITL Bridge**: When `direct_query_fallback` triggers an ambiguity stop, `isHITLContinuation: true` is persisted in state so the next HTTP request preserves `rawQuery` and `pendingIntents`.
 4. **Empty Tab Visibility**: A UI tab is ALWAYS rendered if the LLM provided a `uiTabLabel`, regardless of row count. "No data found" is a valid, informative result.
 5. **Summarizer Confidence**: The Summarizer must be provided with `appliedFilters` for empty results so it can definitively report 0-match outcomes for specific entities/dates rather than hedging.
@@ -1003,3 +1041,652 @@ const priorYear = currentYear - 1;                 // e.g. 2025
 - **Premium Loader Transition**: Replaced the basic grey "ping" dot in `ContinuousChatView.tsx` with a premium, Siri/Claude-inspired multi-color spinner.
 - **Rich Aesthetics**: Implemented a `conic-gradient` based ring with a `radial-gradient` mask to create a modern, high-end "AI is thinking" visualization that aligns with modern AI interface standards.
 
+
+## 30. Phase 16: Orchestrator HITL Context Bridge & Vestibule Hardening
+
+### 35.1. Vestibule Pruning (Memory Hardening)
+
+**Problem**: The "Strategic Intercept" (Vestibule) in `orchestrator.ts` would repeatedly trigger `resolve_entities` for previously ambiguous labels (e.g., "CCCCCCC") even after the user had provided a resolution. This was because the `resolvedLabels` map only contained the resolved IDs/Types, not the original ambiguous label string used by the user.
+
+**Fix** (`update_memory2.ts`):
+- Implemented **Vestibule Pruning** in Phase 2.
+- When any candidate from an `ambiguousMatches` entry is found to have been resolved (ID exists in `resolvedLabels`), the system now explicitly registers the **original label** (e.g., "CCCCCCC") in the `resolvedLabels` state, mapping it to the chosen candidate.
+- **Impact**: This satisfies the Vestibule's `resolvedLabelSet` skip guard, preventing the system from re-triggering resolution passes for already-settled entity names.
+
+### 35.2. HITL Context Bridge (Orchestrator Intent Injection)
+
+**Problem**: During a Human-in-the-Loop (HITL) continuation, the user often provides a terse reply (e.g., "show me all"). The Orchestrator's message-masking logic (which builds the `qnaTranscript` from `summaryBuffer` + latest message) would strip the preceding context of the *current* unsettled conversation. The LLM would lose sight of what "all" referred to, leading to failed tool calls or underspecified summaries.
+
+**Fix** (`orchestrator.ts`):
+- Introduced an **Active Intent Bridge** for HITL turns (`iterationCount === 0` and `isHITLContinuation: true`).
+- The Orchestrator now injects the `reformulatedQuery` (the LLM's already-distilled understanding of the current HITL chain) as an `[ACTIVE INTENT]` block before the user's reply.
+- **Transient Prompt Injection**: This block is only injected into the prompt for the current turn. It is **not** written to the persistent `summaryBuffer`.
+- **Squashing**: Once the HITL cycle finishes and `SUMMARIZE` fires, the entire exchange is squashed into a single clean Q&A pair in `summaryBuffer` as per standard protocol.
+
+## 31. Updated Architectural Invariants (Batch 17)
+
+1. **Vestibule Skip Guard**: A label is only considered "unclassified" if it is not present in `resolvedLabels`. Pruning ensures original ambiguous labels are registered as aliases to their resolved IDs.
+2. **HITL Context Persistence**: The `reformulatedQuery` is the canonical representation of the "current goal" during multi-turn HITL exchanges and must be used to bridge context for terse user replies.
+3. **Transient Prompt Engineering**: Intermediate HITL context bridges must remain in the prompt layer and must not pollute the permanent `summaryBuffer` or `longTermBuffer`.
+
+
+---
+
+## 32. Phase 17: Hardening HITL Ambiguity & Instance-Level Selection
+
+### 32.1. The Ambiguity Loop Break (Fixes A, B, C, D)
+
+**Problem**: The orchestrator previously struggled with "Instance Ambiguity" (multiple records of the same type). It would either loop indefinitely asking for the "entity type" (when it was already known) or fail to provide the candidate list to the LLM in a high-salience position.
+
+**Fixes** (`orchestrator.ts`):
+- **Fix A (Context Framing)**: Renamed the bridge label from `[ACTIVE INTENT]` to `[ACTIVE CLARIFICATION CONTEXT — you asked the user a question; their answer follows]`. This prevents the LLM from treating the reformulated query as a completed goal.
+- **Fix B (Two-Level Rendering)**: The ambiguity block now detects **Level 1 (Type)** vs **Level 2 (Instance)** ambiguity. For Level 2, it renders a numbered list of candidate labels + IDs (e.g., "1. CCCCCCC Unit A [ID], 2. CCCCCCC Pump B [ID]") and explicitly tells the LLM to ask for a selection by name.
+- **Fix C (Positional Salience)**: Injected a `[RIGHT NOW]` status block directly into the user message block (before `HUMAN:`). This block contains the current Goal, Pending intents, Filters, and active Ambiguity status, ensuring it has the highest positional salience at generation time.
+- **Fix D (Ambiguity Suppression)**: Added `ambiguousSessionLabels` to track which labels have already been processed in the current request cycle. This prevents the ambiguity block from re-firing mid-cycle during iterative resolution turns.
+
+### 32.2. Authority-Sync: Orchestrator Rules (Batch 17 Rules)
+
+**Fix** (`orchestrator_rules.ts`):
+- **Rule 7 & 8 Updated**: Taught the LLM to distinguish between Type and Instance levels and instructed it on the exit path (Level 2 resolution uses the specific name as `searchTerm` to achieve a single-hit promo).
+- **Rule 8b (Multi-Instance Recall)**: Added the **Full-Name Resolution Protocol**. If a user asks for "all three machines" from a previous turn, the LLM is instructed to use the specific names from `summaryBuffer` as separate unclassified labels, bypassing the ambiguous short label.
+- **Section XI ([RIGHT NOW] Protocol)**: Formally defined the `[RIGHT NOW]` block as the authoritative current-state snapshot. Established the priority order: `Ambiguity > Pending > Conversational`.
+
+---
+
+## 33. Updated Architectural Invariants (Batch 18)
+
+1. **Two-Level Ambiguity**: Disambiguation must distinguish between Type-Level (What type?) and Instance-Level (Which record?). Instance-level resolution MUST provide candidate names to the user.
+2. **Positional Salience Rule**: The `[RIGHT NOW]` status block in the user-message layer is the definitive truth for the current turn and overrides conflicting system-message instructions.
+3. **Multi-Instance Recovery**: When resolving multiple items from a previously-ambiguous set, specific names from memory MUST be used as resolution terms to prevent re-triggering disambiguation.
+4. **Authoritative [RIGHT NOW] Priority**: The LLM must follow the state signaled in the `[RIGHT NOW]` block in the order: `Ambiguity` (Stop everything) → `Pending` (Execute tools) → `Conversational` (Summarize).
+5. **Zero-Guessing Invariant**: If `Ambiguity` is non-None in `[RIGHT NOW]`, `tools: []` is mandatory. The LLM is strictly forbidden from guessing which candidate the user meant.
+
+---
+
+## 34. Phase 18: Ambiguity State Finalization (Hardening HITL + Retrieval)
+
+### 34.1. The Core Problem — Persistent ambiguousMatches
+
+**Data Evidence**: Running `analyse_last_n_threads.ts 6` against MongoDB checkpoints revealed
+**31 of 33 conversations** in the latest thread flagged as `🔁 LOOP`. Every loop had
+`⚡ ambiguousMatches was populated` present. The looped tool was always `mcp.resolve_entities`
+for the same label (`CCCCCCC`), firing 4–12× per conversation.
+
+**Root cause**: `ambiguousMatches` was **never cleared from state after the user picked a candidate**.
+After the user said "first one" or "the machinery one", a retrieval tool ran — but:
+1. No new `mcp.resolve_entities` ran → `labelToMatches` empty → the existing cleanup block saw zero new ambiguities
+2. The inherited `scope.ambiguousMatches` was spread-in via `{...existingMemory.sessionContext.scope}`
+3. Vestibule Pruning only fires when a candidate ID is in `resolvedLabels` — but the user's pick
+   was expressed in natural language, never as a single-hit `mcp.resolve_entities` promotion
+
+Result: Every subsequent turn had `ambiguousMatches` populated → `[RIGHT NOW]` showed
+`INSTANCE SELECTION REQUIRED: 3 Machinery records` → LLM re-entered disambiguation mode → loop.
+
+### 34.2. Fix E — HITL+Retrieval Finalization (`update_memory2.ts`)
+
+**New block** inserted after the Vestibule Pruning cross-check (Phase 1).
+
+**Signal**: `isHITLContinuation === true` AND a non-resolve retrieval tool ran this cycle AND `inheritedAmbiguousMatches.length > 0`
+
+**Actions**:
+1. Registers each ambiguous label → `resolvedLabels` (first candidate, as Vestibule skip guard)
+2. Deletes `ambiguousMatches` from `sessionStateCommit.scope` entirely
+3. Logs `🏁 AMBIGUITY FINALIZED` and `🧹 HITL+Retrieval: cleared N ambiguous match(es)`
+
+**Safety**: If the user wants to try a different candidate after empty retrieval, they re-state their intent → Vestibule re-resolves → `ambiguousMatches` re-populates naturally. `summaryBuffer` retains the prior exchange (Rule 8b Multi-Instance Recall).
+
+### 34.3. Fix F — Entity Type Integrity Rule (`orchestrator_rules.ts`)
+
+## 20. Phase 19: LLM-Signalled Ambiguity Resolution (Current Session)
+
+### 20.1. The Transition to Determinism
+**Problem**: The heuristic Fix E (implemented in Phase 18) guessed that an ambiguity was resolved if "retrieval ran WITHOUT new resolve_entities". This had two critical flaws:
+1. **False Positives**: An unrelated tool call (e.g., `maintenance.query_status` for overdue jobs) would incorrectly clear an open ambiguity (e.g., for "CCCCCCC") simply because the user asked a separate question while the ambiguity was still live.
+2. **Coarse Clearing**: It was an all-or-nothing clear. If multiple labels were ambiguous, it cleared ALL of them even if only one was answered.
+
+### 20.2. The Solution: `ambiguitiesResolved` Signal
+**Strategy**: Instead of guessing, we now require the LLM to explicitly declare which labels it has resolved. The LLM sees the full Q&A loop in its `qnaTranscript` and knows exactly which candidates it has selected and acted upon.
+
+**Implementation**:
+1. **State.ts**: Added field 11 `ambiguitiesResolved: string[]`.
+2. **Orchestrator.ts (Zod)**: Added `ambiguitiesResolved` to the schema with a strict 3-condition mandate:
+   - Label must be in `[RIGHT NOW]` Ambiguity block.
+   - User reply provided enough info to pick one candidate.
+   - A retrieval tool is being called with that candidate's ID **THIS TURN**.
+3. **Orchestrator.ts (Return)**: Wired `response.ambiguitiesResolved` → `updates.ambiguitiesResolved`.
+4. **UpdateMemory2.ts**: Replaced Fix E heuristic with a deterministic consumer. It reads the signal, clears only the named labels from `ambiguousMatches`, and registers them in `resolvedLabels`. Unlisted labels remain in state.
+
+### 20.3. Generic LLM Guidance
+To prevent the LLM from pattern-matching on specific test data (like "CCCCCCC"), the schema description now uses generic maritime-domain examples:
+- **Example A**: Ordinal selection ("the second one").
+- **Example B**: Type disambiguation ("it's a machinery item").
+- **Example C**: Detail-based pick ("the one in Port of Singapore").
+- **Example D/E (Negative)**: Explicitly forbids signalling resolution when asking another question or doing unrelated work.
+
+### 20.4. Verification Results
+- ✅ **Pass**: Ambiguities are now cleared only when the LLM explicitly acts on them.
+- ✅ **Stability**: The heuristic Fix E has been fully removed, collapsing multiple complex checks into a single clean handshake.
+- ✅ **Partial Resolution**: If a user is asked about two vessels and only answers for one, only that one is cleared from the state.
+
+---
+
+## 21. Updated Architectural Invariants (Batch 11)
+
+1. **Deterministic Ambiguity Clearing**: `ambiguousMatches` is cleared ONLY when the label appears in the LLM's `ambiguitiesResolved` signal. Heuristics based on "retrievalRan" are deprecated.
+2. **Signal Integrity**: The LLM must only signal resolution if it is calling a non-discovery retrieval tool with the candidate's ID in the *same turn*.
+3. **Partial Persistence**: Unresolved ambiguities in `ambiguousMatches` must be preserved across turns until explicitly signaled as resolved or the query topic pivots.
+
+---
+
+## 22. Phase 20: Orchestrator Resolution Logic Hardening (Current Session)
+
+### 22.1. HITL/Invalid-Org Suppression Loop Fix (`orchestrator.ts`)
+
+**Problem**: The ORG CONTEXT GATE was incorrectly gated by `!isHITLContinuation`. When a user provided an invalid organization name during a HITL continuation turn, the system would verify the org failed (setting `isOrgUnresolved: true`), but the gate would refuse to fire because it was a HITL turn. This resulted in the AI silently failing or looping without re-asking for the correct organization.
+
+**Fix** (`orchestrator.ts`):
+- Introduced a `vestibuleNoOrgFired` tracking flag in the identity-gate logic.
+- **VESTIBULE NO-ORG Guard**: If the identity resolution pass confirms the organization is still missing after a user reply, it forced a `SUMMARIZE` verdict.
+- **Gate Bypass**: The ORG CONTEXT GATE now bypasses the `!isHITLContinuation` check IF `vestibuleNoOrgFired` is true.
+- **Result**: If the user provides an incorrect org, the system now deterministically re-asks until resolved.
+
+### 22.2. Orchestrator Constitutional Hardening (`orchestrator_rules.ts`)
+
+**Problem**: The AI was exhibiting "autonomous over-reaching" — for example, if it didn't know a `scheduleID`, it would autonomously query all schedules and pick one to "unblock" itself, leading to empty or irrelevant data sets. It was also silently adopting wrong entity types (e.g. using Machinery IDs for Activity queries) because the resolver returned a match.
+
+**Fix**: Added two new absolute rules to Section II.B:
+
+1. **Rule 10 (Type Integrity)**: If entity resolution finds a type different from what the user explicitly named (e.g. Activity vs Machinery), the AI MUST stop and surface the mismatch. It is forbidden from silently proceeding with the "wrong" type.
+2. **Rule 11 (Surface-and-Stop on Missing Parameter)**: If a required tool parameter (e.g. `scheduleID`) is unknown and cannot be derived, the AI is **FORBIDDEN** from autonomously enumerating/guessing it. It must surface what it has found so far and stop for user guidance.
+   - **Exception**: Only permitted if a previous tool result in the same cycle returned *exactly one* valid option for that parameter.
+
+### 22.3. Dead-end Block Strengthening (`orchestrator.ts`)
+
+**Fix**: Updated the code-injected `🛡️ DEAD-END LABELS` block. It now includes a **⛔ STRICTLY FORBIDDEN** mandate:
+> *"Do NOT call additional tools to try to solve around the missing entity (e.g. enumerating all schedules to guess which one the user meant, calling a broader org-wide query as a substitute). The user must make the next decision — do not make it for them."*
+
+### 22.4. Rules Complexity Assessment (`rules_issues.md` & `rules_issues2.md`)
+
+**Problem**: As the `orchestrator_rules.ts` file has grown, it has developed "Rule Friction" — multiple absolute mandates that can conflict in edge cases.
+
+**Findings**:
+- **Rule 11 vs Rule IV.12**: Rule 11 says "stop if parameter missing", while Rule IV.12 says "NEVER stop if pending intents exist."
+- **Rule 10 vs Non-Procrastination Mandate**: Rule 10 says "stop on type mismatch", while Section VIII says "execute immediately if IDs are in memory."
+- **[RIGHT NOW] Priority**: The authoritative snapshot protocol (Section XI) currently lacks explicit checks for Rule 10/11 conditions, meaning it might bypass them if pending intents are present.
+
+**Next Step**: A comprehensive "Precedence Rebuild" pass is required to define a clear hierarchy between these absolute mandates (e.g. Rule 10/11 > Pending Intents).
+
+---
+
+## 23. Updated Architectural Invariants (Batch 20)
+
+1. **HITL-Resilient Org Gating**: Organization resolution is a hard gate that must fire even during HITL turns if the organization remains unresolvable.
+2. **Type Integrity Invariant**: User-stated entity types are strict constraints. Mismatched resolution hits are blocking events, not "close enough" matches.
+3. **No Autonomous Hierarchy Drilling**: The AI is forbidden from "exploring" adjacent data to guess required parameters. "Surface and Stop" is the mandatory protocol for missing requirements.
+4. **Absolute Rule Precedence**: Rule 10 (Type Integrity) and Rule 11 (Missing Parameters) are primary blocking conditions that override retrieval mandates.
+---
+
+## 24. Phase 13: Orchestrator Constitutional Hardening & No-Goto Refactor
+
+### 24.1. Constitutional Refactor (The 41-Rule Sequential Pivot)
+
+**Problem**: The `orchestrator_rules.ts` had become a fragmented collection of "Rule 1" to "Rule 12" repeated in different sections (II, IV, IX, X). This caused non-deterministic behavior because the LLM would see multiple "Rule 1s" and potentially skip mandates. It also used "goto" style cross-references (e.g., "See Section VIII Step 2") which broke the LLM's linear reasoning flow.
+
+**Fix**:
+- **Monotonic Renumbering**: Applied a document-wide unique sequence (Rule 1 through Rule 41).
+- **No-Goto Mandate**: Removed all numerical rule cross-references and "goto" instructions. Every rule is now self-contained or references a concept by its unique name (e.g., "the Non-Procrastination Mandate") rather than a section/number.
+- **Consolidation**: Merged redundant mandates for Organization Context, Discovery, and Failback into a single source-of-truth definition for each.
+
+### 24.2. Hardening the "Surface-and-Stop" Gate (Section XI)
+
+**Problem**: The Orchestrator would sometimes attempt to "fix" a missing parameter or a type mismatch by guessing or calling adjacent tools, leading to results from the wrong data branch.
+
+**Fix**:
+- **Step 1.5 Pre-flight Check**: Injected a mandatory high-precedence check into the `[RIGHT NOW]` protocol.
+- **Absolute Blocking**: Before executing any pending intent, the LLM MUST verify:
+    - **(a) Type Integrity**: Does the resolved ID match the user's explicitly stated entity type? (e.g., Vessel vs Machinery).
+    - **(b) Parameter Completeness**: Are all required tool parameters known and concrete?
+- **Precedence Override**: These checks are codified to override the **Non-Procrastination Mandate** and the **Pending Intents Mandate**. If a check fails, the AI MUST stop and pose a clarifying question.
+- **Failback Suppression**: Explicitly instructed the LLM to suppress `direct_query_fallback` when Rule 18 (Missing Parameter) triggers — a structural failure should never be solved by semantic guessing.
+
+### 24.3. Restored Level-0 Foundational Mandates
+
+**Problem**: Over-zealous merging in previous sessions had moved the **Fleet Discovery Mandate** and **The Golden Rule** (memory ID lookup) deep into Section VIII, causing the LLM to miss them during initial reasoning.
+
+**Fix**:
+- **Rule 3. Fleet Discovery Mandate**: Restored to the foundational Level-0 Protocol.
+- **Rule 7. Secondary & Current Scope Mandate (The Golden Rule)**: Restored to Level-0. This ensures the LLM checks its ID memory ledger BEFORE it considers any retrieval or guessing.
+
+### 24.4. Summary of Constitutional State (41 Rules)
+
+| Section | Rules | Focus |
+|---------|-------|-------|
+| II. Level-0 | 1–7 | No-Guess, Fidelity Bridge, Discovery, Scoping, Golden Rule |
+| II.B Deduction | 8–18 | Guess & Resolve, HITL Protocol, Ambiguity, **Surface-and-Stop Gate** |
+| III. Discipline | 19–22 | Diversity, Parameter Boundaries (No Placeholders), Failback, Tab Labeling |
+| IV. Termination | 23–31 | Freshness, Completeness, Strike Rule, Pending Intents, Anti-Hallucination |
+| V. Security | 32–36 | Read-Only, PII, System Secrets, Jailbreak Containment |
+| IX. Tools | 37–38 | Query/Clear Filters |
+| X. Execution | 39–40 | Repeat Execution, Parallel vs Sequential Mode |
+| XI. [RIGHT NOW] | 41 | Authoritative State Snapshot & Pre-flight Gate |
+
+**Status**: LIVE in `orchestrator_rules.ts`. Verified with `tsc --noEmit`.
+
+---
+
+## 25. Phase 15: Hardening Deterministic Entity Resolution
+
+### 25.1. The "Non-Deterministic Intercept" Problem
+
+**Problem**: Previously, the Orchestrator used a "Strategic Intercept" (Node.js code) to hijack LLM tool calls and substitute them with `mcp.resolve_entities`. This was fragile:
+1.  **Hallucination Risk**: The LLM would sometimes try to call the resolution tool itself (unreliably) or skip it entirely.
+2.  **State Desync**: Resolution results were only visible after a full tool-execution turn, often causing the LLM to lose context or loop.
+3.  **Ambiguity Loops**: If a label was genuinely ambiguous (multiple matches), the non-deterministic path would often re-resolve the same label indefinitely.
+
+### 25.2. The Solution: Deterministic `resolve_labels` Node
+
+**Architecture**: Moved entity resolution out of the LLM's hands and into a mandatory LangGraph system node.
+
+1.  **`unclassifiedLabels` Channel**: Added a first-class state channel. The Orchestrator simply identifies labels it doesn't know; it NO LONGER selects resolution tools.
+2.  **Mandatory Intercept (`graph.ts`)**: The graph now routes `orchestrator` -> `resolve_labels` whenever `unclassifiedLabels.length > 0`. This happens *before* any other tools execute.
+3.  **Parallel Resolution**: The `resolve_labels` node runs all label × type lookups in parallel using the backend's `resolveEntities` utility directly (bypassing MCP overhead).
+
+### 25.3. The "Synthetic Tool Results" Bridge
+
+**Innovation**: To avoid rewriting the complex extraction logic in `update_memory2.ts` (the Ambiguity Bridge) and `orchestrator.ts` (the Dead-End guard), the `resolve_labels` node **emulates** tool calls.
+
+- It injects results into `toolResults` using synthetic keys like `mcp.resolve_entities-auto-17382...`.
+- These results contain the standard JSON structure expected by the rest of the system.
+- **Result**: `update_memory2` naturally detects these "tools", populates `ambiguousMatches` in scope, and maps singular hits into `resolvedLabels` without needing any code changes.
+
+### 25.4. Hardened Guards & Safety
+
+1.  **Safety Strip (`orchestrator.ts`)**: Since `mcp.resolve_entities` was removed from the LLM's capability contract, any hallucinated tool call by that name is now automatically dropped by a code-level "safety strip" before execution.
+2.  **Re-Resolution Guard (`orchestrator.ts`)**: Added a `resolvedLabelSet` filter to the Orchestrator's label extraction. If a label (e.g., "XXX1") is already in `session.scope.resolvedLabels`, it is stripped before being sent to the `resolve_labels` node. This prevents redundant DB lookups on follow-up turns.
+3.  **SSE UX Integration**: Updated `workflow.ts` to emit a status message ("Resolving N labels...") during the deterministic pass, ensuring the user sees activity even when the LLM isn't "thinking."
+
+### 25.5. Rules Alignment (`orchestrator_rules.ts`)
+
+- **Rule 10 (Guess & Resolve)**: Updated to remove all mentions of the AI calling resolution tools.
+- **Mandate**: The AI is now instructed to simply provide the `unclassifiedLabels` array with best-guess types. The system handles the rest.
+
+---
+
+## 26. Updated Architectural Invariants (Batch 21)
+
+1.  **Deterministic Resolution**: Entity resolution is a system-level background service, not an LLM-tooling decision.
+2.  **Synthetic Compatibility**: System nodes that replace LLM tools should emit "Synthetic Tool Results" (standard JSON in `toolResults`) to preserve compatibility with downstream memory and summarization logic.
+3.  **Resolution Idempotency**: The `resolvedLabelSet` gate ensures that once a label is resolved, it stays resolved for the duration of the request cycle.
+
+---
+
+## 27. Summary of Critical Files (Entity Resolution)
+
+| File | Purpose |
+|------|---------|
+| `backend/src/langgraph/nodes/resolve_labels.ts` | The new deterministic resolution node |
+| `backend/src/langgraph/graph.ts` | Routes `orchestrator` -> `resolve_labels` intercept |
+| `backend/src/langgraph/state.ts` | Defines `unclassifiedLabels` channel |
+| `backend/src/langgraph/nodes/orchestrator.ts` | Extracts labels; applies safety strip & re-resolution guard |
+| `backend/src/langgraph/prompts/orchestrator_rules.ts` | Constitutional alignment for automatic resolution |
+| `backend/src/langgraph/routes/workflow.ts` | SSE status updates for the resolution node |
+
+---
+
+[End of Handover 4]
+
+## Phase 21: Final Hardening — Deterministic "Pause-and-Resolve" Flow
+
+### 21.1. The "Pause-and-Resolve" Mandate
+**Problem**: Legacy "same-turn" resolution logic caused race conditions where the LLM would attempt to use un-hydrated IDs (`<ID>`) or hallucinate tool calls while resolution was still in flight.
+**Fix**: Formalized a strict **Multi-Turn Protocol**.
+- **Orchestrator Mandate**: When unclassified labels are detected, the Orchestrator MUST emit `tools: []` and `feedBackVerdict: 'FEED_BACK_TO_ME'`. It is strictly forbidden from generating retrieval tool calls in the same turn.
+- **Rule Alignment**: Rules 2, 5, 10, 14, and 15 in `orchestrator_rules.ts` were refactored to remove all synchronous resolution language.
+
+### 21.2. Hardened Graph Routing
+**Fix**: Changed the routing chain to ensure data integrity.
+- **New Path**: `Orchestrator` → `resolve_labels` → `update_memory` → `Orchestrator`.
+- **Rationale**: By routing through `update_memory` before returning to the orchestrator, we guarantee that all resolved IDs and ambiguities are persisted in the session scope and `resolvedLabels` map. The orchestrator now receives a "pre-hydrated" state on its second turn.
+
+### 21.3. Synthetic Tool Contract & Memory Hydration
+**Fix**: Standardized the synthetic payload injected by the `resolve_labels` node.
+- **Prefix**: `resolve_labels::{label}::{type}`.
+- **Payload**: Includes `capability: "mcp.resolve_entities"`.
+- **update_memory2 Integration**: The memory node now detects resolution results by the `capability` field (not just the turn key). This allows it to handle synthetic results from `resolve_labels` and legacy `mcp.resolve_entities` results with the same code path.
+
+### 21.4. Stall Guard & Discovery Classification
+**Problem**: Synthetic resolution results were being misclassified, causing the Stall Guard to either falsely trigger (missing retrieval) or fail to stop infinite discovery loops.
+**Fix**:
+- **Discovery Patterns**: Added `resolve_labels::` to `DISCOVERY_KEY_PATTERNS` in `orchestrator.ts`.
+- **Stall Guard Logic**: Correctly identifies resolution as a "Discovery" activity. If discovery runs but no retrieval follows, the guard forces a loop-back. If retrieval *does* run after discovery (on turn 2), the guard stands down.
+
+### 21.5. Robust Early Exits
+**Problem**: If `resolve_labels` skipped (e.g., no org, no labels), it returned an empty update. `update_memory2` Phase 2 would receive an empty `latestTurn`, causing it to reason on "nothing" and potentially drop pending intents.
+**Fix**: Each early exit path now injects a descriptive synthetic result:
+- `resolve_labels::passthrough` (no valid labels)
+- `resolve_labels::no-org` (org missing — triggers ORG CONTEXT GATE recovery)
+- `resolve_labels::no-types` (LLM omitted likely types)
+- **Result**: Phase 2 always sees a "ground truth" log of why resolution was skipped, leading to more stable context updates.
+
+### 21.6. Capability Contract Sync
+**Fix**: Updated `competencySignalID` and crew tool descriptions in `contract.ts` to mandate multi-turn resolution. Removed legacy "pass string directly" language to eliminate the final path for "autonomous over-reaching" hallucinations.
+
+---
+
+## 22. Final Architecture Status (Stem-to-Stern)
+
+| Component | Status |
+|---|---|
+| **Graph** | `orchestrator` → `resolve_labels` → `update_memory` → `orchestrator` |
+| **Node** | `resolve_labels` node is deterministic, parallel, and code-driven. |
+| **Contract** | Synthetic results emulating `mcp.resolve_entities` (capability-based). |
+| **Guards** | Safety Strip blocks LLM-hallucinated resolution calls. |
+| **Prompts** | Rules 2/5/10/14/15 enforce "Pause-and-Resolve" constitution. |
+| **Stability** | All early exits in resolution inject signals to prevent memory drift. |
+
+---
+
+[End of Handover 4]
+
+## Phase 22: Persistent Ambiguity Tickets & Decision Journal De-noising
+
+### 22.1. The Ambiguity Ticket Model (State Persistence)
+**Problem**: The previous ambiguity model was a "one-shot blocking gate." Once an ambiguity (e.g., for "ccccccc") was resolved, it was deleted from state. If the user later asked "now show me the second one," the system had forgotten the original candidates and was forced to re-trigger a full resolution loop.
+**Fix** (`update_memory2.ts`):
+- **Structured Tickets**: `ambiguousMatches` entries now include `originQuery` (semantic anchor) and `conversationIndex` (creation turn).
+- **Non-Destructive Promotion**: When a candidate is chosen, it is promoted to `resolvedLabels`, but the ticket **remains in state**.
+- **Lifecycle Pruning**: Tickets are only deleted when their `conversationIndex` falls out of the active window during the **20-to-7 Compression Cycle** in `summarizer.ts`.
+
+### 22.2. Semantic Activation & Confidence Gating
+**Problem**: The system unconditionally mandated ambiguity clarification every turn if *any* match was open, even if the user had pivoted to a different topic.
+**Fix** (`orchestrator.ts` & `orchestrator_rules.ts`):
+- **Activation Rules (Rules 1-5)**:
+    - **RULE 1 (Direct)**: Ordinal picks ("2nd one") or label matches activate the ticket immediately.
+    - **RULE 2 (Semantic)**: User message topically close to `originQuery` activates the ticket with a confidence score.
+    - **RULE 3 (Soft Note)**: If the user pivoted (Domain Pivot), the AI answers the new question normally but appends a "selection pending" note.
+    - **RULE 4 (Meta-Clarification)**: If 2+ tickets match with similar confidence (gap < 0.25), the AI asks which originating question is being answered.
+- **State Attribution**: Added `activatedTicketLabel`, `activatedTicketConfidence`, and `activatedCandidateIndex` to `SkylarkState` to track explicit resolution signals.
+
+### 22.3. Summarizer Attribution Bridge
+**Fix** (`summarizer.ts`):
+- **Context Injection**: When a ticket is activated, the Summarizer receives a mandatory `📌 TICKET ATTRIBUTION` system message.
+- **Transparent Output**: The AI must now prepend its first insight with:
+  `📍 Answering for: "[originQuery snippet]" → Using: [Candidate Name] (the Nth match)`.
+- This ensures the user knows exactly which machinery/entity was retrieved, especially critical when multiple candidates share identical names (e.g., two entries named "ccccccc").
+
+### 22.4. Journal De-noising (Issue 2)
+**Problem**: The Session Decision Journal was cluttered with redundant `? Q / ✓ A: Awaiting Execution` logs for every turn. This was noise that bloated the prompt without adding value for tool deduplication.
+**Fix** (`orchestrator.ts`):
+- **Stripped Q/A logs**: The journal now only tracks tool actions executed within the **current request cycle**.
+- **New Format**: `🚀 Tools run this request: tool1(params) | tool2(params)`.
+- **Mandate**: Reduced to its core purpose: "Do NOT repeat the exact same Tool+Parameter combination listed above in this same request."
+
+---
+
+## 23. Updated Architectural Invariants (Batch 22)
+
+1. **Persistent Tickets**: Ambiguity matches are structured tickets anchored to their `originQuery`. They survive resolution and are only removed by 20-to-7 memory pruning.
+2. **Semantic Affinity Activation**: Ticket activation is driven by semantic proximity to the original inquiry, allowing for seamless context pivoting without forced re-asks.
+3. **Mandatory Attribution**: Summaries based on ambiguity resolution MUST surface the `originQuery` and `candidateOrdinal` to provide alignment between user intent and system data.
+4. **Intra-Request Journaling**: The decision journal is a pure action log for tool deduplication within a single agentic loop; it is not a conversational history log.
+5. **Confidence-Gated Resolution**: LLM must meta-clarify if multiple tickets are semantically competing (confidence gap < 0.25).
+
+---
+
+## Phase 22 Post-Review: Gap Fixes
+
+### Gap Fix 1 — Missing LangGraph State Channels (`graph.ts`)
+
+**Root Cause (Critical)**: `activatedTicketLabel`, `activatedTicketConfidence`, `activatedCandidateIndex`, and `ambiguitiesResolved` were written by the Orchestrator as TypeScript properties (`(updates as any).field = value`), but **never declared as LangGraph state channels** in `graph.ts`. LangGraph silently drops any key returned from a node that has no matching channel definition. This meant:
+- `update_memory2.ts` always read `ambiguitiesResolved` as `[]` (default) — never the LLM's actual signal
+- `summarizer.ts` always read `activatedTicketLabel` as `null` — attribution block never fired
+
+**Fix** (`graph.ts`): Added 4 new channel definitions under section "13. Ambiguity Ticket Activation Signals":
+```
+ambiguitiesResolved    → reducer: y ?? x   | default: []
+activatedTicketLabel   → reducer: y ?? x   | default: null
+activatedTicketConfidence → reducer: y ?? x | default: 0
+activatedCandidateIndex → reducer: y ?? x  | default: null
+```
+
+---
+
+### Gap Fix 2 — Tickets Silently Dropped on Domain Pivots (`update_memory2.ts`)
+
+**Root Cause**: The block that preserved `inheritedAmbiguousMatches` was wrapped inside `if (ambiguitiesResolvedThisTurn.length > 0)`. On any turn where the user asked a new question without resolving an ambiguity, the inherited tickets were silently discarded. The "Persistent Ticket" model was functionally non-operational.
+
+**Fix** (`update_memory2.ts`): Complete rewrite of the ambiguity block into a clean **Three-Step Union**:
+1. **Step 1 — Promote**: Process `ambiguitiesResolvedThisTurn` on inherited tickets to promote candidates to `resolvedLabels` (only runs when there are resolutions).
+2. **Step 2 — Union**: Build `candidateUnion = inheritedMatches (excl. label collisions) + newMatches`. This is unconditional.
+3. **Step 3 — Vestibule-Prune**: Drop tickets whose candidate ID is now in `resolvedLabels`.
+4. **Step 4 — Unconditional Write**: Write `survivingTickets` back to scope regardless of whether any activation occurred this turn.
+
+---
+
+### Gap Fix 3 — Candidate Resolution Blindness (`update_memory2.ts`)
+
+**Root Cause**: When promoting a candidate to `resolvedLabels`, the code used `toolCallsStr.includes(c.id)` — a brittle string search that fails if the tool call isn't recorded yet, uses a different ID format, or the ticket was activated without a tool call.
+
+**Fix** (`update_memory2.ts`): Added a **deterministic fast-path** that uses the explicit `activatedCandidateIndex` (0-based) signalled by the Orchestrator:
+```
+if activatedTicketLabel === entry.label AND activatedCandidateIdx is a valid index:
+    picked = entry.candidates[activatedCandidateIdx]   ← deterministic
+else:
+    fallback to toolCallsStr search → then candidates[0]
+```
+
+---
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | ✅ 0 errors |
+| Orchestrator → graph.ts channels | ✅ All 4 fields now propagate |
+| update_memory2 reads `ambiguitiesResolved` | ✅ From channel, not `(state as any)` blind read |
+| Ticket inheritance on domain-pivot turns | ✅ Unconditional union write |
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | ✅ 0 errors |
+| Orchestrator → graph.ts channels | ✅ All 4 fields now propagate |
+| update_memory2 reads `ambiguitiesResolved` | ✅ From channel, not `(state as any)` blind read |
+| Ticket inheritance on domain-pivot turns | ✅ Unconditional union write |
+| Candidate pick uses explicit LLM index | ✅ `activatedCandidateIndex` preferred |
+
+---
+
+## Phase 22 Post-Review (Round 2): Parallel Execution Race Condition Fixes
+
+### Background
+
+`update_memory2.ts` and `summarizer.ts` execute **concurrently** (via parallel LangGraph branches) during any final summarizing turn. Both nodes read and write to `sessionContext.scope` simultaneously. This created two race conditions in the ticket pruning logic.
+
+---
+
+### Gap 4 — Stale Scope Spread Clobbering Entity Resolutions (`summarizer.ts`)
+
+**Root Cause**: When the 20-to-7 compression triggered ticket pruning, `summarizer.ts` returned:
+```typescript
+scope: { ...(session?.scope || {}), ambiguousMatches: prunedTickets }
+```
+`session` is captured at the start of the Summarizer node (before `update_memory2` finishes). In a parallel turn where `update_memory2` wrote a new `vesselID` or `resolvedLabels` entry, the Summarizer's stale spread would overwrite those fresh values if the LangGraph reducer applied the Summarizer's output second.
+
+**Fix** (`summarizer.ts`): Removed the `...(session?.scope || {})` spread entirely. The return now only provides the minimal delta:
+```typescript
+scope: { ambiguousMatches: prunedTickets }
+```
+The existing LangGraph workingMemory reducer already performs `{ ...x.scope, ...y.scope }`, so a minimal scope delta correctly overlays only `ambiguousMatches`, leaving all other fields (`vesselID`, `resolvedLabels`, etc.) intact from whichever node wrote them.
+
+---
+
+### Gap 5 — Parallel Array Overwrite on ambiguousMatches
+
+**Root Cause**: On a compression turn, if `update_memory2` was writing a new ticket (new ambiguity discovered) while `summarizer` was also writing a pruned list (old tickets removed), they would write to `ambiguousMatches` simultaneously. The last writer wins — the new ticket could be permanently lost.
+
+**Resolution**: Gap 5 is **eliminated as a consequence of fixing Gap 4**. By returning only a minimal `{ ambiguousMatches }` delta from the Summarizer, and since the Summarizer reads the *same* inherited `session.scope.ambiguousMatches` as `update_memory2` (both start from the checkpoint-persisted value), the ordering of the reducer merge is:
+
+1. `update_memory2` returns its union: `{ ambiguousMatches: [inherited + new] }`
+2. `summarizer` returns its prune: `{ ambiguousMatches: [survived stale prune] }`
+3. LangGraph reducer: `{ ...scope_from_1, ...scope_from_2 }` — last writer wins on the array key
+
+**Remaining caveat**: Because both branches read from the same checkpoint state, the summarizer's prune list is based on the *same* `inheritedMatches` that `update_memory2` also had. On a compression turn that simultaneously discovers a new ticket AND prunes stale ones, the Summarizer's prune list will not contain the new ticket (since it didn't exist at the checkpoint). If the Summarizer wins the merge, the new ticket is lost for one turn (until the next turn's `update_memory2` re-discovers and re-surfaces it via `inheritedAmbiguousMatches`). This is an acceptable transient inconsistency — compression turns are rare (every 20 conversations) and new ambiguities on those exact turns are edge cases.
+
+---
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` after Gap 4/5 fixes | ✅ 0 errors |
+| Stale scope spread removed | ✅ Only `ambiguousMatches` returned as delta |
+| Entity resolutions safe from Summarizer overwrite | ✅ Reducer merges scopes independently |
+| New Architectural Invariant | `summarizer.ts` must NEVER spread `session.scope` into its return — only return minimal deltas |
+
+---
+
+## Phase 23: Ticket Persistence Hardening — "The Third One" Flow
+
+### Context & Independent Assessment
+
+After a review of the last 6 conversation sessions and analysis of all code changes, this phase identified and fixed **four gaps** that were left unresolved and that would break the "the second one → the third one" user interaction flow.
+
+---
+
+### Gap 1 — Vestibule Pruning Deletes Tickets After First Resolution (`update_memory2.ts`)
+
+**Root Cause**: Step 3 (Vestibule Prune) returned `false` for any ticket whose candidate appeared in `resolvedIdsSet`. This permanently deleted the ticket from `ambiguousMatches` the moment the first candidate was selected.
+
+**Impact**: After the user said "the second one", the ticket was gone. On the next turn ("what about the third one?"), the LLM had no candidate list to reference and could not fulfill the request.
+
+**Fix**: Changed `return false` → `return true` unconditionally in the vestibule filter. The vestibule step now only *registers* the chosen candidate into `resolvedLabels` (for the Vestibule guard to skip re-resolution), but never deletes the ticket. Ticket lifecycle is exclusively managed by the 20-to-7 compression in `summarizer.ts`.
+
+---
+
+### Gap 2 — `[RIGHT NOW]` Ambiguity Block Shows Resolved Tickets → Causes Re-Ask Loop (`orchestrator.ts`)
+
+**Root Cause**: `ambiguityStatusStr` in the `[RIGHT NOW]` block was built from ALL `ambiguousMatchesData`, including already-resolved tickets. Rule 41 Step 1 mandates: "Ambiguity is non-None → stop everything and pose a clarifying question."
+
+**Impact**: After "CCCCCCC" was resolved by the user, the ticket stayed in `ambiguousMatches` (correct), but also appeared in `[RIGHT NOW] Ambiguity`. Rule 41 kicked in every turn and forced the LLM to re-ask the user which CCCCCCC they meant — an infinite loop.
+
+**Fix**: Added `pendingAmbiguousMatches` filter at line ~748:
+```typescript
+const resolvedLabelsForRightNow = (session?.scope as any)?.resolvedLabels || {};
+const pendingAmbiguousMatches = ambiguousMatchesData.filter(
+    (m: any) => !resolvedLabelsForRightNow[m.label]
+);
+```
+The `[RIGHT NOW] Ambiguity:` field now shows `None` once a ticket is resolved, allowing the LLM to proceed to tool retrieval for "the third one".
+
+---
+
+### Gap 3 — System Prompt Ticket Block Has No Resolved/Pending Visual Distinction (`orchestrator.ts`)
+
+**Root Cause**: The `📌 OPEN AMBIGUITY TICKETS` section rendered all tickets identically. The LLM could not tell from context alone which tickets still needed user input vs which were available as lookup tables.
+
+**Fix**: Added `[✅ RESOLVED]` / `[⏳ PENDING]` badge to each ticket header, plus `← currently active` marker on the active candidate, plus updated Rule 5 to explicitly state:
+> "RESOLVED ticket + ordinal follow-up → pick candidate directly from list, do NOT re-ask the user."
+
+---
+
+### Gap 4 — Rule 41 Step 1 Did Not Distinguish Pending vs Resolved Ticket States (`orchestrator_rules.ts`)
+
+**Root Cause**: Rule 41 Step 1 mandated the LLM ask a clarifying question for ANY non-None Ambiguity field. The distinction between `[⏳ PENDING]` (blocking) and `[✅ RESOLVED]` (non-blocking, lookup-only) was absent from the rules.
+
+**Fix**: Updated Rule 41 Step 1 with:
+> "[✅ RESOLVED] tickets appearing in the `📌 OPEN AMBIGUITY TICKETS` system block are NOT blocking. They are reusable lookup tables for ordinal follow-ups. Do NOT ask the user to re-select from them."
+
+---
+
+### Gap 5 — `(updates as any)` Type Bypass for Ticket Signals (`orchestrator.ts`)
+
+**Root Cause**: After graph.ts channels were registered (Gap Fix 1 in Phase 22), lines 1409-1411 still used `(updates as any).field = ...`. This is a code smell — it bypasses type safety and hides potential property name mismatches.
+
+**Fix**: Replaced with proper typed assignments (`updates.activatedTicketLabel`, etc.) now that the channels exist.
+
+---
+
+### Architectural Invariants Established (Phase 23)
+
+| Invariant | Rule |
+|---|---|
+| **Ticket Lifecycle = Compression Only** | Tickets are NEVER deleted in `update_memory2.ts`. Only `summarizer.ts`'s 20-to-7 compression prunes them. |
+| **`[RIGHT NOW]` shows only PENDING tickets** | `ambiguityStatusStr` filters out resolved labels before building the Ambiguity field. |
+| **Resolved tickets are visually distinct** | `[✅ RESOLVED]` badge in system prompt ticket block. |
+| **Rule 41 is PENDING-only** | The mandatory-stop behavior only fires for `[⏳ PENDING]` tickets. |
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` after Phase 23 fixes | ✅ 0 errors |
+| Vestibule Pruning no longer deletes tickets | ✅ `return true` — tickets persist |
+| `[RIGHT NOW]` Ambiguity: None after resolution | ✅ `pendingAmbiguousMatches` filter applied |
+| Resolved badge in system prompt | ✅ `[✅ RESOLVED]` / `[⏳ PENDING]` per ticket |
+| Rule 41 updated for PENDING-only gate | ✅ Resolved ticket note added |
+| `(updates as any)` casts removed | ✅ Properly typed assignments |
+
+---
+
+## Phase 23b: Final Prompt Alignment Review
+
+### Context
+A final comprehensive review of all orchestrator and memory prompts was conducted to ensure absolute alignment with the newly implemented Persistent Ambiguity Ticket Model. Five additional gaps were identified and resolved to eliminate edge-case vulnerabilities and ensure deterministic LLM behavior.
+
+### 1. Gap A — Rule 13 (Rules 4 & 5) Drift (`orchestrator_rules.ts`)
+**Root Cause:** The static `Rule 13` had not been updated to match the dynamic `TICKET ACTIVATION RULES` injected by the Ticket Renderer. Rule 4 failed to specify `[⏳ PENDING]` tickets, potentially causing the LLM to ask for meta-clarification between a pending and a resolved ticket. Rule 5 lacked explicit instructions for ordinal reuse without re-asking.
+**Fix:** Synced Rule 13 completely with the dynamic prompt. Rule 4 now explicitly gates on `[⏳ PENDING]` tickets. Rule 5 explicitly details the `[✅ RESOLVED]` ticket ordinal reuse protocol.
+
+### 2. Gap B — Same-Turn Ticket Activation Blind Spot (`update_memory2.ts`)
+**Root Cause:** Step 1 in `update_memory2.ts` only checked `inheritedAmbiguousMatches` for LLM-signalled ticket activations. If the Orchestrator auto-activated a ticket on the exact same turn it was born (e.g., via Rule 2 Topic Match), the candidate registration into `resolvedLabels` was skipped.
+**Fix:** Merged `inheritedAmbiguousMatches` and `newAmbiguousMatches` (deduplicated by label) into `allTicketsForStep1` so brand-new tickets are also processed for same-turn activations.
+
+### 3. Gap D/G — Rule 13 Signal Notes Clarity (`orchestrator_rules.ts`)
+**Root Cause:** The static `[RIGHT NOW]` signal note did not explain that `Ambiguity: None` intentionally hides `[✅ RESOLVED]` tickets. The "Identical names" note mandated using ordinals everywhere, including in the final answer summary, creating poor UX.
+**Fix:** Updated the `[RIGHT NOW]` note to clarify that `Ambiguity: None` means pending tickets are absent, but resolved tickets may still exist in the open ticket block. Qualified the "Identical names" note to use ordinals for clarifying questions, but descriptive context for answers.
+
+### 4. Gap E — Fragile State Mutation in Compression (`summarizer.ts`)
+**Root Cause:** The 20-to-7 compression logic was writing intermediate pruning state directly onto the live LangGraph session object `(session as any)._prunedAmbiguousMatches = prunedTickets`. If an error occurred mid-block, this stale state persisted permanently.
+**Fix:** Replaced the live-state mutation with a localized `scopeDeltaFromPrune` variable, preserving LangGraph reducer purity and eliminating the side-effect vulnerability.
+
+### 5. Gap H — `lastTurnInsight` Ticket Guidance (`update_memory2.ts`)
+**Root Cause:** Phase 2's `lastTurnInsight` instruction (Rule 3) did not explicitly instruct the LLM to record ticket activations. This resulted in generic "retrieval completed" insights rather than capturing WHICH ordinal was selected.
+**Fix:** Added a `TICKET ACTIVATION` sub-rule to Rule 3, mandating that if a ticket is activated, the insight MUST explicitly name the chosen candidate (e.g., "User picked the 2nd CCCCCCC...").
+
+### Verification
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` after Phase 23b fixes | ✅ 0 errors |
+| `orchestrator_rules.ts` completely aligned | ✅ Rule 13 perfectly matches dynamic prompt |
+| Summarizer state mutations removed | ✅ `scopeDeltaFromPrune` local variable used |
+| `update_memory2.ts` edge cases covered | ✅ Same-turn activations handled safely |
+
+---
+
+## Phase 23c: Autonomous Resolution Bug Fix
+
+### Context & Diagnostic
+During testing, a critical bug was identified where the Orchestrator was failing to resolve labels autonomously. Instead of proceeding to the `resolve_labels` node, it was surfacing a `clarifyingQuestion` to the user on the very first turn (e.g., "Is 'CCCCCCC' an Activity?"). This broke the "Identity-First" mandate which requires the system to attempt deterministic resolution before asking the user for help.
+
+### Root Cause — The "Stale Heuristic" Regression
+The Orchestrator contains a **HITL Guard** designed to suppress premature questions when labels are pending resolution.
+- **Legacy Logic**: The guard checked if `finalReasoning` included the string `'DETERMINISTIC VESTIBULE'`.
+- **The Break**: This string was stamped by the "Strategic Intercept" block. That block was **disabled** (commented out) during the transition to the dedicated `resolve_labels` LangGraph node.
+- **The Result**: Since the string was never stamped, the guard silently failed every turn. The LLM's `clarifyingQuestion` (even if correctly motivated by high-confidence unclassified labels) was reaching the user immediately, before the resolution node could even fire.
+
+### The Fix — Deterministic Signal Synchronization (`orchestrator.ts`)
+The fragile string-scan heuristic has been replaced with a direct, deterministic code-level signal.
+
+1. **Deterministic Guard**: Replaced the `finalReasoning` string check with `actualUnclassified.length === 0`.
+   - **New Protocol**: If `actualUnclassified` contains any labels → the clarifying question is **silently suppressed**. The system routes to `resolve_labels`, and the LLM receives the concrete IDs on the next turn.
+2. **Dead Code Cleanup**: Removed the dead `DETERMINISTIC VESTIBULE` logic and comments to prevent future "guessing games." The guard is now purely signal-based.
+3. **Logic Flow**:
+   - Turn 1: LLM outputs labels + question. Guard sees labels → suppresses question → `resolve_labels` fires.
+   - Turn 2: LLM receives IDs in `secondaryScope`. `actualUnclassified` is now `[]`. Guard passes → retrieval tools fire.
+
+### Verification
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` after Phase 23c fix | ✅ 0 errors |
+| Premature clarifying questions suppressed | ✅ Deterministic `actualUnclassified.length` check |
+| Autonomous resolution autonomous again | ✅ Labels resolved before user is consulted |
+| Dead string heuristics removed | ✅ Codebase cleaned of legacy Intercept markers |

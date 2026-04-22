@@ -234,6 +234,14 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
     const secondaryScopeForSummarizer = (sessionCtxForSummarizer as any)?.secondaryScope || [];
 
     const ledgerLines: string[] = [];
+    
+    // Organization Context — Critical for conversational queries about the active org
+    const orgId = (sessionCtxForSummarizer?.scope as any)?.organizationID;
+    const orgName = (sessionCtxForSummarizer?.scope as any)?.organizationShortName;
+    if (orgId && orgName) {
+        ledgerLines.push(`  - Organization: "${orgName}" → ID = "${orgId}"`);
+    }
+
     // Resolved Labels — current conversation (highest priority)
     Object.entries(resolvedLabelsForSummarizer).forEach(([label, info]: [string, any]) => {
         ledgerLines.push(`  - ${info.type}: "${label}" → ID = "${info.id}"`);
@@ -267,13 +275,61 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         console.log(`\x1b[36m${ts()} [LangGraph Summarizer] 🗂️ Entity Ledger Injected: ${ledgerLines.length} known entities.\x1b[0m`);
     }
 
-    const legacySummaryBuffer = (state.workingMemory as any)?.summaryBuffer;
-    if (legacySummaryBuffer) {
+    // 🟢 Inject summaryBuffer — the rolling Q&A history written by the Summarizer at the end of each turn.
+    // This is the generic context carrier: it contains org name, past findings, filters, entity discoveries, etc.
+    // ⚠️ BUG FIX: was reading from (state.workingMemory as any)?.summaryBuffer (wrong path — always undefined).
+    // The summaryBuffer lives at workingMemory.sessionContext.summaryBuffer, written by this same node on line 484.
+    const sessionSummaryBuffer: any[] = (state.workingMemory as any)?.sessionContext?.summaryBuffer || [];
+    if (sessionSummaryBuffer.length > 0) {
+        const bufferText = sessionSummaryBuffer
+            .map((entry: any) => `Q: ${entry.q || ''}\nA: ${entry.a || ''}`)
+            .join('\n---\n');
         promptMessages.push({
             role: "system",
-            content: `\n### OBSERVATIONAL STATUS CONTEXT (FROM PREVIOUS TURN)\nUse this to understand active filters/focus:\n${legacySummaryBuffer}\n\n⚠️ IMPORTANT: This memory summary is from the PREVIOUS loop. If the active filters or scope changed, the raw INPUT DATA array (provided below) always overrides this memory. Do NOT trust this memory for exact row counts or statuses if they contradict the raw INPUT DATA array you are receiving now!`
+            content: `### 📋 CONVERSATION HISTORY (SUMMARY BUFFER)\nUse this to understand prior context — including org, vessel, active scope, and past findings — from previous turns in this session.\n${bufferText}\n\n⚠️ The raw INPUT DATA from the current turn (below) always overrides this buffer for exact counts and statuses.`
         } as any);
     }
+
+    // 🟢 TICKET ATTRIBUTION: If the Orchestrator activated a specific ambiguity ticket this turn,
+    // inject an attribution system message so the Summarizer prepends a context line to its insights.
+    // This makes the response transparent — user sees exactly which originating question and which
+    // candidate (by ordinal) was used, preventing confusion when candidate names are identical.
+    const activatedTicketLabel = (state as any).activatedTicketLabel;
+    const activatedTicketConfidence = (state as any).activatedTicketConfidence ?? 0;
+    const activatedCandidateIndex = (state as any).activatedCandidateIndex;
+    const ambiguousMatchesForAttrib = (sessionCtxForSummarizer?.scope?.ambiguousMatches || []) as any[];
+
+    if (activatedTicketLabel && activatedTicketConfidence > 0) {
+        const ticket = ambiguousMatchesForAttrib.find((t: any) => t.label === activatedTicketLabel);
+        const candidate = ticket && typeof activatedCandidateIndex === 'number'
+            ? ticket.candidates?.[activatedCandidateIndex]
+            : null;
+        const ordinal = ['1st','2nd','3rd','4th','5th'][activatedCandidateIndex ?? -1] || `${(activatedCandidateIndex ?? 0)+1}th`;
+        const candidateDesc = candidate
+            ? `${candidate.label || candidate.name || activatedTicketLabel} (the ${ordinal} match)`
+            : activatedTicketLabel;
+        const originQuery = ticket?.originQuery ? `"${ticket.originQuery.substring(0, 80)}${ticket.originQuery.length > 80 ? '...' : ''}"` : null;
+        const alternativeTickets = ambiguousMatchesForAttrib.filter((t: any) => t.label !== activatedTicketLabel);
+
+        let attributionBlock = `### 📌 TICKET ATTRIBUTION (MANDATORY — prepend to your first INSIGHT block)\n`;
+        attributionBlock += `The Orchestrator activated an ambiguity ticket this turn. You MUST include a context line at the START of your first INSIGHT:\n`;
+        attributionBlock += `  📍 Answering for: ${originQuery || `label "${activatedTicketLabel}"`}\n`;
+        attributionBlock += `  → Using: ${candidateDesc}\n`;
+        if (activatedTicketConfidence < 0.75) {
+            attributionBlock += `  ⚠️ Confidence was moderate (${(activatedTicketConfidence * 100).toFixed(0)}%) — also mention that if the user meant a different ticket, they should clarify.\n`;
+        }
+        if (alternativeTickets.length > 0) {
+            const altSummary = alternativeTickets.map((t: any) => `"${(t.originQuery || t.label).substring(0, 60)}"`).join(', ');
+            attributionBlock += `  Note: There are ${alternativeTickets.length} other open ticket(s): ${altSummary}. If the user meant one of those, they can say so.`;
+        }
+
+        promptMessages.push({
+            role: "system",
+            content: attributionBlock
+        } as any);
+        console.log(`\x1b[32m${ts()} [LangGraph Summarizer] 📌 Ticket attribution injected: label="${activatedTicketLabel}" candidate=${candidateDesc} confidence=${activatedTicketConfidence}\x1b[0m`);
+    }
+
 
     if ((noToolsCalled || emptyDataset) && state.messages && state.messages.length > 0) {
         // Purely conversational mode (no data at all) — only push the last user message
@@ -405,6 +461,8 @@ ${jsonlData}`
         // Update summaryBuffer (Latest Verbatim Q&A) — only when we have real data
         let updatedSummaryBuffer = session.summaryBuffer || [];
         let updatedLongTerm = session.longTermBuffer || "";
+        // 🟢 GAP-E FIX: Local variable for ticket pruning delta — avoids mutating live state (session._prunedAmbiguousMatches).
+        let scopeDeltaFromPrune: any[] | undefined = undefined;
         const query = state.workingMemory?.queryContext || { rawQuery: '' };
 
         if (hasRealData) {
@@ -435,7 +493,7 @@ ${jsonlData}`
             // Add any detected HITL pairs, then the final answer.
             // 🟢 Use state.reformulatedQuery (LLM's clean, distilled intent) as the q: field
             // instead of rawQuery. rawQuery contains the raw multi-turn user input which can be
-            // noisy and misleading in future conversation context, e.g. "fleetships, show for XXX1"
+            // noisy and misleading in future conversation context, e.g. "myorg, show for XXX1"
             // when the reformulatedQuery cleanly captures "Show org-wide cancelled jobs for 2025".
             const summaryQ = state.reformulatedQuery || query.rawQuery || 'Unknown Query';
             console.log(
@@ -467,6 +525,25 @@ ${jsonlData}`
                     updatedLongTerm = compressionRes.content;
                     updatedSummaryBuffer = newest7;
                     console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🗄️ Success! ${oldest13.length} turns compressed into LongTerm.\x1b[0m`);
+
+                    // 🟢 TICKET LIFECYCLE PRUNING: Now that the oldest 13 conversations are in longTermBuffer,
+                    // prune any ambiguity tickets whose conversationIndex falls below the same threshold.
+                    // These tickets' originating conversations are now prose — the structured ticket is no longer needed.
+                    const ambiguousMatchesRaw: any[] = (session?.scope?.ambiguousMatches || []) as any[];
+                    if (ambiguousMatchesRaw.length > 0) {
+                        const pruneThresholdForTickets = newest7[0]?.conversationIndex ?? (convIndex - 6);
+                        const prunedTickets = ambiguousMatchesRaw.filter(
+                            (entry: any) => (entry.conversationIndex ?? 0) >= pruneThresholdForTickets
+                        );
+                        const pruned = ambiguousMatchesRaw.length - prunedTickets.length;
+                        if (pruned > 0) {
+                            console.log(`\x1b[35m${ts()} [LangGraph Summarizer] 🧹 TICKET PRUNE: ${pruned} stale ambiguity ticket(s) removed (threshold convIndex >= ${pruneThresholdForTickets}). ${prunedTickets.length} ticket(s) kept.\x1b[0m`);
+                            // 🟢 GAP-E FIX: Use a local variable instead of mutating session (live LangGraph state).
+                            // Previously: (session as any)._prunedAmbiguousMatches = prunedTickets
+                            // That was fragile — a throw after the mutation left the stale property on state permanently.
+                            scopeDeltaFromPrune = prunedTickets;
+                        }
+                    }
                 } catch (err) {
                     console.warn(`\x1b[31m[LangGraph Summarizer] Compression Failed:\x1b[0m`, err);
                 }
@@ -484,6 +561,26 @@ ${jsonlData}`
                     summaryBuffer: updatedSummaryBuffer,
                     longTermBuffer: updatedLongTerm,
                     humanConversationCount: convIndex,
+                // 🟢 TICKET PRUNING: If the 20-to-7 compression engine pruned stale tickets,
+                    // write back ONLY the ambiguousMatches key as a minimal scope delta.
+                    //
+                    // ⚠️ GAP-4 FIX (Stale Scope Spread): Do NOT spread session.scope here.
+                    // session is read at node start (stale). update_memory2 runs in PARALLEL and may have
+                    // written new vesselID / resolvedLabels into scope. If we spread the whole stale scope,
+                    // the LangGraph reducer applies { ...stale_scope, ...new_scope } and the stale spread
+                    // wins, erasing those fresh entity resolutions.
+                    //
+                    // The LangGraph workingMemory reducer already does:
+                    //   scope: { ...x.sessionContext.scope, ...y.sessionContext.scope }
+                    // so returning ONLY { ambiguousMatches: prunedTickets } is a safe minimal delta.
+                    // It overlays only the ambiguousMatches key, leaving all other scope fields intact.
+                    scope: scopeDeltaFromPrune !== undefined
+                        ? {
+                            ambiguousMatches: scopeDeltaFromPrune.length > 0
+                                ? scopeDeltaFromPrune
+                                : undefined
+                          }
+                        : undefined,
                 },
                 // ❌ INTENTIONALLY OMITTED: queryContext is NOT written here.
                 // update_memory2.ts handles all queryContext updates (rawQuery, pendingIntents,

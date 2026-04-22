@@ -77,7 +77,10 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
         // Map row-by-row into AI bubble coordinates flawlessly trigger flawless
         const loadedMessages: Message[] = rows.flatMap((m: any, idx: number) => {
           const mList: Message[] = [];
-          if (m.userQuery) {
+          // '(org setup)' is a sentinel written by the backend for the system-initiated
+          // org-ask prompt. Its content lives in assistantResponse, not in userQuery,
+          // so we skip the user-bubble for that row.
+          if (m.userQuery && m.userQuery !== '(org setup)') {
             mList.push({
               id: `user-${m._id || idx}`,
               type: 'user',

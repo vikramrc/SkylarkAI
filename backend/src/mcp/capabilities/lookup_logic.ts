@@ -406,6 +406,8 @@ export async function resolveEntities(args: {
             : resolvedVesselID;
     }
 
+    console.log(`[Discovery Engine] 🔍 Scope for "${collectionName}": hasOrg=${metadata.hasOrg}(${metadata.orgType}) | hasVessel=${metadata.hasVessel}(${metadata.vesselType}) | resolvedOrgID=${resolvedOrgID || 'none'} | resolvedVesselID=${resolvedVesselID || 'none'} | queryFilter=${JSON.stringify(queryFilter)}`);
+
     // 3. Build search clause from registered fields
     const config = RESOLVABLE_ENTITIES[entityType];
     const searchFields = config?.searchFields || ["name", "description", "code", "title"];
@@ -532,6 +534,7 @@ export async function resolveEntities(args: {
       }
     } else {
       // Standard find() path — org/vessel scoping already in queryFilter from metadata
+      console.log(`[Discovery Engine] 🔍 Standard find() for "${collectionName}": filter=${JSON.stringify(queryFilter)} | searchFields=${JSON.stringify(searchFields)} | searchTerm=${searchTerm}`);
       docs = await db.collection(collectionName).find({
         ...queryFilter,
         ...searchClause,

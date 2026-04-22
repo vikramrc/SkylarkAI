@@ -73,7 +73,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "majorJobsOnly":
       return `${requiredLabel} flag. Set to true to filter for high-impact maintenance events like Overhauls, Replacements, or Renewals.`;
     case "activityDescription":
-      return `${requiredLabel} partial text match filter on the Activity record's description field (e.g. 'Lube Oil Change', 'Air Compressor Overhaul'). ⚠️ NEVER pass a vessel name, vessel code (e.g. 'XXX1'), or machinery name here — those must be resolved to ObjectIds via mcp.resolve_entities and passed as vesselID or machineryID. This parameter searches job/task names only, not entity identifiers.`;
+      return `${requiredLabel} partial text match filter on the Activity record's description field (e.g. 'Lube Oil Change', 'Air Compressor Overhaul'). ⚠️ NEVER pass a vessel name, vessel code (e.g. 'XXX1'), or machinery name here — those are entity labels and must be placed in 'unclassifiedLabels' for automatic resolution before being passed as vesselID or machineryID. This parameter searches job/task names only, not entity identifiers.`;
     case "attachmentsOnly":
       return `${requiredLabel} evidence flag. Set to true to return only work history records that have uploaded files or manual attachments.`;
     case "partsUsedOnly":
@@ -100,7 +100,7 @@ export function getParameterDescription(param: string, requiredFields: string[])
     case "activityWorkHistoryID":
       return `${requiredLabel} canonical ObjectId of the ActivityWorkHistory (AWH) document. This is the 'awhID' field exposed on every item returned by maintenance.query_status — it is DISTINCT from activityID. MANDATORY RULE: when the user asks for failure codes or execution details for a SPECIFIC job that was previously returned by query_status, you MUST pass that job's awhID value here. Using activityID alone will return a DIFFERENT historical AWH document and will NOT surface the specific job's failure data. Example: if query_status returned awhID='69e1b95a...', pass activityWorkHistoryID='69e1b95a...' — do NOT pass the activityID here.`;
     case "competencySignalID":
-      return `${requiredLabel} canonical 24-character MongoDB ObjectId for a CrewCompetencySignal document. Obtain this by calling mcp.resolve_entities with entityType='CrewCompetencySignal' and searchTerm=<signal name>. Do NOT pass a signal label string directly here. This follows the same resolution pattern as vesselID: resolve name → pass ObjectId.`;
+      return `${requiredLabel} canonical 24-character MongoDB ObjectId for a CrewCompetencySignal document. To obtain this: add the signal name to 'unclassifiedLabels' with likelyEntityTypes=[{type:'CrewCompetencySignal', confidence:0.95}], emit tools:[] and feedBackVerdict:FEED_BACK_TO_ME — the system resolves it automatically. On your next turn, the ObjectId will appear in your RESOLVED ENTITIES block. Do NOT pass a signal label string directly here. This follows the same resolution pattern as vesselID: populate unclassifiedLabels (turn N) → ObjectId appears in RESOLVED ENTITIES (turn N+1) → pass ObjectId.`;
     case "fulfillmentFilter":
       return `${requiredLabel} filter for Purchase Order fulfillment status. Options: 'over50' (received > 50%), 'under50' (received < 50%), 'completed' (100% received), 'none' (0% received).`;
     case "partID":
@@ -206,6 +206,10 @@ const baseCapabilitiesContract = [
     typicalQuestions: ["Is the MCP up?", "Is my auth token working?"],
     responseShape: ["ok", "service", "status"]
   },
+  /* DISABLED: mcp.resolve_entities removed from LLM tool list.
+     Entity resolution is now handled deterministically by the resolve_labels LangGraph node.
+     The underlying resolveEntities() function and /api/mcp/resolve HTTP endpoint remain
+     fully functional — they are called directly by resolve_labels and the org gate.
   {
     name: "mcp.resolve_entities",
     method: "POST",
@@ -224,6 +228,7 @@ const baseCapabilitiesContract = [
     ],
     responseShape: ["capability", "appliedFilters", "items"]
   },
+  */
   {
     name: "mcp.capabilities",
     method: "GET",
@@ -323,11 +328,11 @@ const baseCapabilitiesContract = [
     path: "/api/mcp/maintenance/schedules",
     requiredQuery: ["organizationID", "vesselID"],
     optionalQuery: ["active", "limit"],
-    purpose: "Lists maintenance schedules configured for a vessel.",
-    whenToUse: "Use when the user first needs to identify which maintenance schedules exist for a vessel before drilling into machinery or activities.",
-    typicalQuestions: ["What schedules exist for vessel X?", "Show me the active maintenance plan for this vessel."],
+    purpose: "MANDATORY FIRST STEP — Lists the actual MaintenanceSchedule records configured for a vessel. Returns each schedule\'s name and its scheduleID (a unique ObjectId distinct from any machineryID or activityID). You MUST call this tool first before calling query_schedule_machinery or query_schedule_activities, because those tools require a real scheduleID that only this tool can provide.",
+    whenToUse: "Call this as the first step any time the user asks about schedules, machinery in a schedule, or activities within a schedule. If you only have a machineryID from entity resolution, that is NOT a scheduleID — call this tool to discover what schedules exist for the vessel.",
+    typicalQuestions: ["What schedules exist for vessel X?", "Show me the active maintenance plan for this vessel.", "What maintenance schedule covers the Main Engine?"],
     responseShape: ["capability", "organizationID", "appliedFilters", "summary", "vessel", "items"],
-    interpretationGuidance: "Use this as the first drill-down step. The returned scheduleID can be passed into the schedule-machinery and schedule-activities capabilities."
+    interpretationGuidance: "items[n]._id (or items[n].scheduleID) is the canonical scheduleID to pass into query_schedule_machinery and query_schedule_activities. This ID is entirely different from a machineryID — do not confuse them. Always extract and store the scheduleID before making subsequent calls."
   },
   {
     name: "maintenance.query_schedule_machinery",
@@ -335,23 +340,22 @@ const baseCapabilitiesContract = [
     path: "/api/mcp/maintenance/schedule-machinery",
     requiredQuery: ["organizationID", "scheduleID"],
     optionalQuery: ["limit"],
-    purpose: "Lists machinery covered by a selected maintenance schedule.",
-    whenToUse: "Use after selecting a schedule to understand which machinery items are included and how much activity/component coverage each has.",
-    typicalQuestions: ["What machinery is included in this schedule?", "Show me the equipment covered by schedule ABC123."],
+    purpose: "Lists the machinery items covered by a specific MaintenanceSchedule. ⚠️ The scheduleID parameter MUST be a schedule\'s ObjectId obtained from maintenance.query_schedules — NOT a machineryID, NOT an entity resolution candidate. Passing a machineryID here will return 0 results.",
+    whenToUse: "Use AFTER obtaining a real scheduleID from maintenance.query_schedules. Do not call this tool unless you have a confirmed scheduleID from that call.",
+    typicalQuestions: ["What machinery is included in this schedule?", "Show me the equipment covered by this maintenance plan."],
     responseShape: ["capability", "organizationID", "appliedFilters", "schedule", "vessel", "summary", "items"],
-    interpretationGuidance: "Each item includes component and activity counts so the model can decide which machinery branch to drill into next."
+    interpretationGuidance: "Each item represents a machinery entry within the schedule. Items include a machineryID that can be paired with the scheduleID to call query_schedule_activities. ⚠️ If this returns 0 items, verify you passed a scheduleID from query_schedules — a machineryID passed here will always return empty."
   },
   {
     name: "maintenance.query_schedule_activities",
     method: "GET",
     path: "/api/mcp/maintenance/schedule-activities",
     requiredQuery: ["organizationID", "scheduleID", "machineryID"],
-    optionalQuery: ["limit"],
-    purpose: "Lists maintenance activities for a selected machinery item within a selected schedule.",
-    whenToUse: "Use after selecting both a schedule and a machinery item to inspect the concrete tasks, intervals, and execution requirements.",
-    typicalQuestions: ["What activities exist for this machinery in the selected schedule?", "Show me the jobs under purifier maintenance schedule ABC123."],
+    purpose: "Lists the maintenance activities (tasks) for a specific machinery item within a specific schedule. ⚠️ Both scheduleID AND machineryID are required and MUST be real ObjectIds from their respective entity types: scheduleID from maintenance.query_schedules, machineryID from entity resolution or maintenance.query_schedule_machinery results. Passing a machineryID as scheduleID (or vice versa) will always return 0 results.",
+    whenToUse: "Use AFTER you have both a confirmed scheduleID (from query_schedules) AND a confirmed machineryID (from entity resolution or query_schedule_machinery). This is the deepest drill-down in the schedule hierarchy.",
+    typicalQuestions: ["What activities exist for this machinery in the selected schedule?", "Show me the jobs under the Main Engine maintenance plan."],
     responseShape: ["capability", "organizationID", "appliedFilters", "schedule", "vessel", "machinery", "components", "summary", "items"],
-    interpretationGuidance: "This is the deepest deterministic drill-down in the schedule hierarchy and is the right capability for enumerating jobs rather than overall schedule status."
+    interpretationGuidance: "This is the definitive source for enumerating the concrete tasks under a machinery-schedule pairing. If this returns 0 items, verify both IDs are correct entity types: scheduleID must be a MaintenanceSchedule ObjectId, machineryID must be a Machinery ObjectId."
   },
   {
     name: "crew.query_readiness",
@@ -640,7 +644,7 @@ const baseCapabilitiesContract = [
     requiredQuery: ["organizationID"],
     optionalQuery: ["signalLabel", "signalID", "limit"],
     purpose: "Returns full competency signal definitions — label, sections (which of certificates/trainingRecords/medicalRecords apply), and the STCW requirement IDs the signal counts toward. Supports targeted lookup by signalLabel or signalID.",
-    whenToUse: "Use when the user wants to browse all competency signals in the org, understand signal definitions, see which record sections a signal covers, or check STCW qualification mappings. This is a general-purpose config/discovery tool for competency metadata — NOT a prerequisite before crew.query_competency_diagnostics. To resolve a named signal for diagnostics, use mcp.resolve_entities (entityType='CrewCompetencySignal') instead, which returns the _id ObjectId needed by competencySignalID.",
+    whenToUse: "Use when the user wants to browse all competency signals in the org, understand signal definitions, see which record sections a signal covers, or check STCW qualification mappings. This is a general-purpose config/discovery tool for competency metadata — NOT a prerequisite before crew.query_competency_diagnostics. To resolve a named signal for diagnostics, add the signal name to 'unclassifiedLabels' with type='CrewCompetencySignal', emit tools:[] and feedBackVerdict:FEED_BACK_TO_ME — the system automatically resolves it and on your next turn the _id ObjectId needed by competencySignalID will appear in your RESOLVED ENTITIES block.",
     typicalQuestions: ["What does Tanker Management training cover?", "What qualifications does this competency signal map to?", "What certificates are required for this training?", "What is required for a 3rd Engineer?"],
     responseShape: ["capability", "organizationID", "signals", "items"],
     interpretationGuidance: "Each item has: label (human name), signalID (the tag string stored in CrewMember records), sections (['certificates','trainingRecords','medicalRecords'] — which record types this tracks), and mapsToRequirementIDs (STCW qualifications, e.g. 'tankerAdvanced'). After resolving the signalID here, pass it to crew.query_competency_diagnostics to get per-crew data."
@@ -652,8 +656,8 @@ const baseCapabilitiesContract = [
     requiredQuery: ["organizationID"],
     optionalQuery: ["vesselID", "crewMemberID", "competencySignalID", "mode", "limit"],
     purpose: "Returns per-crew-member completion records and gap analysis for a specific competency signal. Shows who has completed the training/certificate/medical evidence for that signal, and who is missing required evidence sections.",
-    whenToUse: "Use when the user asks for training completions or competency gaps for a NAMED signal (e.g. 'Tanker Management') across a vessel or for a specific crew member. You MUST first resolve the signal name via mcp.resolve_entities (entityType='CrewCompetencySignal') to get its _id ObjectId, then pass that as competencySignalID. This follows the same resolution pattern as vessel names → vesselID. This is the primary tool for: 'Show me all completions for X signal', 'Who is missing X competency?', 'Match crew skills to X and show gaps'.",
-    whenNotToUse: "Do NOT use for general readiness/expiry checks (use crew.query_readiness). Do NOT use without first resolving the signal to a competencySignalID via mcp.resolve_entities.",
+    whenToUse: "Use when the user asks for training completions or competency gaps for a NAMED signal (e.g. 'Tanker Management') across a vessel or for a specific crew member. You MUST first resolve the signal name by adding it to 'unclassifiedLabels' with likelyEntityTypes=[{type:'CrewCompetencySignal', confidence:0.95}], emit tools:[] and feedBackVerdict:FEED_BACK_TO_ME. On your next turn, the resolved ObjectId will appear in your RESOLVED ENTITIES block — pass it as competencySignalID then. This follows the same resolution pattern as vessel names → vesselID. This is the primary tool for: 'Show me all completions for X signal', 'Who is missing X competency?', 'Match crew skills to X and show gaps'.",
+    whenNotToUse: "Do NOT use for general readiness/expiry checks (use crew.query_readiness). Do NOT use without first resolving the signal name via 'unclassifiedLabels' (type='CrewCompetencySignal') — resolution happens on a prior turn and the ObjectId appears in RESOLVED ENTITIES before you call this tool.",
     typicalQuestions: [
       "Show me all crew who completed Tanker Management training on XXX1",
       "Who is missing the Tanker Management competency on this vessel?",

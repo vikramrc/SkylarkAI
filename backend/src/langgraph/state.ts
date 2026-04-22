@@ -57,7 +57,7 @@ export interface SkylarkState {
   reasoning?: string;
   // 🟢 LLM-distilled intent of the current conversation, set by Orchestrator on each turn.
   // Used by Summarizer to write a clean, de-noised 'q:' field into the summaryBuffer
-  // instead of the raw fragmented rawQuery (e.g., "fleetships, show for XXX1 only").
+  // instead of the raw fragmented rawQuery (e.g., "myorg, show for XXX1 only").
   reformulatedQuery?: string;
 
   // 5. Safety Loop Safeguard
@@ -91,4 +91,35 @@ export interface SkylarkState {
   // entity-scope expansion; this flag controls attribute-filter clearing.
   // Defaults to false (same domain, filters inherited).
   isDomainPivot?: boolean;
+
+  // 11. Ambiguity Resolution Signal
+  // Emitted by Orchestrator each turn. The LLM lists the label strings (exactly as
+  // they appear in scope.ambiguousMatches) that it definitively resolved this turn —
+  // meaning: the user's answer was understood, a specific candidate was chosen, and
+  // a retrieval tool is being called with that candidate's ID THIS TURN.
+  // Consumed by UpdateMemory2 to promote the chosen candidate to resolvedLabels.
+  // NOTE: The ticket entry is NO LONGER deleted from ambiguousMatches on resolution —
+  // it stays as a reusable lookup table until pruned by the 20-to-7 compression.
+  // Empty array (default) = no ticket activated this turn.
+  ambiguitiesResolved?: string[];
+
+  // 11b. Activated Ticket Signal (companion to ambiguitiesResolved)
+  // Emitted by Orchestrator when it activates a specific ambiguity ticket to answer
+  // the user's current message. Used by Summarizer to render attribution in insights.
+  activatedTicketLabel?: string | null;       // which ticket's label was activated
+  activatedTicketConfidence?: number;         // 0–1 confidence in the ticket match
+  activatedCandidateIndex?: number | null;    // candidates[i] that was chosen (for ordinal display)
+
+  // 12. Deterministic Label Resolution
+  // Emitted by Orchestrator each turn. Contains entity labels (codes/names) that the LLM
+  // could not resolve to a 24-char ID from its ledger, along with guessed entity types and
+  // confidence scores. The resolve_labels LangGraph node reads this, resolves all labels in
+  // parallel using resolveEntities(), injects found IDs into scope and toolResults, then
+  // always clears this field to [] — regardless of whether resolution succeeded or failed.
+  // The LLM then sees the resolution results and can either proceed (if IDs found) or
+  // ask the user for clarification in natural language (if not found).
+  unclassifiedLabels?: {
+    label: string;
+    likelyEntityTypes: { type: string; confidence: number }[];
+  }[];
 }

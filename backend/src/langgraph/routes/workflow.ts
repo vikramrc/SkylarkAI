@@ -4,6 +4,14 @@ import { skylarkGraph } from '../graph.js';
 import { ConversationModel } from '../models/Conversation.js';
 import { HumanMessage } from "@langchain/core/messages";
 import { registerStream, unregisterStream, abortStream } from '../utils/stream_manager.js';
+import { resolveEntities } from '../../mcp/capabilities/lookup_logic.js';
+
+/**
+ * 🔐 ORG GATE PENDING STORE
+ * Maps runId → original user query, held while we wait for the user to supply a valid org name.
+ * Pure in-memory — no DB or LangGraph state needed. Cleared once org is resolved.
+ */
+const pendingOrgResolution = new Map<string, string>();
 
 /**
  * createLangGraphWorkflowRouter routes standard SSE triggers to the side-by-side LangGraph framework.
@@ -27,12 +35,180 @@ export function createLangGraphWorkflowRouter() {
 
             console.log(`[LangGraph Route] Executing 'skylarkGraph' with runId: ${currentRunId}`);
 
-            // 1. Set SSE Headers to support accurate triggers back to Client
+            // ─────────────────────────────────────────────────────────────────────
+            // 🔐 ROUTE-LEVEL ORG GATE (deterministic — no AI involved)
+            //
+            // State machine per runId:
+            //   ① No pending entry, no org in checkpoint → save original query, ask for org.
+            //   ② Pending entry exists → user is answering the org question.
+            //       → Resolve candidate → if wrong, re-ask (keep pending entry).
+            //       → If correct → write org to checkpoint, delete pending entry,
+            //                        fall through to LangGraph with original query.
+            //   ③ Org in checkpoint → pass through immediately.
+            // ─────────────────────────────────────────────────────────────────────
+
+            // Helper: SSE org-ask response (LangGraph never runs for this request)
+            const sendOrgSSE = (msg: string) => {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+                res.setHeader('X-Accel-Buffering', 'no');
+                res.flushHeaders();
+                res.write(`event: text_delta\ndata: ${JSON.stringify({ delta: msg })}\n\n`);
+                res.write(`event: result\ndata: ${JSON.stringify({ runId: currentRunId, response: msg, status: 'success' })}\n\n`);
+                res.end();
+            };
+
+            // ① Check if org is already committed to the checkpoint
+            let orgAlreadyKnown = false;
+            try {
+                const threadState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
+                const scope = threadState?.values?.workingMemory?.sessionContext?.scope;
+                if (scope?.organizationID && String(scope.organizationID).trim()) {
+                    orgAlreadyKnown = true;
+                    console.log(`[Route OrgGate] ✅ Org already in checkpoint: ${scope.organizationID}`);
+                    // If there was a pending entry, clean it up (org was resolved in a previous turn)
+                    pendingOrgResolution.delete(currentRunId);
+                }
+            } catch { /* new thread — no checkpoint yet */ }
+
+            // The actual query LangGraph will receive — either the original pending query or the current one
+            let effectiveQuery = userQuery;
+
+            if (!orgAlreadyKnown) {
+                const isPendingOrg = pendingOrgResolution.has(currentRunId);
+                // Restart recovery: if Map is empty but checkpoint has a _pendingOrgQuery, restore it
+                if (!isPendingOrg) {
+                    try {
+                        const tsRestore = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
+                        const persisted = tsRestore?.values?.workingMemory?.sessionContext?._pendingOrgQuery;
+                        if (persisted && typeof persisted === 'string' && persisted.trim()) {
+                            pendingOrgResolution.set(currentRunId, persisted);
+                            console.log(`[Route OrgGate] 🔄 Restored pending query from checkpoint (server restarted): "${persisted}"`);
+                        }
+                    } catch { /* no checkpoint yet */ }
+                }
+                const isPendingOrgFinal = pendingOrgResolution.has(currentRunId);
+                console.log(`[Route OrgGate] 🔍 isPendingOrg=${isPendingOrgFinal}, userQuery="${userQuery}"`);
+
+                if (isPendingOrgFinal) {
+                    // ② User is answering the org question — EXACT MATCH ONLY against orgShortName / organizationName
+                    const candidate = userQuery.trim();
+                    const looksLikeShortName =
+                        candidate.length > 0 &&
+                        candidate.length <= 40 &&
+                        !candidate.includes('?') &&
+                        candidate.split(/\s+/).length <= 3;
+
+                    if (!looksLikeShortName) {
+                        console.log(`[Route OrgGate] ❌ Rejected sentence input: "${candidate}"`);
+                        sendOrgSSE(`Please enter **only** the organization short name — a single code-word. Do not enter a full sentence.`);
+                        return;
+                    }
+
+                    console.log(`[Route OrgGate] 🔍 Exact-match resolving candidate: "${candidate}"`);
+
+                    // 🔐 EXACT MATCH: query MongoDB directly with anchored case-insensitive regex.
+                    // We intentionally do NOT use resolveEntities() here because that does substring
+                    // matching — "flee" would match "fleetships". For org identity, we require the user
+                    // to type the exact short name or display name.
+                    let resolvedOrgID: string | null = null;
+                    let resolvedOrgName: string | null = null;
+                    try {
+                        const { client: lgClient } = await import('../graph.js');
+                        // Organisation lives in the product DB (ProductsDB), NOT in the graph
+                        // checkpoint DB. Derive the name from the same env var that lookup_logic.ts uses.
+                        const mongoUri = process.env.PHOENIX_MONGO_URI || process.env.SKYLARK_MONGODB_URI || 'mongodb://localhost:27017/ProductsDB';
+                        const productDbName = mongoUri.split('/').pop()?.split('?')[0] || 'ProductsDB';
+                        const orgDb = lgClient.db(productDbName);
+                        const exactRegex = new RegExp(`^${candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+                        const orgDoc = await orgDb.collection('Organization').findOne({
+                            $or: [
+                                { orgShortName: exactRegex },
+                                { organizationName: exactRegex },
+                            ]
+                        }, { projection: { _id: 1, organizationName: 1, orgShortName: 1 } });
+
+                        if (orgDoc) {
+                            resolvedOrgID = String(orgDoc._id);
+                            resolvedOrgName = orgDoc.organizationName || orgDoc.orgShortName || candidate;
+                        }
+                    } catch (dbErr: any) {
+                        console.error(`[Route OrgGate] 🚨 Direct DB org lookup failed:`, dbErr.message);
+                    }
+
+                    console.log(`[Route OrgGate] 📊 Exact-match lookup for "${candidate}": ${resolvedOrgID ? `found (${resolvedOrgName})` : 'not found'}`);
+
+                    if (resolvedOrgID) {
+                        // ✅ Exact match resolved — write org to checkpoint, fall through to LangGraph
+                        effectiveQuery = pendingOrgResolution.get(currentRunId)!;
+                        pendingOrgResolution.delete(currentRunId);
+                        console.log(`[Route OrgGate] ✅ Resolved "${candidate}" → ${resolvedOrgID} (${resolvedOrgName}). Will run LangGraph with: "${effectiveQuery}"`);
+
+                        // 💾 Persist the org-ask exchange so it appears in history replay
+                        const orgAskMsg = `To get started, I need to know which organization you're working in.\n\nPlease enter your **organization short name** — a single code-word.`;
+                        try {
+                            // Row 1: the system's org-ask (empty userQuery signals a system-initiated prompt)
+                            await ConversationModel.addMessage(currentRunId, '(org setup)', orgAskMsg, undefined);
+                            // Row 2: the user's org answer paired with the resolution confirmation
+                            await ConversationModel.addMessage(currentRunId, candidate, `✅ Organization confirmed: **${resolvedOrgName}**. Now processing your original request.`, undefined);
+                        } catch (dbErr: any) {
+                            console.error(`[Route OrgGate] ⚠️ Failed to persist org exchange:`, dbErr.message);
+                        }
+
+                        try {
+                            const threadState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
+                            const existingScope = threadState?.values?.workingMemory?.sessionContext?.scope || {};
+                            await (skylarkGraph as any).updateState(
+                                { configurable: { thread_id: currentRunId } },
+                                {
+                                    workingMemory: {
+                                        sessionContext: {
+                                            scope: { ...existingScope, organizationID: resolvedOrgID, organizationShortName: candidate.toLowerCase() },
+                                            _pendingOrgQuery: null
+                                        }
+                                    }
+                                }
+                            );
+                            console.log(`[Route OrgGate] ✅ orgID written to LangGraph checkpoint. _pendingOrgQuery cleared.`);
+                        } catch (updateErr: any) {
+                            console.error(`[Route OrgGate] ⚠️ Failed to write org to checkpoint:`, updateErr.message);
+                        }
+                        // Fall through — LangGraph runs below with effectiveQuery
+
+                    } else {
+                        // ❌ No exact match — re-ask
+                        console.log(`[Route OrgGate] ❌ No exact match for "${candidate}".`);
+                        sendOrgSSE(`I couldn't find an organization with the exact short name **"${candidate}"**. Please check the spelling and try again — enter the exact short name.`);
+                        return;
+                    }
+
+                } else {
+                    // ③ Genuinely first message on this thread with no org—save query to Map AND checkpoint, then ask for org
+                    pendingOrgResolution.set(currentRunId, userQuery);
+                    console.log(`[Route OrgGate] 🔐 Saved original query. Asking for org. Pending: "${userQuery}"`);
+                    try {
+                        await (skylarkGraph as any).updateState(
+                            { configurable: { thread_id: currentRunId } },
+                            { workingMemory: { sessionContext: { _pendingOrgQuery: userQuery } } }
+                        );
+                        console.log(`[Route OrgGate] 💾 Persisted _pendingOrgQuery to checkpoint (restart-safe).`);
+                    } catch (e: any) {
+                        console.warn(`[Route OrgGate] ⚠️ Could not persist _pendingOrgQuery:`, e.message);
+                    }
+                    sendOrgSSE(`To get started, I need to know which organization you're working in.\n\nPlease enter your **organization short name** — a single code-word.`);
+                    return;
+                }
+            }
+
+            // Org is known. Fall through to LangGraph with effectiveQuery.
+            console.log(`[Route OrgGate] ✅ Org gate passed. Sending to LangGraph: "${effectiveQuery}"`);
+
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
             res.setHeader('Connection', 'keep-alive');
-            res.setHeader('X-Accel-Buffering', 'no'); 
-            res.flushHeaders(); 
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.flushHeaders();
 
             // Heartbeat to prevent reverse proxy timeouts
             const heartbeat = setInterval(() => {
@@ -40,12 +216,10 @@ export function createLangGraphWorkflowRouter() {
             }, 10000);
 
             try {
-                // 2. Register stream with abort controller controller controllers
+                // 2. Register stream with abort controller
                 const controller = registerStream(currentRunId);
 
-                // 🟢 Bug 2 Fix: Snapshot the current turn count before the run begins.
-                // This ensures we only emit/save results generated during THIS specific request,
-                // ignoring stale historical results persisted in the thread's MongoDB state.
+                // 🟢 Snapshot the current turn count before the run begins.
                 let startTurnIndex = 0;
                 try {
                     const initialState = await (skylarkGraph as any).getState({ configurable: { thread_id: currentRunId } });
@@ -54,16 +228,16 @@ export function createLangGraphWorkflowRouter() {
                 } catch (stateErr) {
                     console.error(`[Workflow Route] Failed to fetch initial state for turn index:`, stateErr);
                 }
-                
-                // 3. Stream LangGraph Events
+
+                // 3. Stream LangGraph Events — use effectiveQuery (the original pending query, not the org name)
                 const eventStream = (skylarkGraph as any).streamEvents({
-                    messages: [new HumanMessage(userQuery)],
-                    iterationCount: 0, // 🟢 Reset each turn to enable autonomous loops flawless!
-                    startTurnIndex: startTurnIndex, // 🟢 Pass isolation marker to nodes flawlessly!
+                    messages: [new HumanMessage(effectiveQuery)],
+                    iterationCount: 0,
+                    startTurnIndex: startTurnIndex,
                 }, {
                     version: "v2",
                     configurable: { thread_id: currentRunId },
-                    signal: controller.signal // 🟢 Pass abort signal to stream streamEvents triggers flaws flawlessly flawless trigger flawless
+                    signal: controller.signal
                 });
 
                 let assistantResponse = "";
@@ -80,6 +254,11 @@ export function createLangGraphWorkflowRouter() {
                         let statusMessage = "Processing...";
                         
                         if (nodeName === "orchestrator") statusMessage = "Orchestrating tools... 🔍";
+                        if (nodeName === "resolve_labels") {
+                            const labels = event.data?.input?.unclassifiedLabels || [];
+                            const count = labels.length;
+                            statusMessage = `Resolving ${count > 0 ? count + ' ' : ''}label${count !== 1 ? 's' : ''} to entity IDs... 🔎`;
+                        }
                         if (nodeName === "execute_tools") {
                             const tools = event.data?.input?.toolCalls || [];
                             const count = tools.length;
@@ -136,6 +315,9 @@ export function createLangGraphWorkflowRouter() {
                             currentTurns.forEach(turn => {
                                 Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
                                     if (val && val.__from_feedback_loop === true) return;
+                                    // Strip resolve_labels:: synthetic diagnostic keys — they carry
+                                    // no displayable data and would render as empty ghost tabs in the UI.
+                                    if (key.startsWith('resolve_labels::')) return;
                                     mergedResults[key] = { ...val };
                                 });
                             });
@@ -245,6 +427,9 @@ export function createLangGraphWorkflowRouter() {
                     currentTurns.forEach(turn => {
                         Object.entries(turn || {}).forEach(([key, val]: [string, any]) => {
                             if (val && val.__from_feedback_loop === true) return;
+                            // Strip resolve_labels:: synthetic diagnostic keys — they carry
+                            // no displayable data and would persist as empty ghost tabs in history replay.
+                            if (key.startsWith('resolve_labels::')) return;
                             mergedResults[key] = { ...val };
                         });
                     });
@@ -259,8 +444,12 @@ export function createLangGraphWorkflowRouter() {
                         }
                     });
                     
-                    await ConversationModel.addMessage(currentRunId, userQuery, assistantResponse, mergedResults);
-                    await ConversationModel.upsertShell(currentRunId, userQuery);
+                    // Use effectiveQuery (the original user question), NOT userQuery (which on org-gate
+                    // resolution turns is just the org name answer, e.g. "fleetships"). This ensures
+                    // the conversation history always stores the actual question the user asked, not
+                    // the org name that was provided as a clarification answer.
+                    await ConversationModel.addMessage(currentRunId, effectiveQuery, assistantResponse, mergedResults);
+                    await ConversationModel.upsertShell(currentRunId, effectiveQuery);
                 } catch (dbErr) {
                     console.error(`[Workflow Route] Failed to save conversation message:`, dbErr);
                 }

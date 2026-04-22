@@ -128,7 +128,10 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
             }
 
             // B. Harvest Identity Resolutions (The Ambiguity Bridge)
-            if (turnKey.includes('mcp.resolve_entities') && Array.isArray(data?.items)) {
+            // Check data.capability first — synthetic results from resolve_labels node set
+            // capability='mcp.resolve_entities' in the payload but use a different key prefix.
+            const isResolutionResult = data?.capability === 'mcp.resolve_entities' || turnKey.includes('mcp.resolve_entities');
+            if (isResolutionResult && Array.isArray(data?.items)) {
                 const label = data.appliedFilters?.searchTerm;
                 if (label) {
                   if (!labelToMatches[label]) labelToMatches[label] = [];
@@ -158,7 +161,7 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
                         // stored in sessionStateCommit.scope[typeKey] by the label resolution block
                         // below — they stay as typed query params, not scope navigators.
                         // For other discovery tools (fleet.query_overview) — harvest all (they return vessels).
-                        if (turnKey.includes('resolve_entities')) {
+                        if (isResolutionResult) {
                             const typeKey = `${(item.type || '').toLowerCase()}ID`;
                             if (SCOPE_NAVIGABLE_KEYS.has(typeKey)) {
                                 organicallyDiscoveredIds.add(id);
@@ -174,7 +177,7 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     }
 
     // D. Resolve Ambiguities or Promote Singular Hits
-    const ambiguousMatches: any[] = [];
+    const newAmbiguousMatches: any[] = []; // ← Renamed: only tickets born THIS turn from resolve_labels
     if (!sessionStateCommit.scope.resolvedLabels) {
         sessionStateCommit.scope.resolvedLabels = (existingMemory.sessionContext.scope as any).resolvedLabels || {};
     }
@@ -193,43 +196,126 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
             console.log(`\x1b[32m[UpdateMemory2] 💎 Promoted unique match: ${label} -> ${typeKey}: ${hit.id}\x1b[0m`);
         } else {
             console.log(`\x1b[31m[UpdateMemory2] ⚠️ Ambiguity detected for label "${label}": ${matches.length} UNIQUE matches found.\x1b[0m`);
-            ambiguousMatches.push({ label, candidates: matches });
+            const convIndex = (existingMemory.sessionContext?.humanConversationCount ?? 0) + 1;
+            newAmbiguousMatches.push({
+                label,
+                candidates: matches,
+                // 🟢 TICKET MODEL: Capture the query that caused this ambiguity so the Orchestrator
+                // can semantically match future user messages to the right ticket without re-asking.
+                originQuery: state.reformulatedQuery || existingMemory.queryContext?.rawQuery || label,
+                // 🟢 LIFECYCLE: Used by Summarizer's 20-to-7 compression to prune stale tickets.
+                conversationIndex: convIndex,
+            });
         }
     }
 
-    // Store ambiguities in scope for Orchestrator to see.
-    // 🛡️ HITL RESOLUTION CROSS-CHECK: If any candidate ID from an ambiguous label is already
-    // present in resolvedLabels (i.e., the user picked one of the candidates in a prior HITL turn),
-    // that ambiguity is considered answered — do NOT re-surface it as a new clarifying question.
-    // This prevents "CCCCCCC → Machinery/Component" from re-appearing after the user said
-    // "lets go with ccccccccccccc" and the system resolved it to a specific Machinery ID.
+    // ─────────────────────────────────────────────────────────────────
+    // 🎯 PERSISTENT TICKET MODEL — Three-Step Union (Phase 22 Fix)
+    //
+    // ─────────────────────────────────────────────────────────────────
+    const inheritedAmbiguousMatches: any[] = (existingMemory.sessionContext?.scope as any)?.ambiguousMatches || [];
+    const ambiguitiesResolvedThisTurn: string[] = (state as any).ambiguitiesResolved ?? [];
+    // Also read the explicit candidate index the Orchestrator signalled (0-based, per Zod schema)
+    const activatedTicketLabel: string | null = (state as any).activatedTicketLabel ?? null;
+    const activatedCandidateIdx: number | null = (state as any).activatedCandidateIndex ?? null;
+
+    if (!sessionStateCommit.scope.resolvedLabels) sessionStateCommit.scope.resolvedLabels = {};
+
+    // Step 1 — Process LLM-signalled candidate promotions on INHERITED tickets
+    // Also checks newAmbiguousMatches (brand-new tickets) in case the LLM activates a ticket
+    // on the same turn it was born (e.g. RULE 2 topic-match auto-activation).
+    const allTicketsForStep1 = [
+        ...inheritedAmbiguousMatches,
+        // Include new tickets NOT already in inherited (deduplicate by label to avoid double-processing)
+        ...newAmbiguousMatches.filter((n: any) => !inheritedAmbiguousMatches.some((i: any) => i.label === n.label)),
+    ];
+
+    if (ambiguitiesResolvedThisTurn.length > 0 && allTicketsForStep1.length > 0) {
+        for (const entry of allTicketsForStep1) {
+            if (ambiguitiesResolvedThisTurn.includes(entry.label) && entry.candidates?.length > 0) {
+                // 🟢 GAP-2 FIX: Prefer the explicit Orchestrator-signalled candidate index over the
+                // brittle toolCallsStr heuristic. activatedCandidateIdx is 0-based (per Zod schema comment).
+                // Only fall back to string-search if: (a) no index, or (b) this ticket's label doesn't
+                // match the activatedTicketLabel (i.e. a different ticket was activated this turn).
+                let picked: any;
+                const isThisTheActivatedTicket = activatedTicketLabel === entry.label;
+                if (isThisTheActivatedTicket && typeof activatedCandidateIdx === 'number'
+                    && activatedCandidateIdx >= 0 && activatedCandidateIdx < entry.candidates.length) {
+                    // ✅ Deterministic path — use explicit LLM-signalled index
+                    picked = entry.candidates[activatedCandidateIdx];
+                    console.log(`\x1b[32m[UpdateMemory2] 🎯 TICKET ACTIVATED (explicit index ${activatedCandidateIdx}): label "${entry.label}" → ${picked.type}:${picked.id.substring(0,8)}…\x1b[0m`);
+                } else {
+                    // ⚠️ Fallback path — search toolCalls for the used ID
+                    const toolCallsStr = JSON.stringify((state as any).toolCalls || []);
+                    const usedCandidate = entry.candidates.find((c: any) => c.id && toolCallsStr.includes(c.id));
+                    picked = usedCandidate ?? entry.candidates[0];
+                    if (picked !== entry.candidates[0]) {
+                        console.log(`\x1b[32m[UpdateMemory2] 🎯 TICKET ACTIVATED (toolCall search): label "${entry.label}" → ${picked.type}:${picked.id.substring(0,8)}…\x1b[0m`);
+                    } else {
+                        console.log(`\x1b[33m[UpdateMemory2] 🎯 TICKET ACTIVATED (defaulted to candidates[0]): label "${entry.label}" — no explicit index, no toolCall match.\x1b[0m`);
+                    }
+                }
+
+                if (!sessionStateCommit.scope.resolvedLabels[entry.label]) {
+                    sessionStateCommit.scope.resolvedLabels[entry.label] = { id: picked.id, type: picked.type };
+                }
+            }
+        }
+        console.log(`\x1b[32m[UpdateMemory2] 🧹 Processed ${ambiguitiesResolvedThisTurn.length} ticket activation(s) via LLM signal (checked ${allTicketsForStep1.length} tickets: ${inheritedAmbiguousMatches.length} inherited + ${newAmbiguousMatches.length} new).\x1b[0m`);
+    }
+
+
+    // Step 2 — Build the unified ticket set: inherited UNION new (deduplicated by label)
+    // New tickets from this turn take precedence if the label collides (they have fresher originQuery/candidates).
     const resolvedIdsSet = new Set(
         Object.values(sessionStateCommit.scope.resolvedLabels || {}).map((v: any) => v?.id).filter(Boolean)
     );
-    const unresolvedAmbiguousMatches = ambiguousMatches.filter(entry => {
-        // Find if any candidate has been chosen (resolved) yet
+    const newTicketLabels = new Set(newAmbiguousMatches.map((m: any) => m.label));
+
+    // Start with all inherited tickets, then append truly new ones (no label collision).
+    const candidateUnion: any[] = [
+        ...inheritedAmbiguousMatches.filter((entry: any) => !newTicketLabels.has(entry.label)),
+        ...newAmbiguousMatches,
+    ];
+
+    // Step 3 — Vestibule-prune: ONLY drop tickets if ALL candidates are resolved
+    // 🟢 IMPORTANT: Resolved tickets STAY in ambiguousMatches as reusable lookup tables.
+    // The user may say "now the third one" after already picking "the second one".
+    // Deletion now only happens via the 20-to-7 compression lifecycle in summarizer.ts.
+    // This step only removes tickets where a candidate has been chosen AND the purpose
+    // of the ticket (showing candidates) is now superseded by resolvedLabels.
+    //
+    // CHANGED: Previously `return false` (delete) for resolved candidates.
+    // Now we always `return true` (keep) so the ticket persists for follow-up ordinal picks.
+    // The resolvedLabels entry already records the chosen candidate — that's sufficient.
+    const survivingTickets = candidateUnion.filter((entry: any) => {
         const chosenCandidate = entry.candidates.find((c: any) => resolvedIdsSet.has(c.id));
         if (chosenCandidate) {
-            // 🟢 VESTIBULE PRUNING: Register the ORIGINAL ambiguous label in resolvedLabels pointing
-            // to the chosen candidate. This makes the Vestibule's resolvedLabelSet include the original
-            // label (e.g. "CCCCCCC"), so it won't re-fire resolve_entities for it on future turns.
-            if (!sessionStateCommit.scope.resolvedLabels) sessionStateCommit.scope.resolvedLabels = {};
+            // 🟢 VESTIBULE REGISTRATION: Register the chosen candidate in resolvedLabels
+            // so the Vestibule guard won't re-fire resolve_entities for this label on future turns.
             const existingEntry = sessionStateCommit.scope.resolvedLabels[entry.label];
             if (!existingEntry) {
                 sessionStateCommit.scope.resolvedLabels[entry.label] = { id: chosenCandidate.id, type: chosenCandidate.type };
-                console.log(`\x1b[32m[UpdateMemory2] ✅ Pruned ambiguity "${entry.label}" → registered in resolvedLabels as ${chosenCandidate.type}:${chosenCandidate.id} (Vestibule skip granted)\x1b[0m`);
+                console.log(`\x1b[32m[UpdateMemory2] ✅ Vestibule-registered "${entry.label}" → ${chosenCandidate.type}:${chosenCandidate.id.substring(0,8)}… (skip guard granted)\x1b[0m`);
             }
-            return false; // Drop from ambiguousMatches
+            // 🟢 KEEP THE TICKET: Do NOT return false here. The ticket stays in ambiguousMatches
+            // so the user can say "now the third one" and the LLM still has the full candidate list.
+            console.log(`\x1b[32m[UpdateMemory2] 📌 Ticket "${entry.label}" resolved but PERSISTED for follow-up ordinal picks.\x1b[0m`);
         }
-        return true; // Keep — still genuinely ambiguous
+        return true; // Always keep — lifecycle managed by 20-to-7 compression only
     });
 
-    if (unresolvedAmbiguousMatches.length > 0) {
-        sessionStateCommit.scope.ambiguousMatches = unresolvedAmbiguousMatches;
+    // Step 4 — Unconditionally write back the surviving ticket set.
+    // 🟢 KEY INVARIANT: This write is NOT conditional on ambiguitiesResolvedThisTurn.
+    // Even on turns where the user asks a completely different question (no ticket activated),
+    // we preserve the inherited tickets by writing them back here.
+    if (survivingTickets.length > 0) {
+        sessionStateCommit.scope.ambiguousMatches = survivingTickets;
+        console.log(`\x1b[32m[UpdateMemory2] 📌 Ticket store: ${survivingTickets.length} ticket(s) persisted (${inheritedAmbiguousMatches.length} inherited, ${newAmbiguousMatches.length} new this turn).\x1b[0m`);
     } else {
-        delete sessionStateCommit.scope.ambiguousMatches; // Clear if all resolved or no new ones
-        if (ambiguousMatches.length > 0) {
-            console.log(`\x1b[32m[UpdateMemory2] ✅ All ambiguities resolved — cleared ambiguousMatches from scope.\x1b[0m`);
+        delete sessionStateCommit.scope.ambiguousMatches;
+        if (inheritedAmbiguousMatches.length > 0 || newAmbiguousMatches.length > 0) {
+            console.log(`\x1b[32m[UpdateMemory2] ✅ All ambiguity tickets resolved or vestibule-pruned — cleared from scope.\x1b[0m`);
         }
     }
 
@@ -242,9 +328,26 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     // PHASE 1b: Tier 2 reset logic
     // ─────────────────────────────────────────────────────────────────
     //
-    // FIX §55.2 — isNewQuery must fulfill:
+    // FIX §55.3 — isNewQuery must fulfill:
     //   1. iter <= 1 : First iteration loop of this specific HTTP request
-    //   2. !isHITLContinuation : Not a user answering a clarifying question
+    //   2. !wasHITL  : The prior graph run did NOT end with a clarifying question
+    //
+    // CRITICAL: We use `hitl_required` (checkpoint-level signal) NOT `isHITLContinuation`
+    // (turn-level signal). Here's why they differ:
+    //
+    //   isHITLContinuation — set to `true` when AI emits a clarifying question, but
+    //     RESET to `false` by orchestrator.ts line ~1365 on the FIRST tool run of this
+    //     HTTP request. By the time update_memory2 runs at iter=1, isHITLContinuation
+    //     is already `false`, so (iter<=1 && !false) = TRUE → spurious Tier 2 reset.
+    //
+    //   hitl_required — set to `true` in the LangGraph checkpoint when the AI asks a
+    //     clarifying question (orchestrator.ts line ~1555). It is only reset to `false`
+    //     when orchestrator.ts runs a normal non-HITL turn. It correctly survives the
+    //     full HTTP boundary and both iter=0 AND iter=1 of the continuation request.
+    //
+    // Principle (owner-stated invariant):
+    //   "If the AI asked a question → HITL. The next request is ALWAYS a continuation.
+    //    A NEW query only begins AFTER the Summarizer completes (hitl_required=false)."
     //
     // We explicitly DO NOT use `startTurnIndex === 0` because that tracks thread-level
     // accumulated tool history, which is > 0 for genuine follow-up questions.
@@ -257,7 +360,34 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     console.log(`\x1b[36m[UpdateMemory2] 📊 State snapshot: startTurnIndex=${state.startTurnIndex || 0} | iter=${iter} | isHITL=${state.isHITLContinuation} | reformulatedQuery=${state.reformulatedQuery ? 'YES' : 'NO'}\x1b[0m`);
 
     const existingRawQuery = existingMemory.queryContext?.rawQuery || "";
-    const isNewQuery = (iter <= 1) && !state.isHITLContinuation;
+    // 🟢 FIX §55.4: Detect HITL continuation from MESSAGE HISTORY — immune to state flag timing.
+    //
+    // Previous attempts used state.hitl_required or state.isHITLContinuation. Both fail because
+    // orchestrator.ts resets them at line ~1359 on the FIRST tool run of the continuation request.
+    // By the time update_memory2 runs at iter=1, both flags are already false.
+    //
+    // Message history is IMMUTABLE. If the AI message immediately before the current human
+    // message contains a '?' and is NOT an [INSIGHT] summary, the prior graph run ended with
+    // a clarifying question — this request is definitively a HITL continuation.
+    //
+    // Owner-stated invariant:
+    //   "If the AI asked a question → HITL. The next request is ALWAYS a continuation.
+    //    A NEW query only begins AFTER the Summarizer completes."
+    const _allMsgsForHitl = state.messages || [];
+    const _revMsgsForHitl = [..._allMsgsForHitl].reverse();
+    const _lastHumanIdx = _revMsgsForHitl.findIndex((m: any) =>
+        (m._getType?.() || m.role) === 'human'
+    );
+    const _precedingAI = _lastHumanIdx >= 0
+        ? _revMsgsForHitl.slice(_lastHumanIdx + 1).find((m: any) => {
+            const t = m._getType?.() || m.role;
+            return t === 'ai' || t === 'assistant';
+          })
+        : null;
+    const _precedingContent: string = (_precedingAI as any)?.content || '';
+    // HITL if: prior AI message has a '?' AND is not an [INSIGHT] summary (which naturally has '?' sometimes)
+    const wasHITL = !!(_precedingContent.includes('?') && !_precedingContent.includes('[INSIGHT]'));
+    const isNewQuery = (iter <= 1) && !wasHITL;
 
     // 🛡️ NOTE: Ambiguity cleanup is handled deterministically by lines 200-205 above.
     // If fresh resolve_entities tools ran and found multiple matches → ambiguousMatches is SET (line 202).
@@ -269,7 +399,8 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
 
     console.log(`\x1b[35m[UpdateMemory2] 🔀 Tier 2 Reset Decision:\x1b[0m`);
     console.log(`\x1b[35m  iter <= 1 = ${iter <= 1}\x1b[0m`);
-    console.log(`\x1b[35m  isHITLContinuation = ${state.isHITLContinuation}\x1b[0m`);
+    console.log(`\x1b[35m  wasHITL (message-history scan) = ${wasHITL} | precedingAI snippet: "${_precedingContent.substring(0, 60)}"\x1b[0m`);
+    console.log(`\x1b[35m  isHITLContinuation (turn-level ref) = ${state.isHITLContinuation} | hitl_required (state ref) = ${!!(state as any).hitl_required}\x1b[0m`);
     console.log(`\x1b[35m  existingRawQuery = "${existingRawQuery.substring(0, 60)}${existingRawQuery.length > 60 ? '...' : ''}"\x1b[0m`);
     console.log(`\x1b[35m  → isNewQuery = ${isNewQuery} ${isNewQuery ? '(🔄 TIER 2 WILL RESET)' : '(♻️ TIER 2 PRESERVED)'}\x1b[0m`);
 
@@ -362,20 +493,30 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
 
             if (precedingAI) {
                 const clarifyingQuestion = (precedingAI as any)?.content || "";
-                // Only inject if the AI message looks like a clarifying question (not a full analysis)
-                const isClarifyingQuestion = clarifyingQuestion.length < 300;
+                // Fix Gap 2: Use state.isHITLContinuation as the primary structural signal
+                // instead of a length heuristic (< 300 chars). The length check silently
+                // dropped the HITL context block for long disambiguation questions such as:
+                //   "I found 3 candidates: CCCCCCC (Machinery), CCCCCCC (Component), ..."
+                // which easily exceed 300 chars but are genuine clarifying questions.
+                // state.isHITLContinuation is set to true by the Orchestrator whenever it
+                // emits a HITL question and stays true on the state until update_memory2
+                // resets it at the very end of this function — so at this point it is still
+                // the incoming value and is a reliable structural signal.
+                // Belt-and-suspenders fallback: also accept any preceding AI message that
+                // contains a question mark, for rare edge cases where the flag isn't set.
+                const isClarifyingQuestion = state.isHITLContinuation === true || clarifyingQuestion.includes('?');
                 if (isClarifyingQuestion && lastHumanContent !== rawQuery) {
                     hitlContextBlock = `
 CONTEXT REFINEMENT (user answered a clarifying question in this session):
   Original question: "${rawQuery}"
-  AI asked: "${clarifyingQuestion.substring(0, 200)}"
+  AI asked: "${clarifyingQuestion.substring(0, 300)}"
   User replied: "${lastHumanContent}"
   CRITICAL INSTRUCTION: The user's reply contains BOTH the answer to the clarifying question (e.g. org name) AND potentially a query refinement. Treat the reply as narrowing/refining the original question — NOT as a replacement. Extract any refinements (like limits, status, dates) as activeFilters. The rawQuery topic remains "${rawQuery}".`;
                     console.log(`\x1b[35m[UpdateMemory2] 💬 HITL Q→A pair detected and injected into Phase 2 context:\x1b[0m`);
                     console.log(`\x1b[35m   Q: "${clarifyingQuestion.substring(0, 80)}"\x1b[0m`);
                     console.log(`\x1b[35m   A: "${lastHumanContent.substring(0, 80)}"\x1b[0m`);
                 } else {
-                    console.log(`\x1b[36m[UpdateMemory2] 💬 No HITL Q→A injection: reply is same as rawQuery or preceding AI was an analysis (len=${clarifyingQuestion.length}).\x1b[0m`);
+                    console.log(`\x1b[36m[UpdateMemory2] 💬 No HITL Q→A injection: reply is same as rawQuery or preceding AI was an analysis (isHITL=${state.isHITLContinuation}, hasQ=${clarifyingQuestion.includes('?')}).\x1b[0m`);
                 }
             } else {
                 console.log(`\x1b[36m[UpdateMemory2] 💬 No preceding AI message found — no HITL context to inject.\x1b[0m`);
@@ -580,7 +721,15 @@ Rules:
    - ENTITY PRESERVATION: If the original 'rawQuery' contains a specific label (e.g. 'XXX1', 'DFGRE') that is NOT yet a canonical 24-char hex ID, you MUST preserve it in 'activeFilters' even if the user provides a different piece of info (like an Organization). Do NOT allow a context refinement to delete an unresolved label.
    - If the user specifies a limit or distribution scope, add them here. Do NOT hallucinate filters that are not clearly requested.
    - ANTI-HALLUCINATION (CRITICAL): You are STRICTLY FORBIDDEN from inferring or guessing attribute filter values (e.g. blockageReason, failureCode, triggerOrigin, repairType) that do NOT appear verbatim in the tool's [appliedFilters] block in the "Tools executed this turn" section. Only extract a filter if it is present as an explicit parameter in the tool call result. If no such parameter appears, the filter MUST NOT appear in activeFilters.
-3. lastTurnInsight: You MUST summarize in EXACTLY ONE sentence ONLY. Your sentence MUST explicitly state BOTH what the user asked for (based on the rawQuery) AND what data was actually retrieved or resolved altogether this turn. Max 300 chars.`;
+3. lastTurnInsight: You MUST summarize in EXACTLY ONE sentence ONLY. Your sentence MUST explicitly state BOTH what the user asked for (based on the rawQuery) AND what data was actually retrieved or resolved altogether this turn. Max 300 chars.
+   - TICKET ACTIVATION: If an ambiguity ticket was activated this turn (the user picked a candidate with an ordinal like "the second one"), your sentence MUST identify which candidate was chosen. E.g.: "User picked the 2nd CCCCCCC (machinery) and retrieved 5 maintenance records." Do NOT write generic phrases like "retrieval completed" when a specific candidate selection occurred — the specific candidate name is the key fact.
+4. rawQuery — [Clarification] prefix cleanup (CRITICAL):
+   - The rawQuery you output is used as the summary of the current conversation topic in future turns.
+   - If the rawQuery you received starts with "[Clarification]" (e.g. "[Clarification] For organization X, identify which of the three Machinery records..."), this means the session was mid-disambiguation.
+   - If a retrieval tool ran this turn (a tool OTHER than mcp.resolve_entities, mcp.clear_filters, or mcp.query_active_filters), the disambiguation is OVER — the user made their pick and the system acted on it.
+   - In that case, you MUST rewrite the rawQuery to be a CLEAN, concrete statement of the resolved intent WITHOUT the "[Clarification]" prefix.
+   - Example: "[Clarification] For org myorg, identify which of the 3 Machinery records..." → "For org myorg, vessel XXX1, show maintenance details for Machinery ccccccccccccc (ID: 68385e580aa5d05cc5c872d9)"
+   - If NO retrieval tool ran (only resolve_entities or internal tools), keep the rawQuery as-is.`;
 
     // 🟢 GAP-18 FIX: PROTECTED DOMAIN CONTEXT injection
     // When isNewQuery=true (fresh HTTP request) AND the Orchestrator did NOT detect a domain pivot,

@@ -6,6 +6,7 @@ import { nodeOrchestrator } from "./nodes/orchestrator.js";
 import { nodeExecuteTools } from "./nodes/execute_tools.js";
 import { nodeUpdateMemory2 } from "./nodes/update_memory2.js";
 import { nodeSummarizer } from "./nodes/summarizer.js";
+import { nodeResolveLabels } from "./nodes/resolve_labels.js";
 
 import { nodeError } from "./nodes/error.js";
 
@@ -110,11 +111,42 @@ const workflow = new StateGraph<SkylarkState>({
         default: () => false,
     },
 
+    // 12. Deterministic Label Resolution Channel
+    // Written by orchestrator, read by graph conditional edge and resolve_labels node.
+    // resolve_labels always clears this to [] after running (success or failure).
+    unclassifiedLabels: {
+        reducer: (x: any, y: any) => y !== undefined ? y : x,
+        default: () => [] as any,
+    },
+
+    // 13. Ambiguity Ticket Activation Signals (Phase 22)
+    // Written by orchestrator each turn. Consumed by update_memory2 (ambiguitiesResolved)
+    // and summarizer (activatedTicketLabel/Confidence/CandidateIndex).
+    // Without these channels, LangGraph silently drops all four fields between nodes.
+    ambiguitiesResolved: {
+        // Reset to [] each turn so stale signals from a prior turn don't bleed into the next.
+        reducer: (x: string[] | undefined, y: string[] | undefined) => y !== undefined ? y : x,
+        default: () => [] as string[],
+    },
+    activatedTicketLabel: {
+        reducer: (x: string | null | undefined, y: string | null | undefined) => y !== undefined ? y : x,
+        default: () => null as any,
+    },
+    activatedTicketConfidence: {
+        reducer: (x: number | undefined, y: number | undefined) => y !== undefined ? y : x,
+        default: () => 0,
+    },
+    activatedCandidateIndex: {
+        reducer: (x: number | null | undefined, y: number | null | undefined) => y !== undefined ? y : x,
+        default: () => null as any,
+    },
+
   } as any 
 });
 
 // 2. Add Nodes
 workflow.addNode("orchestrator", nodeOrchestrator as any);
+workflow.addNode("resolve_labels", nodeResolveLabels as any);
 workflow.addNode("execute_tools", nodeExecuteTools as any);
 workflow.addNode("update_memory", nodeUpdateMemory2 as any);
 workflow.addNode("summarizer", nodeSummarizer as any);
@@ -131,27 +163,25 @@ workflow.addConditionalEdges(
       if (state.hitl_required) return "__end__"; 
 
       // ─────────────────────────────────────────────────────────────────
-      // GAP-LOOP-1 FIX: toolCalls check MUST come BEFORE feedBackVerdict check.
+      // RESOLVE_LABELS INTERCEPT: If the orchestrator emitted unclassified labels,
+      // route to resolve_labels FIRST (before execute_tools). resolve_labels resolves
+      // all labels in parallel, injects IDs into scope and toolResults, clears
+      // unclassifiedLabels:[], then always passes to execute_tools.
+      // This fires even when toolCalls is non-empty — we want IDs available before
+      // execute_tools runs the retrieval plan.
       // ─────────────────────────────────────────────────────────────────
-      // The Strategic Interceptor (orchestrator.ts) can inject mcp.resolve_entities tools
-      // while SIMULTANEOUSLY setting feedBackVerdict=FEED_BACK_TO_ME.
-      //
-      // BUG (previous): Checking verdict first caused a short-circuit to update_memory,
-      // silently dropping the injected tools. The next turn the AI saw the same unresolved
-      // labels, re-fired the intercept, and dropped them again → infinite loop.
-      //
-      // FIX: Always route to execute_tools if toolCalls is non-empty, regardless of verdict.
-      // The verdict governs what happens AFTER tools run, not whether to skip them:
-      //   • tools present (any verdict)    → execute_tools → update_memory / summarizer
-      //   • no tools + FEED_BACK_TO_ME    → update_memory  (planning-only turn, loop back)
-      //   • no tools + SUMMARIZE          → summarizer     (empty / conversational end)
+      if ((state.unclassifiedLabels || []).length > 0) {
+          return "resolve_labels";
+      }
+
+      // ─────────────────────────────────────────────────────────────────
+      // GAP-LOOP-1 FIX: toolCalls check MUST come BEFORE feedBackVerdict check.
       // ─────────────────────────────────────────────────────────────────
       if (state.toolCalls && state.toolCalls.length > 0) {
           return "execute_tools";
       }
 
       // Only reach here when there are NO tools. Now honor the verdict.
-      // FEED_BACK_TO_ME + no tools = planning-only turn; loop back to orchestrator.
       if (state.feedBackVerdict === "FEED_BACK_TO_ME") {
           return "update_memory";
       }
@@ -159,6 +189,7 @@ workflow.addConditionalEdges(
       return "summarizer";
   }) as any,
   {
+      resolve_labels: "resolve_labels" as any,
       execute_tools: "execute_tools" as any,
       update_memory: "update_memory" as any,
       summarizer: "summarizer" as any,
@@ -166,6 +197,13 @@ workflow.addConditionalEdges(
       __end__: "__end__" as any
   } as any
 );
+
+// resolve_labels is a deterministic intercept — it resolves labels, injects results
+// into toolResults, forces feedBackVerdict=FEED_BACK_TO_ME, then always passes to
+// update_memory2 so resolved IDs are written to scope.resolvedLabels / ambiguousMatches.
+// update_memory2's conditional edge then routes back to orchestrator (FEED_BACK_TO_ME path),
+// where the LLM sees the RESOLVED ENTITIES / AMBIGUITY DETECTED blocks and acts on them.
+workflow.addEdge("resolve_labels" as any, "update_memory" as any);
 
 // Conditional Edge from Execute Tools
 // Conditional Edge from Execute Tools
