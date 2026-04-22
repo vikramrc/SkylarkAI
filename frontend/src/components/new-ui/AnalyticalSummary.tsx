@@ -107,8 +107,11 @@ const AnalyticalSummary: React.FC<AnalyticalSummaryProps> = ({
   color = 'blue', 
   children 
 }) => {
-  const IconComponent = ICON_MAP[icon];
+  const IconComponent = ICON_MAP[icon] || null;
   const theme = COLOR_MAP[color] || COLOR_MAP.blue;
+  
+  // 🟢 Fallback logic: if icon is not in map and isn't a single character (emoji), use Info
+  const FinalIcon = IconComponent || (icon.length > 2 ? Info : null);
 
   return (
     <div className={`
@@ -119,7 +122,7 @@ const AnalyticalSummary: React.FC<AnalyticalSummaryProps> = ({
     `}>
       <div className="flex items-center gap-3 mb-3">
         <div className={`p-2 rounded-xl bg-white shadow-sm font-emoji flex items-center justify-center ${theme.icon}`}>
-          {IconComponent ? <IconComponent className="w-5 h-5" /> : <span className="text-xl leading-none">{icon}</span>}
+          {FinalIcon ? <FinalIcon className="w-5 h-5" /> : <span className="text-xl leading-none">{icon}</span>}
         </div>
         <h3 className={`text-lg font-bold ${theme.text}`} style={{ fontFamily: 'Outfit, sans-serif' }}>
           {title}

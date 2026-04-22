@@ -74,7 +74,11 @@ const RESOLVABLE_ENTITIES: Record<string, {
     displayField: "organizationName"
   },
   Activity: {
-    // Activity has no org/vessel FK — scoped via its parent Machinery which has both.
+    // Activity has no org/vessel FK — scoped via its parent Machinery.
+    // ⚠️ AUDITED: Machinery has NO organizationID field (only vesselID).
+    // orgField is intentionally omitted — applying an org filter on a non-existent field
+    // causes Stage 4 of the aggregation to match 0 documents, silently killing all results.
+    // Vessel scoping (vesselField) provides implicit org isolation since vessels are org-exclusive.
     // joinThrough causes the resolver to use an aggregation pipeline instead of a plain find().
     searchFields: ["description"],
     idField: "_id",
@@ -83,7 +87,7 @@ const RESOLVABLE_ENTITIES: Record<string, {
       collection: "Machinery",
       localField: "machineryID",
       foreignField: "_id",
-      orgField: "organizationID",
+      // orgField intentionally absent — Machinery has no organizationID field
       vesselField: "vesselID",
     },
   },

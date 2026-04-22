@@ -192,6 +192,36 @@ export async function nodeResolveLabels(state: SkylarkState): Promise<Partial<Sk
     console.log(`\x1b[36m[resolve_labels] Resolution complete. Found ${newIDs.length} new ID(s): [${newIDs.join(', ')}]\x1b[0m`);
     console.log(summary);
 
+    // 🔴 ZERO-HIT HITL GATE
+    // If ALL entity types for a label resolved to items:[] (total miss), inject an explicit
+    // ZERO_HIT_HITL synthetic result. Without this, the orchestrator sees only silent empty
+    // results and the pendingIntents mandate (Rule 28) overrides Rule 11 (Hard-Stop HITL),
+    // causing the LLM to hallucinate a tool call rather than ask for clarification.
+    // This injection only fires on the already-broken all-empty path — it is never reached
+    // when any type returns ≥1 match.
+    for (const [label, results] of Object.entries(byLabel)) {
+        const allEmpty = results.every(r => !r.error && r.items.length === 0);
+        if (allEmpty && results.length > 0) {
+            const zeroHitKey = `resolve_labels::${label}::ZERO_HIT_HITL`;
+            fakeToolResults[zeroHitKey] = {
+                content: [{
+                    text: JSON.stringify({
+                        capability: "mcp.resolve_entities",
+                        appliedFilters: { searchTerm: label },
+                        items: [],
+                        zeroHitHITL: true,
+                        message: `ZERO_HIT_HITL: Label "${label}" could not be resolved to any entity type. ` +
+                                 `Attempted: [${results.map(r => r.type).join(', ')}]. ` +
+                                 `You MUST trigger Rule 11 Hard-Stop HITL — ask the user what "${label}" refers to ` +
+                                 `(e.g. is it an Activity, Machinery, Component, or something else?). ` +
+                                 `Do NOT proceed with any retrieval tool call for this label.`,
+                    })
+                }]
+            };
+            console.log(`\x1b[33m[resolve_labels] ⚠️ ZERO_HIT_HITL injected for label "${label}" — all ${results.length} type(s) returned 0 results\x1b[0m`);
+        }
+    }
+
     // Merge found IDs into currentScope (same shape that update_memory2 uses)
     const existingScope: string[] = state.workingMemory?.queryContext?.currentScope || [];
     const mergedScope = [...new Set([...existingScope, ...newIDs])];

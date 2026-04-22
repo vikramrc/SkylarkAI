@@ -467,6 +467,71 @@ export async function nodeUpdateMemory2(state: SkylarkState): Promise<Partial<Sk
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // 🟢 CONVERSATION JOURNAL: Build turn-by-turn factual log
+    // Code-maintained — never LLM-written. The orchestrator reads ONLY this to produce reformulatedQuery.
+    // Format: "T_n [Tag]: <factual statement>"
+    // Reset on isNewQuery. Appended on every continuation turn.
+    // ─────────────────────────────────────────────────────────────────
+    const existingJournal: string[] = (existingMemory.queryContext as any)?.conversationJournal || [];
+    let updatedJournal: string[] = [...existingJournal];
+    const nextTurnNum = updatedJournal.length + 1;
+
+    if (isNewQuery) {
+        // Brand-new conversation: seed with the user's original query
+        updatedJournal = [`T1 [User]: ${rawQuery.substring(0, 200)}`];
+        console.log(`\x1b[33m[UpdateMemory2] 📋 JOURNAL RESET — new conversation. Seeded: "${rawQuery.substring(0, 80)}"\x1b[0m`);
+    } else {
+        // ── Append tool-run entry (if tools ran this turn) ──
+        if (Object.keys(latestTurn).length > 0) {
+            const toolLines: string[] = [];
+            for (const [key, res] of Object.entries(latestTurn)) {
+                let data: any = res;
+                if (data?.content?.[0]?.text) {
+                    try { data = JSON.parse(data.content[0].text); } catch { /* ignore */ }
+                }
+                const isResolution = key.includes('resolve_entities') || data?.capability === 'mcp.resolve_entities';
+                const count = Array.isArray(data?.items) ? data.items.length : (data?.isError ? -1 : 0);
+                if (isResolution) {
+                    const label = data?.appliedFilters?.searchTerm || 'unknown';
+                    if (count === 0) {
+                        toolLines.push(`Resolve "${label}" → no matches`);
+                    } else if (count === 1) {
+                        const hit = data.items[0];
+                        toolLines.push(`Resolve "${label}" → 1 unique match: ${hit.label || hit.type} (${hit.type}:${(hit.id||'').substring(0,8)}…)`);
+                    } else {
+                        const types = [...new Set((data.items as any[]).map((i: any) => i.type))].join(', ');
+                        const labels = (data.items as any[]).map((i: any) => i.label || i.type).slice(0, 4).join(', ');
+                        toolLines.push(`Resolve "${label}" → ${count} matches (${types}): ${labels}${count > 4 ? '…' : ''}`);
+                    }
+                } else {
+                    const capName = data?.capability || key;
+                    const status = data?.isError ? 'FAILED' : count > 0 ? `${count} records` : '0 records (empty)';
+                    toolLines.push(`${capName} → ${status}`);
+                }
+            }
+            if (toolLines.length > 0) {
+                updatedJournal.push(`T${nextTurnNum} [Tool]: ${toolLines.join(' | ')}`);
+                console.log(`\x1b[33m[UpdateMemory2] 📋 JOURNAL +Tool: "${toolLines.join(' | ').substring(0, 120)}"\x1b[0m`);
+            }
+        // ── Capture HITL Q/A pair when this is a HITL continuation with no tools yet ──
+        // iter <= 1 guard: only capture once (on the FIRST iteration of the continuation).
+        // Without this, on a FEED_BACK_TO_ME no-tool loop at iter=2+, wasHITL is still
+        // true (message history is static), causing the same Q/A pair to be appended again.
+        } else if (wasHITL && iter <= 1 && allMessages.length >= 2) {
+            // No tools ran — first iteration of a HITL continuation.
+            // Record the AI question and user answer as a pair.
+            const lastHumanContent = (allMessages[allMessages.length - 1] as any)?.content || '';
+            const aiQuestion = _precedingContent.substring(0, 250);
+            updatedJournal.push(
+                `T${nextTurnNum} [AI Clarification]: ${aiQuestion}${_precedingContent.length > 250 ? '…' : ''}`,
+                `T${nextTurnNum + 1} [User Reply]: ${lastHumanContent.substring(0, 200)}`
+            );
+            console.log(`\x1b[33m[UpdateMemory2] 📋 JOURNAL +HITL Q/A: AI asked → User replied "${lastHumanContent.substring(0, 60)}"\x1b[0m`);
+        }
+    }
+    console.log(`\x1b[33m[UpdateMemory2] 📋 JOURNAL (${updatedJournal.length} entries): ${updatedJournal.map(e => `"${e.substring(0, 60)}"`).join(' → ')}\x1b[0m`);
+
+    // ─────────────────────────────────────────────────────────────────
     // FIX §55 — Detect HITL Q→A pair for Phase 2 context injection
     //
     // Walk the message history to find the last AI clarifying question + the human reply to it.
@@ -798,6 +863,7 @@ ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.
             lastTurnInsight: response.lastTurnInsight || "",
             currentScope: currentScopeArray, // 🟢 GAP-30: Use deterministic truth from Phase 1
             isBroadScope: isBroadScopeActive, // 🌐 Persist broad scope flag across iterations
+            conversationJournal: updatedJournal, // 🟢 JOURNAL: Code-maintained turn-by-turn log
         };
 
         // Rich diagnostic output
@@ -832,6 +898,7 @@ ${(previousQueryContext.pendingIntents || []).length > 0 ? previousQueryContext.
                     ...previousQueryContext,
                     rawQuery,
                     isBroadScope: isBroadScopeActive, // 🌐 Preserve broad scope flag even on LLM failure
+                    conversationJournal: updatedJournal, // 🟢 JOURNAL: preserve code-built entries even when LLM fails
                 },
             },
             isHITLContinuation: false,

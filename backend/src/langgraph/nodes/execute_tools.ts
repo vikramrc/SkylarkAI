@@ -127,6 +127,50 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
 
                 console.log(`[LangGraph Execute] Running ${sanitizedName} with args:`, JSON.stringify(inputArgs));
 
+                // ─── ObjectId Parameter Guard ─────────────────────────────────────────
+                // Catches any ID-typed parameter that contains a human-readable label
+                // (e.g. activityID="cxcxcccc") before it reaches the tool, preventing
+                // unscoped DB queries that silently return wrong results.
+                // This guard is universal — it covers every current and future tool.
+                // Parameters in OBJECTID_EXCEPTIONS are known to legitimately accept
+                // non-hex string values (e.g. org short-name, vessel name).
+                const OBJECTID_PATTERN = /^[0-9a-fA-F]{24}$/;
+                const OBJECTID_EXCEPTIONS = new Set([
+                    'organizationID',      // can be resolved from shortName at tool level
+                    'organizationShortName',
+                    'organizationName',
+                    'vesselName',
+                ]);
+                for (const [paramName, paramValue] of Object.entries(inputArgs)) {
+                    if (
+                        paramName.endsWith('ID') &&
+                        !OBJECTID_EXCEPTIONS.has(paramName) &&
+                        paramValue !== undefined &&
+                        paramValue !== null &&
+                        paramValue !== ''
+                    ) {
+                        if (!OBJECTID_PATTERN.test(String(paramValue))) {
+                            console.warn(
+                                `[LangGraph Execute] 🔴 ObjectId Guard: "${paramName}" received non-hex value "${paramValue}" for tool "${name}". ` +
+                                `Rejecting — label used where a resolved 24-char hex ID is required.`
+                            );
+                            return {
+                                name,
+                                index,
+                                result: {
+                                    isError: true,
+                                    objectIdViolation: true,
+                                    message:
+                                        `PARAMETER ERROR: "${paramName}" must be a 24-character hex ObjectId, but received "${paramValue}". ` +
+                                        `This is a human-readable label, not a resolved ID. ` +
+                                        `Check your resolvedLabels / sessionContext.scope for the correct "${paramName}" value and retry with the 24-char hex ID.`,
+                                }
+                            };
+                        }
+                    }
+                }
+                // ─────────────────────────────────────────────────────────────────────
+
                 const contextMock = {
                     requestContext: {
                         get: (key: string) => {

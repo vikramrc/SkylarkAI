@@ -23,7 +23,17 @@ export const orchestratorSchema = z.object({
     })).describe("List of MCP tool names and their arguments to execute in parallel."),
     feedBackVerdict: z.enum(['SUMMARIZE', 'FEED_BACK_TO_ME']).describe("Decide whether the results should be fed back for sequential chain investigation or passed straight to the Summarizer."),
     clarifyingQuestion: z.string().describe("Use this to Ask the user a question if mandatory parameters (e.g., Organization ID/Name) are missing and no tools can be called.").nullable(),
-    reformulatedQuery: z.string().describe("Synthesize the entire conversational history (the original request plus any subsequent clarifications or filters) into a single, comprehensive goal statement. This should reflect your complete understanding of the user's final intent and parameters without assuming any missing constraints."),
+    reformulatedQuery: z.string().describe(
+        "Read ONLY the '### 📋 CONVERSATION JOURNAL' block in your context to build this field. " +
+        "Synthesize the user's evolving goal from T1 forward into a single clean, end-state-oriented sentence. " +
+        "Rules: " +
+        "(1) Express only the END GOAL — what data or answer the user ultimately wants. " +
+        "(2) Update it as each journal entry adds new context (e.g. a [User Reply] confirming vessel or type narrows the goal — incorporate that). " +
+        "(3) STRICTLY FORBIDDEN: do NOT include orchestrator internal reasoning, disambiguation steps, 'need to determine' clauses, or open questions. Those belong in 'reasoning', not here. " +
+        "(4) If you are in the middle of a HITL disambiguation, write the goal as it will look once resolved, using the context you have. " +
+        "CORRECT: 'Show execution history for activity CCCCCCC on vessel XXX1.' " +
+        "WRONG: 'User asks about CCCCCCC but I need to determine if it refers to a previously resolved activity or a new one.'"
+    ),
     reasoning: z.string().describe("Your internal technical thought process. If you pick FEED_BACK_TO_ME, explain exactly what gap you are trying to fill (e.g., 'Fetched Job IDs, now need to fetch their specific form contents' or 'Direct query failed, trying standard tool fallback')."),
     unclassifiedLabels: z.array(z.object({
         label: z.string().describe("The ambiguous label or code extracted from the query (e.g., 'XXX1', 'Grease up')."),
@@ -634,6 +644,12 @@ You MUST check the user's current query:
         query?.rawQuery || anchoredRawQuery
             ? `\n### 🔎 CURRENT QUERY CONTEXT\nQuery: "${query?.rawQuery || anchoredRawQuery}"\nPending: ${JSON.stringify(query?.pendingIntents || [])}\nActive Filters: ${JSON.stringify(query?.activeFilters || {})}\nLast Turn: "${query?.lastTurnInsight || ""}"\ncurrentScope (Organic Discoveries): [${displayCurrentScope.join(', ')}]` 
             : "",
+        // 🟢 CONVERSATION JOURNAL: Inject the code-maintained turn-by-turn log as a dedicated block.
+        // The LLM reads ONLY this to produce reformulatedQuery — isolated from summaryBuffer, rawQuery,
+        // and all other context. This is the single source of truth for what happened in THIS conversation.
+        (query as any)?.conversationJournal?.length > 0
+            ? `\n### 📋 CONVERSATION JOURNAL (This Conversation Only — read this to build reformulatedQuery)\n${((query as any).conversationJournal as string[]).join('\n')}`
+            : "",
         deadEndStr,
         decisionJournal,
     ].filter(Boolean).join('\n');
@@ -740,13 +756,15 @@ You MUST check the user's current query:
         // This block is intentionally NOT in summaryBuffer yet — it will be squashed there on SUMMARIZE.
         const isHITLIter0 = !!(state as any).isHITLContinuation && iterationCount === 0;
         const priorReformulated = state.reformulatedQuery || state.workingMemory?.queryContext?.rawQuery || "";
-        // 🛡️ FIX-A: Changed label from [ACTIVE INTENT] to [ACTIVE CLARIFICATION CONTEXT] for HITL turns.
-        // [ACTIVE INTENT] framed the reformulatedQuery as a task goal, making the LLM read the user's
-        // terse reply in the wrong frame. The correct frame is: "I asked a clarifying question;
-        // the reformulatedQuery carries that question's context; the user's answer follows."
-        if (isHITLIter0 && priorReformulated && currentQuery !== priorReformulated) {
-            qnaTranscript += `[ACTIVE CLARIFICATION CONTEXT — you asked the user a clarifying question; their answer follows]\n${priorReformulated}\n\n[USER'S ANSWER]\n`;
-        }
+        // 🛡️ FIX-A: [ACTIVE CLARIFICATION CONTEXT] — COMMENTED OUT.
+        // ⛔ This block injected the (often corrupted) reformulatedQuery as framing for HITL turns,
+        //    causing the LLM to re-ask disambiguation questions even after the user had answered.
+        // ✅ REPLACED BY: The conversationJournal block (see ### 📋 CONVERSATION JOURNAL in memoryContext).
+        //    The journal contains the AI's clarifying question (T_n [AI Clarification]) and the user's
+        //    reply (T_n [User Reply]) as factual code-written entries — no LLM reasoning contamination.
+        // if (isHITLIter0 && priorReformulated && currentQuery !== priorReformulated) {
+        //     qnaTranscript += `[ACTIVE CLARIFICATION CONTEXT — you asked the user a clarifying question; their answer follows]\n${priorReformulated}\n\n[USER'S ANSWER]\n`;
+        // }
 
         // 🛡️ FIX-C: Inject a compact [RIGHT NOW] status block immediately before the user's current
         // message. The user message is the highest-salience position in context (closest to generation).
@@ -820,7 +838,11 @@ Instruction: Proceed with your investigation based on the complete context provi
 
     const debugDump = {
         sessionContext: state.workingMemory?.sessionContext,
-        queryContext: state.workingMemory?.queryContext,
+        queryContext: {
+            ...state.workingMemory?.queryContext,
+            // 🟢 JOURNAL DEBUG: Show full conversationJournal entries inline
+            conversationJournal: (state.workingMemory?.queryContext as any)?.conversationJournal || [],
+        },
         toolResults: toolResultsDigest,
         activeMessages: promptMessages.filter(m => m.role !== 'system')
     };

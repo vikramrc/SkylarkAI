@@ -42,6 +42,11 @@ export interface SkylarkState {
       lastTurnInsight: string;       // ONE sentence max 120 chars. What just happened this turn.
       currentScope?: string[];   // All IDs listed in currentScope across all turns of this query
       isBroadScope?: boolean;    // Set to true when user explicitly requested org/fleet-wide scope override
+      // 🟢 CONVERSATION JOURNAL: Code-maintained turn-by-turn factual log for the current conversation.
+      // Reset on isNewQuery. Written exclusively by update_memory2 (never by the LLM).
+      // Each entry is a factual statement of what happened that turn — no orchestrator reasoning.
+      // The orchestrator reads ONLY this journal to produce reformulatedQuery — clean, isolated, no cross-contamination.
+      conversationJournal?: string[];
     };
   };
 
