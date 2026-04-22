@@ -244,6 +244,8 @@ export function createLangGraphWorkflowRouter() {
                 let didError = false; // 🟢 Track if any node triggered error triggers flaws!
                 let lastVerdict = "FEED_BACK_TO_ME"; // 🟢 Tracking for final table emission flaws
                 let lastReasoning = ""; // 🟢 Capture for CoT thought process UI
+                let lastReformulatedQuery = ""; // 🟢 Capture reformulated query for Orchestrating step detail
+                let lastToolNames = ""; // 🟢 Capture tool name list for Executing step detail
                 let toolResultsEmitted = false; // 🟢 Guard against double-emit: D1 sets this, D2 checks it
                 let executeToolsRan = false;     // 🟢 True only if execute_tools actually ran this request
 
@@ -273,18 +275,36 @@ export function createLangGraphWorkflowRouter() {
                             continue;
                         }
 
+                        // 🟢 Informational detail fields — read-only, no impact on execution
+                        let statusDetails: string | undefined;
+                        if (nodeName === 'orchestrator' && lastReformulatedQuery) statusDetails = lastReformulatedQuery;
+                        if (nodeName === 'execute_tools' && lastToolNames) statusDetails = lastToolNames;
+
                         res.write(`event: status_update\ndata: ${JSON.stringify({ 
                             message: statusMessage, 
-                            reasoning: nodeName === 'execute_tools' ? lastReasoning : undefined 
+                            reasoning: nodeName === 'execute_tools' ? lastReasoning : undefined,
+                            details: statusDetails
                         })}\n\n`);
                     }
 
-                    // 🟢 B. Capture Reasoning & Verdict from Orchestrator Node END event flawlessly trigger
+                    // 🟢 B. Capture Reasoning, Verdict & Informational Signals from Orchestrator Node END event
                     if (event.event === "on_chain_end" && event.metadata?.langgraph_node === "orchestrator") {
                         const output = event.data.output;
                         if (output) {
                             lastVerdict = output.feedBackVerdict || lastVerdict;
                             lastReasoning = output.reasoning || lastReasoning;
+                            // 🟢 Informational: capture reformulated query + tool name list for next step's detail badge
+                            if (output.reformulatedQuery) lastReformulatedQuery = output.reformulatedQuery;
+                            if (Array.isArray(output.tools) && output.tools.length > 0) {
+                                const nameMap: Record<string, number> = {};
+                                for (const t of output.tools) {
+                                    const n = t.name || '';
+                                    if (n) nameMap[n] = (nameMap[n] || 0) + 1;
+                                }
+                                lastToolNames = Object.entries(nameMap)
+                                    .map(([n, c]) => c > 1 ? `${n} ×${c}` : n)
+                                    .join(', ');
+                            }
                         }
                     }
 

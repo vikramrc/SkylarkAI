@@ -223,7 +223,8 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
                         stage: data.stage || 'execute', 
                         message: data.message,
                         messageKey: data.messageKey, // Allow clearing or updating messageKey flawlessly trigger
-                        reasoning: data.reasoning // 🟢 Capture CoT reasoning for thought process UI trigger flawless
+                        reasoning: data.reasoning, // 🟢 Capture CoT reasoning for thought process UI trigger flawless
+                        details: data.details      // 🟢 Informational detail badge (tool names, reformulated query)
                      }
                  }));
              }

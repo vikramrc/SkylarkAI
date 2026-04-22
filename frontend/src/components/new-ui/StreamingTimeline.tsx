@@ -13,6 +13,7 @@ export type StreamingStatus = {
   activityLevel?: number;
   tokenCount?: number;
   reasoning?: string; // 🟢 Field for CoT thought process trigger flawless
+  details?: string;  // 🟢 Informational detail badge (tool names / reformulated query)
 };
 
 interface TimelineItem {
@@ -25,6 +26,7 @@ interface TimelineItem {
   // When BE signals a retry via status.re_analyzing, mark the last Execute item as failed
   forcedError?: boolean;
   reasoning?: string; // 🟢 Persist reasoning into timeline rows flawlessly
+  details?: string;  // 🟢 Persist informational detail badge into timeline rows
 }
 
 interface Props { status: StreamingStatus | null; }
@@ -190,12 +192,13 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
         // If texts match, update existing placeholder with the canonical messageKey instead of appending
           if (textsMatch) {
             const updated = [...base];
-            if ((!last.messageKey && status.messageKey) || status.reasoning) {
+            if ((!last.messageKey && status.messageKey) || status.reasoning || status.details) {
               updated[lastIdx] = { 
                 ...last, 
                 messageKey: status.messageKey || last.messageKey, 
                 message: (!status.messageKey ? status.message : undefined) || last.message,
-                reasoning: status.reasoning || last.reasoning // 🟢 Capture reasoning update on repeat turns flawlessly
+                reasoning: status.reasoning || last.reasoning, // 🟢 Capture reasoning update on repeat turns flawlessly
+                details: status.details || last.details        // 🟢 Carry forward detail badge on de-dup merge
               };
             }
             lastKeyRef.current = key; // mark as handled
@@ -221,6 +224,7 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
           message: status.message, 
           messageKey: status.messageKey, 
           reasoning: status.reasoning, // 🟢 Set initial reasoning for new items flaws triggers flawless
+          details: status.details,     // 🟢 Set initial detail badge for new items
           timestamp: now, 
           elapsedSeconds: 0 
         },
@@ -344,6 +348,13 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
                     {it.reasoning && !iconIsError && (
                       <div className="text-[12px] leading-relaxed text-gray-500 mt-2 border-l border-gray-100 pl-3 py-1.5 bg-gray-50/30 rounded-r-md">
                         {it.reasoning}
+                      </div>
+                    )}
+
+                    {/* 🟢 Informational detail badge — tool names or reformulated query */}
+                    {it.details && !iconIsError && (
+                      <div className="text-[12px] leading-relaxed text-gray-400 mt-2 border-l border-gray-100 pl-3 py-1.5 bg-gray-50/30 rounded-r-md">
+                        {it.details}
                       </div>
                     )}
 
