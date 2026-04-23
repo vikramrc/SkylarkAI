@@ -336,7 +336,7 @@ function ToolTable({ toolName, rawPayload }: { toolName: string; rawPayload: any
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
-const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
+const ResultTable: React.FC<ResultTableProps> = React.memo(({ results }) => {
   const { t } = useTranslation();
   // Keep an entry if it has rows OR if the LLM explicitly labeled it (uiTabLabel present).
   // A labeled-but-empty entry means the LLM intentionally queried something that returned 0 rows —
@@ -418,6 +418,6 @@ const ResultTable: React.FC<ResultTableProps> = ({ results }) => {
       </div>
     </div>
   );
-};
+});
 
 export default ResultTable;

@@ -34,7 +34,7 @@ interface Props { status: StreamingStatus | null; }
 const SPINNER_FRAMES = ['\u280b','\u2819','\u2839','\u2838','\u283c','\u2834','\u2826','\u2827','\u2807','\u280f'];
 const STAGES: Array<'ambiguity'|'generation'|'execute'> = ['ambiguity','generation','execute'];
 
-const StreamingTimeline: React.FC<Props> = ({ status }) => {
+const StreamingTimeline: React.FC<Props> = React.memo(({ status }) => {
   const { t } = useTranslation();
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [items, setItems] = useState<TimelineItem[]>([]);
@@ -223,7 +223,7 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
           stage: status.stage, 
           message: status.message, 
           messageKey: status.messageKey, 
-          reasoning: status.reasoning, // 🟢 Set initial reasoning for new items flaws triggers flawless
+          reasoning: status.reasoning, // 🟢 Set initial reasoning for new items flaws triggers flawlessly
           details: status.details,     // 🟢 Set initial detail badge for new items
           timestamp: now, 
           elapsedSeconds: 0 
@@ -378,7 +378,7 @@ const StreamingTimeline: React.FC<Props> = ({ status }) => {
       </div>
     </div>
   );
-};
+});
 
 export default StreamingTimeline;
 

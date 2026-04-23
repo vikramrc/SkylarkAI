@@ -101,7 +101,7 @@ const COLOR_MAP: Record<string, { bg: string; border: string; text: string; icon
   },
 };
 
-const AnalyticalSummary: React.FC<AnalyticalSummaryProps> = ({ 
+const AnalyticalSummary: React.FC<AnalyticalSummaryProps> = React.memo(({ 
   title, 
   icon = 'lightbulb', 
   color = 'blue', 
@@ -134,6 +134,6 @@ const AnalyticalSummary: React.FC<AnalyticalSummaryProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default AnalyticalSummary;

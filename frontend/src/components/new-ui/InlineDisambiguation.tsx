@@ -8,7 +8,7 @@ interface InlineDisambiguationProps {
   phoenixUseStream: boolean;
 }
 
-const InlineDisambiguation: React.FC<InlineDisambiguationProps> = ({
+const InlineDisambiguation: React.FC<InlineDisambiguationProps> = React.memo(({
   conversation,
   onComplete,
   phoenixUseStream,
@@ -139,7 +139,7 @@ const InlineDisambiguation: React.FC<InlineDisambiguationProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default InlineDisambiguation;
 

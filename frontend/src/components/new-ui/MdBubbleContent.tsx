@@ -8,7 +8,7 @@ interface MdBubbleContentProps {
   content: string;
 }
 
-const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
+const MdBubbleContent: React.FC<MdBubbleContentProps> = React.memo(({ content }) => {
   const { t } = useTranslation();
   const [showChartMap, setShowChartMap] = useState<Record<string, boolean>>({});
   const [chartTypeMap, setChartTypeMap] = useState<Record<string, 'bar' | 'pie'>>({});
@@ -258,6 +258,6 @@ const MdBubbleContent: React.FC<MdBubbleContentProps> = ({ content }) => {
       })}
     </div>
   );
-};
+});
 
 export default MdBubbleContent;

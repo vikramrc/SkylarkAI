@@ -43,9 +43,10 @@ const ContinuousChatView: React.FC<ContinuousChatViewProps> = ({
   const sampleQueries = (t('chat.sample_queries', { returnObjects: true }) as unknown as string[]) || [];
 
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${textarea.scrollHeight}px`;
     }
   }, [query]);
 
