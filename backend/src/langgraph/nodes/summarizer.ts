@@ -132,6 +132,25 @@ export async function nodeSummarizer(state: SkylarkState, config?: any): Promise
         for (const entry of finalEntries) {
             const { key, data: result } = entry;
             const capability = result?.capability ?? 'unknown';
+
+            // 🟢 TOOL ERROR SURFACING: If the tool returned isError:true (exception, timeout, parameter
+            // violation etc.), surface it explicitly in emptyTools so the LLM reports what went wrong.
+            // Do NOT push the raw error object into allItems — it produces garbled JSONL rows with no
+            // context, causing the LLM to say "no results" when the real issue was a tool failure.
+            if (result?.isError === true) {
+                const errMsg = result.message || 'Unknown error';
+                const isTimeout = errMsg.toLowerCase().includes('timed out');
+                const errorType = isTimeout ? '⏱️ TIMED OUT' : '🚨 FAILED';
+                emptyTools.push(
+                    `- **${key}** (${capability}): ${errorType} — "${errMsg}". ` +
+                    `Inform the user that this data could not be retrieved due to a tool error. ` +
+                    `Do NOT report this as "no results found" — it is a tool failure, not an empty dataset. ` +
+                    (isTimeout ? `Suggest the user try again with a narrower filter (fewer records, shorter date range, or a specific vessel/activity ID).` : ``)
+                );
+                toolCountMap.push(`- **${key}** (${capability}): ❌ ERROR — ${errMsg.substring(0, 80)}`);
+                continue; // skip adding broken object to allItems
+            }
+
             const items = Array.isArray(result?.items) ? result.items : [result];
             
             const filterInfo = result?.appliedFilters?.statusCode ? ` (filter: ${result.appliedFilters.statusCode})` : '';

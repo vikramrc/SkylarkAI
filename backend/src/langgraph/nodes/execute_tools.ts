@@ -183,14 +183,17 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                 };
 
                 // 🟢 GAP-29 FIX: Implement per-tool execution timeout.
-                // direct_query_fallback is a multi-step pipeline (keyword extraction → ambiguity
-                // → RAG → pipeline generation → execution → enrichment) and regularly takes 30-40s
-                // for complex analytical/aggregation queries. The global 25s limit would prematurely
-                // kill valid results. All other tools keep the 25s safety limit.
+                // direct_query_fallback is a multi-step pipeline and regularly takes 30-40s
+                // for complex analytical/aggregation queries.
+                // maintenance_query_execution_history runs a deeply nested aggregation (4 lookups incl.
+                // nested parts hydration via MaintenancePartUsage → InventoryPart) against potentially
+                // thousands of AWH docs and regularly takes 25-40s with limit=100.
+                // All other tools keep the 25s safety limit.
                 // 🟢 GAP-32 FIX: Store the timer handle and cancel it via .finally() so that when
                 // a tool completes before the deadline, the timer is cleared immediately rather
                 // than running as a dangling handle holding the event loop open.
-                const TOOL_TIMEOUT_MS = name === 'direct_query_fallback' ? 90000 : 25000;
+                const HEAVY_TOOLS = new Set(['direct_query_fallback', 'maintenance_query_execution_history']);
+                const TOOL_TIMEOUT_MS = HEAVY_TOOLS.has(name) ? (name === 'direct_query_fallback' ? 90000 : 45000) : 25000;
                 let _timeoutHandle: ReturnType<typeof setTimeout>;
                 const _timeoutPromise = new Promise((_, reject) => {
                     _timeoutHandle = setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
@@ -224,7 +227,16 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                 }
             } catch (e: any) {
                 console.error(`[LangGraph Execute] 🚨 Tool ${sanitizedName} threw exception:`, e);
-                return { name, index, result: { isError: true, message: e.message || String(e) } };
+                return {
+                    name,
+                    index,
+                    result: {
+                        isError: true,
+                        capability: name.replace(/_/g, '.'), // e.g. maintenance_query_execution_history → maintenance.query.execution.history
+                        toolName: name,
+                        message: e.message || String(e),
+                    }
+                };
             }
         } else {
             return { name, index, result: { isError: true, message: `Tool ${name} not found in registry.` } };
