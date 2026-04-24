@@ -255,7 +255,11 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
         Object.entries(turn || {}).forEach(([key, res]: [string, any]) => {
             const filters = (res as any)?.appliedFilters || {};
             const filterStr = Object.entries(filters).filter(([k,v]) => v).map(([k,v]) => `${k}:${v}`).join(',');
-            const entryStr = `${key}(${filterStr})`;
+            // 🟢 GAP-JOURNAL-FIX: Stamp ⛔ FAILED on error results so the LLM's Rule 21 Dead-End check fires.
+            // Previously errors had no marker, so iter-stamped keys looked like distinct new calls —
+            // the LLM couldn't detect it was retrying the same failed tool.
+            const errorFlag = (res as any)?.isError ? ' ⛔ FAILED' : '';
+            const entryStr = `${key}(${filterStr})${errorFlag}`;
             if (currentEntry) {
                 currentEntry.tools.push(entryStr);
             }
@@ -474,6 +478,12 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
     if ((state.iterationCount || 0) > 0 && requestCycleTurns.length > 0) {
         const lastTurnResults = requestCycleTurns[requestCycleTurns.length - 1];
         if (lastTurnResults) {
+            // 🟢 GAP-TIMEOUT-FIX: Collect ALL timed-out tools from the last turn.
+            // Build a mandatory instruction that fires before the LLM generates its next output.
+            // Previously only org/vessel-not-found was intercepted; timeouts fell through silently,
+            // allowing the LLM to loop indefinitely despite seeing "FAILED" in the journal.
+            const timedOutTools: string[] = [];
+
             for (const [key, res] of Object.entries(lastTurnResults)) {
                 let data: any = res;
                 if (data?.content?.[0]?.text) {
@@ -481,11 +491,13 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
                     if (data?.content) data = res; // Fallback if parsing didn't produce the object
                 }
                 const rawText = data?.content?.[0]?.text || data?.error || data?.message || "";
+
+                // Org/Vessel not-found: hard stop with clarifying question (existing behaviour)
                 if (data?.isError && (rawText.includes("Organization not found") || rawText.includes("Vessel not found"))) {
                     console.log(`\x1b[31m[LangGraph Orchestrator] 🚨 FATAL DISCOVERY DETECTED. Injecting intercept into LLM prompt.\x1b[0m`);
                     fatalErrorInstruction = `\n🛑 SYSTEM EXCEPTION (Previous Turn): The previous tool call failed with the following fatal error: "${rawText}".\n` +
                         `⚠️ MANDATORY ACTION: You MUST set \`clarifyingQuestion\` to ask the user for the correct organization or vessel name, set \`tools\` to [], and set \`feedBackVerdict\` to SUMMARIZE.\n`;
-                    
+
                     // We must clear the bad org/vessel from the session state so it isn't treated as confirmed
                     if (session?.scope) {
                         delete session.scope.organizationID;
@@ -499,6 +511,25 @@ export async function nodeOrchestrator(state: SkylarkState): Promise<Partial<Sky
                     orgJustInvalidated = true;
                     break;
                 }
+
+                // 🟢 GAP-TIMEOUT-FIX: Tool timeout — collect for batch instruction below
+                if (data?.isError && (data?.isFatalTimeout || rawText.toLowerCase().includes('timed out'))) {
+                    const toolName = data?.toolName || data?.capability || key;
+                    timedOutTools.push(toolName);
+                    console.log(`\x1b[31m[LangGraph Orchestrator] ⏱️ TOOL TIMEOUT DETECTED for "${toolName}". Will inject Rule 21 mandate.\x1b[0m`);
+                }
+            }
+
+            // If timeouts were detected and no higher-priority intercept already fired, inject the mandate.
+            if (timedOutTools.length > 0 && !fatalErrorInstruction) {
+                const toolList = [...new Set(timedOutTools)].join(', ');
+                fatalErrorInstruction = `\n🛑 TOOL TIMEOUT (Previous Turn): The following tool(s) timed out and could not return data: [${toolList}].\n` +
+                    `⚠️ MANDATORY ACTION per Rule 21 (Tool Error Dead-End Rule):\n` +
+                    `  ⛔ Do NOT call [${toolList}] again — it will time out again with the same result.\n` +
+                    `  (a) If \`direct_query_fallback\` has NOT already been called this request, call it now as a semantic backup.\n` +
+                    `  (b) If \`direct_query_fallback\` has already been called, set \`tools: []\` and \`feedBackVerdict: SUMMARIZE\`.\n` +
+                    `      Tell the user that data retrieval failed due to a query timeout and suggest narrowing the scope\n` +
+                    `      (e.g. a specific vessel, shorter date range, or reduced record limit).\n`;
             }
         }
     }

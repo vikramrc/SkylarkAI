@@ -192,7 +192,10 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                 // 🟢 GAP-32 FIX: Store the timer handle and cancel it via .finally() so that when
                 // a tool completes before the deadline, the timer is cleared immediately rather
                 // than running as a dangling handle holding the event loop open.
-                const HEAVY_TOOLS = new Set(['direct_query_fallback', 'maintenance_query_execution_history']);
+                // 🟢 GAP-TIMEOUT-FIX: The LLM emits tool names in dot+underscore notation (e.g. "maintenance.query_execution_history").
+                // The HEAVY_TOOLS set MUST match the original `name` variable (pre-sanitization), not the sanitized form.
+                // Previously the set used all-underscore keys which never matched the dot-prefixed name → always 25s.
+                const HEAVY_TOOLS = new Set(['direct_query_fallback', 'maintenance.query_execution_history']);
                 const TOOL_TIMEOUT_MS = HEAVY_TOOLS.has(name) ? (name === 'direct_query_fallback' ? 90000 : 45000) : 25000;
                 let _timeoutHandle: ReturnType<typeof setTimeout>;
                 const _timeoutPromise = new Promise((_, reject) => {
@@ -227,12 +230,14 @@ export async function nodeExecuteTools(state: SkylarkState): Promise<Partial<Sky
                 }
             } catch (e: any) {
                 console.error(`[LangGraph Execute] 🚨 Tool ${sanitizedName} threw exception:`, e);
+                const isTimeout = (e.message || '').includes('timed out');
                 return {
                     name,
                     index,
                     result: {
                         isError: true,
-                        capability: name.replace(/_/g, '.'), // e.g. maintenance_query_execution_history → maintenance.query.execution.history
+                        isFatalTimeout: isTimeout,  // 🟢 GAP-TIMEOUT-FIX: Lets orchestrator intercept distinguish timeouts from other errors
+                        capability: name,            // 🟢 GAP-TIMEOUT-FIX: Use original dot-notation name so journal matches tool call format
                         toolName: name,
                         message: e.message || String(e),
                     }
