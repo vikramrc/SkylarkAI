@@ -1,6 +1,6 @@
 // Simple global event helpers to broadcast auth state changes (e.g., unauthorized)
 
-const UNAUTHORIZED_EVENT = 'phoenixai-unauthorized';
+const UNAUTHORIZED_EVENT = 'skylark-unauthorized';
 
 export function onUnauthorized(listener: () => void) {
   window.addEventListener(UNAUTHORIZED_EVENT, listener as EventListener);

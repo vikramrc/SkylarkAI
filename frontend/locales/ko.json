@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "PhoenixAI",
+    "title": "SKYLARK",
     "subtitle": "\ud574\uc0ac \uc720\uc9c0\ubcf4\uc218 \uc778\ud154\ub9ac\uc804\uc2a4",
     "history": "\uae30\ub85d",
     "conversations": "\ub300\ud654",
@@ -53,7 +53,7 @@
     "days_ago": "{{count}}\uc77c \uc804"
   },
   "chat": {
-    "welcome_title": "PhoenixAI\uc5d0 \uc624\uc2e0 \uac83\uc744 \ud658\uc601\ud569\ub2c8\ub2e4",
+    "welcome_title": "SKYLARK에 오신 것을 환영합니다",
     "welcome_body": "\ud574\uc0ac \uc720\uc9c0\ubcf4\uc218 \uc6b4\uc601\uc5d0 \ub300\ud574 \uc9c8\ubb38\ud574 \uc8fc\uc138\uc694. \uc77c\uc815 \ubd84\uc11d, \uc5c4\uae09 \uacfc\uc81c \uc791\uc5c5 \ucd94\uc801, \uc7ac\uace0 \uc218\uc900 \ud655\uc778 \ub4f1\uc744 \ub3c4\uc640\ub4dc\ub9bd\ub2c8\ub2e4.",
     "try_asking": "\uc544\ub798\uc640 \uac19\uc774 \ubb3c\uc5b4\ubcf4\uc138\uc694:",
     "sample_queries": [

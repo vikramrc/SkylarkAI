@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "PhoenixAI",
+    "title": "SKYLARK",
     "subtitle": "海事メンテナンスインテリジェンス",
     "history": "履歴",
     "conversations": "会話",
@@ -50,7 +50,7 @@
     "days_ago": "{{count}}日前"
   },
   "chat": {
-    "welcome_title": "PhoenixAIへようこそ",
+    "welcome_title": "SKYLARKへようこそ",
     "welcome_body": "海事の保全業務に関する質問をしてください。スケジュールの分析、期限超過の活動の確認、在庫レベルのチェックなどをお手伝いします。",
     "try_asking": "例：",
     "sample_queries": [

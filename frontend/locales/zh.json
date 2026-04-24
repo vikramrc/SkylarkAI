@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "PhoenixAI",
+    "title": "SKYLARK",
     "subtitle": "海事维护智能",
     "history": "历史",
     "conversations": "会话",
@@ -53,7 +53,7 @@
     "days_ago": "{{count}} 天前"
   },
   "chat": {
-    "welcome_title": "欢迎使用 PhoenixAI",
+    "welcome_title": "欢迎使用 SKYLARK",
     "welcome_body": "请就您的海事维护运营提出问题。我可以帮助您分析计划、跟踪逾期活动、检查库存水平等。",
     "try_asking": "试着问：",
     "sample_queries": [

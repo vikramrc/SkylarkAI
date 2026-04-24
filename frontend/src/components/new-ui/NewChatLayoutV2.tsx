@@ -111,8 +111,8 @@ const NewChatLayoutV2: React.FC<NewChatLayoutV2Props> = ({ onToggleUI, userEmail
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50/40">
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 shadow-sm px-4 md:px-6 py-4 flex-shrink-0 z-20 relative">
-        <div className="flex items-center justify-between">
+      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 shadow-sm px-4 md:px-6 flex-shrink-0 z-20 relative flex items-center" style={{ height: '48px' }}>
+        <div className="flex items-center justify-between w-full">
           <div className="flex items-center space-x-3">
             {/* Hamburger — mobile only, left side */}
             {isMobile && (

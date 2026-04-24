@@ -38,7 +38,7 @@ const InlineResults: React.FC<InlineResultsProps> = ({ conversation }) => {
       const url = URL.createObjectURL(dataBlob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `phoenixai-results-${conversation.conversationId}.json`;
+      link.download = `skylark-results-${conversation.conversationId}.json`;
       link.click();
       URL.revokeObjectURL(url);
     }

@@ -157,17 +157,17 @@ const NewChatLayout: React.FC<NewChatLayoutProps> = ({ onToggleUI, phoenixUseStr
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-white/70 backdrop-blur-md border-b border-white/20 shadow-sm px-6 py-4 flex-shrink-0 z-20 relative">
-        <div className="flex items-center justify-between">
+      <header className="bg-white/70 backdrop-blur-md border-b border-white/20 shadow-sm px-6 py-2.5 flex-shrink-0 z-20 relative">
+        <div className="flex items-center justify-between h-full">
           <div className="flex items-center space-x-3">
-            <div>
+            <div className="flex items-center">
               <h1
-                className="text-2xl font-bold text-gray-900"
+                className="text-xl font-bold text-gray-900 leading-none"
                 style={{ fontFamily: '"Zen Dots", "Outfit", sans-serif' }}
               >
                 {t('app.title')}
               </h1>
-<p className="hidden text-sm text-gray-600">{t('app.subtitle')}</p>
+              <p className="hidden text-sm text-gray-600 ml-3">{t('app.subtitle')}</p>
             </div>
           </div>
 

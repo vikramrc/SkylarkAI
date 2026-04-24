@@ -481,8 +481,8 @@ const ResultDisplay: React.FC<ResultDisplayProps> = ({ results, query, showIdsDe
     const data = exportRows; if (!data || data.length === 0) return;
     let content: string, filename: string, mimeType: string;
     switch (format) {
-      case 'json': content = JSON.stringify(data, null, 2); filename = 'phoenixai-results.json'; mimeType = 'application/json'; break;
-      case 'csv': content = convertToCSV(data); filename = 'phoenixai-results.csv'; mimeType = 'text/csv'; break;
+      case 'json': content = JSON.stringify(data, null, 2); filename = 'skylark-results.json'; mimeType = 'application/json'; break;
+      case 'csv': content = convertToCSV(data); filename = 'skylark-results.csv'; mimeType = 'text/csv'; break;
       default: return;
     }
     const blob = new Blob([content], { type: mimeType });
