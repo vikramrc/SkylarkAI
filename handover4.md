@@ -1690,3 +1690,158 @@ The fragile string-scan heuristic has been replaced with a direct, deterministic
 | Premature clarifying questions suppressed | ✅ Deterministic `actualUnclassified.length` check |
 | Autonomous resolution autonomous again | ✅ Labels resolved before user is consulted |
 | Dead string heuristics removed | ✅ Codebase cleaned of legacy Intercept markers |
+
+---
+
+## 24. Phase 13: Conversation Journaling & Resilient Ambiguity Resolution
+
+### 24.1. The "Context Poisoning" Problem
+**Problem**: The Orchestrator previously relied on ambient message history and a brittle `[ACTIVE CLARIFICATION CONTEXT]` block to resolve multi-turn ambiguities. 
+- The LLM's own internal reasoning was polluting the history.
+- `update_memory2` Phase 2 extraction was inconsistent, sometimes re-committing stale filters from its own context.
+- The system would often fall into a "show me details" loop because it lost track of which ambiguity was already resolved.
+
+### 24.2. Architecture: The `conversationJournal`
+**Fix**: Implemented a deterministic, code-maintained **Conversation Journal** as the exclusive source of truth for conversational facts.
+
+1. **State Storage** (`state.ts`): Added `conversationJournal: string[]` to `queryContext`.
+2. **Deterministic Logging** (`update_memory2.ts`):
+   - **T1 [User]**: Actual raw human message.
+   - **T2 [Tool]**: Short factual summaries of tool results (e.g., "maintenance.query_status returned 5 overdue items for vessel XXX1").
+   - **T3 [AI Clarification]**: Verbatim AI question when HITL is triggered.
+   - **T4 [User Reply]**: User's follow-up answer.
+3. **Orchestrator Integration** (`orchestrator.ts`):
+   - Injects the journal as a dedicated `### 📋 CONVERSATION JOURNAL` block.
+   - **Prompt Hardening**: Refactored `reformulatedQuery` Zod schema to mandate reading *only* the journal. Explicitly forbade internal reasoning or "need to determine" clauses in this field.
+4. **Resilience Fixes**:
+   - **Duplication Guard**: Added `iter <= 1` check to HITL capture so Q/A pairs aren't re-appended on `FEED_BACK_TO_ME` internal loops.
+   - **Persistence Guard**: Included `conversationJournal` in the `catch` block return of `update_memory2.ts` to prevent journal loss on transient LLM failures.
+   - **HITL Context**: Disabled the legacy `[ACTIVE CLARIFICATION CONTEXT]` injection. The journal now handles this cleanly.
+
+### 24.3. Bug Fix: The `expiryWindowDays` ReferenceError
+**Symptom**: The AI would call `documents.query_control_overview` and then loop indefinitely, repeating the same tool call until the iteration cap.
+**Root Cause** (`PhoenixCloudBE/services/mcp.service.js`):
+- `expiryWindowDays` was declared with `const` inside an `else` block but referenced in the return `appliedFilters` object outside that block.
+- When the LLM passed an `endDate` (taking the `if` branch), the variable was never declared → `ReferenceError`.
+- **The Loop**: The tool crashed, returning an error string. `update_memory2` saw no items, kept intents pending, and the Orchestrator retried.
+**Fix**: Hoisted `let expiryWindowDays = null` to the top of the function scope.
+
+### 24.4. Hardening Tool Error Handling
+**Problem**: Tool timeouts and exceptions were being swallowed or garbled, leaving the AI "blind" to infrastructure failures.
+
+1. **Tiered Timeout Expansion** (`execute_tools.ts`):
+   - Raised `maintenance_query_execution_history` timeout from **25s → 45s**.
+   - This tool runs a deeply nested aggregation with 4 lookups (AWH → AWHE → Parts → Inventory) and often hit the 25s wall with large result sets.
+2. **Structured Error Surfacing** (`summarizer.ts`):
+   - **Old logic**: Silently dropped `isError` results or pushed them as garbled JSONL rows.
+   - **New logic**: Surfaces `isError` results in the `emptyTools` block (which the LLM is mandated to report on) with clear `⏱️ TIMED OUT` or `🚨 FAILED` status and the error message.
+   - **AI Guidance**: Added a mandate to the summarizer prompt to inform the user of the specific failure instead of saying "no results found".
+3. **Rule 47: Tool Error Dead-End Rule** (`orchestrator_rules.ts`):
+   - Explicitly forbids the AI from retrying a broken tool call with the same parameters.
+   - Mandates a fallback to `direct_query_fallback` or a clear failure report to the user.
+
+### 24.5. Performance & Capacity Improvements
+1. **`GLOBAL_RESULT_CAP` Increase** (`mcp.service.js`):
+   - Raised from **101 → 501**. 
+   - Previous cap was silently clamping the AI's requested `limit=200` to 101, leading to data truncation.
+2. **Execution History Optimization**:
+   - Added a `$match` gate to the `MaintenancePartUsage` lookup pipeline.
+   - MongoDB now skips the expensive parts/inventory hydration for the majority of event records that have no parts recorded.
+
+---
+
+## 25. Files Changed in Phase 13
+
+| File | Change |
+|------|--------|
+| `backend/src/langgraph/state.ts` | Added `conversationJournal` to `queryContext` |
+| `backend/src/langgraph/nodes/update_memory2.ts` | Implemented journal build logic, HITL Q/A capture with `iter <= 1` guard, and catch-block persistence |
+| `backend/src/langgraph/nodes/orchestrator.ts` | Injected journal into prompt; updated `reformulatedQuery` rules; disabled legacy HITL context |
+| `backend/src/langgraph/nodes/execute_tools.ts` | Raised `execution_history` timeout to 45s; added `capability`/`toolName` to error objects |
+| `backend/src/langgraph/nodes/summarizer.ts` | Explicitly surfaces `isError` tool failures to the LLM |
+| `backend/src/langgraph/prompts/orchestrator_rules.ts` | Added **Rule 47** (Tool Error Dead-End Rule) |
+| `../PhoenixCloudBE/services/mcp.service.js` | Fixed `expiryWindowDays` scope bug; raised `GLOBAL_RESULT_CAP` to 501; optimized AWH aggregation |
+
+---
+
+## 27. UI Performance Hardening (Phase 14)
+
+### Objective
+Resolve UI sluggishness during typing in the user query bar by preventing full-tree re-renders of the conversation history.
+
+### Key Architectural Advancements
+*   **Keystroke Isolation**: Memoized all high-complexity historical components to ensure that character entry in the chat input does not trigger redundant Markdown parsing or JSON table extraction.
+*   **Re-render Suppression**: Applied `React.memo` to `ResultTable`, `MdBubbleContent`, `StreamingTimeline`, `InlineDisambiguation`, and `AnalyticalSummary`.
+*   **Layout Thrash Mitigation**: Optimized the auto-resizing `useEffect` in `ContinuousChatView` and `ChatView` to reduce style recalculations.
+
+### Files Changed in Phase 14
+
+| File | Change |
+|------|--------|
+| `frontend/src/components/new-ui/ResultTable.tsx` | Memoized component export |
+| `frontend/src/components/new-ui/MdBubbleContent.tsx` | Memoized component export |
+| `frontend/src/components/new-ui/StreamingTimeline.tsx` | Memoized component export |
+| `frontend/src/components/new-ui/InlineDisambiguation.tsx` | Memoized component export |
+| `frontend/src/components/new-ui/AnalyticalSummary.tsx` | Memoized component export |
+| `frontend/src/components/new-ui/ContinuousChatView.tsx` | Optimized auto-resize effect |
+| `frontend/src/components/new-ui/ChatView.tsx` | Optimized auto-resize effect |
+
+---
+
+## 28. Orchestrator Loop Mitigation (Phase 15)
+
+### Objective
+Eliminate infinite retry loops caused by `maintenance.query_execution_history` hard timeouts.
+The loop was confirmed live via DB inspection of thread `69e8e6337cc600f27521bcca` and `dev.log` analysis.
+
+### Root Cause (Evidence-Based — 3 stacked bugs)
+
+**Bug 1 — Wrong timeout (25s instead of 45s)**
+`execute_tools.ts` line 195: `HEAVY_TOOLS` set used all-underscore keys (`maintenance_query_execution_history`) but the LLM emits dot+underscore names (`maintenance.query_execution_history`). The set check always missed → tool always got the 25s default, guaranteeing a timeout for heavy aggregation queries.
+
+**Bug 2 — SESSION DECISION JOURNAL couldn't detect repeated failures**
+Journal entries are iter-stamped keys (e.g. `maintenance.query_execution_history_iter1()`). Error results have no `appliedFilters`, so entries appeared with empty params. Each failure looked like a **new unique call** to the LLM. The dedup MANDATE ("don't repeat same Tool+Parameter") never triggered because `iter1`, `iter2`, `iter3`... all look different.
+
+**Bug 3 — `fatalErrorInstruction` intercept was too narrow**
+The real-time mid-loop instruction injector only caught `Organization not found` / `Vessel not found`. Tool timeouts fell through silently — the LLM received no mandatory instruction to stop retrying, even after 5 consecutive `FAILED` journal entries.
+
+### Evidence from DB & dev.log
+```
+Thread 69e8e6337cc600f27521bcca — Turns 25-29 (all isError: true):
+  maintenance.query_execution_history_iter1 → "Tool execution timed out after 25s"
+  maintenance.query_execution_history_iter2 → "Tool execution timed out after 25s"
+  maintenance.query_execution_history_iter3 → "Tool execution timed out after 25s"
+  maintenance.query_execution_history_iter4 → "Tool execution timed out after 25s"
+  maintenance.query_execution_history_iter5 → "Tool execution timed out after 25s"
+  iterationCount: 6, feedBackVerdict: FEED_BACK_TO_ME (still looping, hit 8-iter cap)
+```
+The `conversationJournal` correctly showed all 5 as FAILED. The LLM saw the failures but could not map them to Rule 21 because the format mismatch (`maintenance.query.execution.history` in journal vs `maintenance.query_execution_history` in tool call) prevented the connection.
+
+### Fixes Applied
+
+| # | File | Change |
+|---|------|--------|
+| 1 | `execute_tools.ts` | `HEAVY_TOOLS` now uses dot-notation key `'maintenance.query_execution_history'` (matching `name` variable) — tool now correctly gets 45s timeout |
+| 2 | `execute_tools.ts` | Added `isFatalTimeout: true` flag to timeout error results; `capability` kept as original dot-notation name |
+| 3 | `orchestrator.ts` | Journal entries now stamped with ` ⛔ FAILED` when `isError: true` — dedup MANDATE now distinguishes failures |
+| 4 | `orchestrator.ts` | `fatalErrorInstruction` widened to catch timeout errors; injects Rule 21 mandatory instruction (try `direct_query_fallback` or SUMMARIZE) directly into LLM prompt before next iteration |
+
+### Files Changed in Phase 15
+
+| File | Change |
+|------|--------|
+| `backend/src/langgraph/nodes/execute_tools.ts` | Fixed HEAVY_TOOLS key; added `isFatalTimeout` flag; preserved dot-notation capability name |
+| `backend/src/langgraph/nodes/orchestrator.ts` | Added `⛔ FAILED` to journal; widened fatalErrorInstruction to intercept timeouts |
+
+---
+
+## 29. Final Invariants (Master List)
+
+1. **Source of Truth**: The `conversationJournal` is the *only* source of conversational history for `reformulatedQuery`.
+2. **Timeout Strategy**: Fallback = 90s, Heavy Aggregation = 45s, Standard MCP = 25s.
+3. **HEAVY_TOOLS key format**: Must match the LLM's dot+underscore output (e.g. `'maintenance.query_execution_history'`), NOT the sanitized underscore form.
+4. **Error Protocol**: Tool errors MUST be reported as failures (Rule 47), never as "no results". Journal entries must carry `⛔ FAILED` so Rule 21 dedup fires.
+5. **Timeout Intercept**: Any tool timeout must inject a `fatalErrorInstruction` into the next orchestrator turn, forcing Rule 21 (fallback or SUMMARIZE). Do NOT rely on the LLM recognising journal FAILED entries alone.
+6. **Capacity**: Global hard cap is 501; tool-specific soft caps are 200.
+7. **UI Integrity**: All historical message components MUST be memoized to preserve input responsiveness.
+
